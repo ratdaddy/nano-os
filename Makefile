@@ -1,24 +1,33 @@
-# Adjust these paths for your setup
-TARGET=riscv64imac-unknown-none-elf
-BUILD=target/$(TARGET)/debug
-OUTPUT=kernel.elf
+TARGET := riscv64imac-unknown-none-elf
+BUILD_DIR := target/$(TARGET)/debug
+KERNEL_ELF := $(BUILD_DIR)/kernel
+KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 
-# Mount point where your SD card is mounted
-SD_MOUNT=/mnt/sd
+SD_MOUNT=/Volumes/KERNEL
 
-.PHONY: all clean copy
+OBJCOPY := rust-objcopy
 
-all: $(BUILD)/$(OUTPUT)
+SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-$(BUILD)/$(OUTPUT):
+.PHONY: all copy clean
+
+all: $(KERNEL_BIN)
+
+$(KERNEL_BIN): $(SOURCES)
 	cargo build --target $(TARGET)
+	$(OBJCOPY) --binary-architecture=riscv64 --strip-all -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 
 copy: all
-	@echo "Copying $(OUTPUT) to $(SD_MOUNT)..."
-	sudo cp $(BUILD)/$(OUTPUT) $(SD_MOUNT)/
+	@echo "Copying $(KERNEL_BIN) to $(SD_MOUNT)..."
+	cp $(KERNEL_BIN) $(SD_MOUNT)/
 	sync
+	@diskutil eject "$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//')"
 	@echo "Done."
 
 clean:
 	cargo clean
 
+monitor-cmds:
+	@echo "### Commands for SOPH monitor:"
+	@echo "load mmc 0:1 0x80200000 kernel.bin"
+	@echo "go 0x80200000"
