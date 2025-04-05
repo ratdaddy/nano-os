@@ -33,7 +33,7 @@ impl Write for PutcharWriter {
 macro_rules! print {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let _ = write!(console::PutcharWriter, $($arg)*);
+        let _ = write!($crate::console::PutcharWriter, $($arg)*);
     }};
 }
 
@@ -44,6 +44,6 @@ macro_rules! println {
     };
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let _ = writeln!(console::PutcharWriter, $($arg)*);
+        let _ = writeln!($crate::console::PutcharWriter, $($arg)*);
     }};
 }

@@ -4,7 +4,10 @@
 #![no_std]
 #![no_main]
 
+#[macro_use]
 mod console;
+
+mod dtb;
 
 use core::panic::PanicInfo;
 
@@ -35,14 +38,36 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
 
     println!("Hart ID: {}", hart_id);
 
-    println!("A1 pointer: {:?}", dtb_ptr);
-    hex_dump(dtb_ptr, 512);
+    println!("print_dtb enabled: {}", cfg!(feature = "print_dtb"));
+
+    #[cfg(feature = "dtb_raw")]
+    {
+        println!("A1 pointer: {:?}", dtb_ptr);
+        hex_dump(dtb_ptr, 512);
+    }
+
+    #[cfg(feature="print_dtb")]
+    unsafe {
+        println!("DTB structure");
+        dtb::print_dtb(dtb_ptr);
+    }
+
+    unsafe {
+        dtb::check_memory_layout(dtb_ptr);
+    }
+
+    let usable_memory;
+    unsafe {
+        usable_memory = dtb::get_usable_memory(dtb_ptr).expect("DTB must provide usable memory");
+    }
+    println!("Usable memory: {:#x} - {:#x}", usable_memory.base, usable_memory.base + usable_memory.size);
 
     loop {
         unsafe { core::arch::asm!("wfi") }
     }
 }
 
+#[allow(dead_code)]
 fn hex_dump(base: *const u8, length: usize) {
     unsafe {
         for offset in (0..length).step_by(16) {

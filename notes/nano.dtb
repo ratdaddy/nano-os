@@ -1,0 +1,875 @@
+  compatible = "cvitek,cv181x"
+  #size-cells = 0x00000002
+  #address-cells = 0x00000002
+  model = "LicheeRv Nano"
+  top_misc_ctrl@3000000
+    compatible = "syscon"
+    reg = 0x0000000003000000 0x0000000000008000
+  clk-reset-controller
+    #reset-cells = 0x00000001
+    compatible = "cvitek,clk-reset"
+    reg = 0x0000000003002000 0x0000000000000008
+  oscillator
+    #clock-cells = 0x00000000
+    compatible = "fixed-clock"
+    clock-frequency = 0x017d7840
+    clock-output-names = 0x6f736300
+    phandle = 0x00000001
+  clock-controller
+    compatible = "cvitek,cv181x-clk"
+    reg = 0x0000000003002000 0x0000000000001000
+    clocks = 0x00000001
+    #clock-cells = 0x00000001
+    phandle = 0x00000002
+  reset-controller
+    #reset-cells = 0x00000001
+    compatible = "cvitek,reset"
+    reg = 0x0000000003003000 0x0000000000000010
+    phandle = 0x00000003
+  restart-controller
+    compatible = "cvitek,restart"
+    reg = 0x0000000005025000 0x0000000000002000
+  tpu
+    compatible = "cvitek,tpu"
+    reg-names = "tdmatiu"
+    reg = 0x000000000c100000 0x0000000000001000 0x000000000c101000 0x0000000000001000
+    clocks = 0x000000020000000f 0x0000000200000010
+    clock-names = 0x636c6b5f7470755f 0x61786900636c6b5f 0x7470755f66616200
+    resets = 0x0000000300000007 0x0000000300000008 0x0000000300000009
+    reset-names = "res_tdmares_tpures_tpusys"
+    interrupts = 0x0000004b00000004 0x0000004c00000004
+    interrupt-names = "tiu_irqtdma_irq"
+    interrupt-parent = 0x00000004
+  mon
+    compatible = "cvitek,mon"
+    reg-names = "pcmonddr_ctrlddr_phydddr_aximonddr_top"
+    reg = 0x0000000001040000 0x0000000000001000 0x0000000008004000 0x0000000000001000 0x0000000008006000 0x0000000000001000 0x0000000008008000 0x0000000000001000 0x000000000800a000 0x0000000000001000
+    interrupts = 0x0000005d00000004
+    interrupt-names = 0x6d6f6e5f69727100
+    interrupt-parent = 0x00000004
+  wiegand0
+    compatible = "cvitek,wiegand"
+    reg-names = 0x77696567616e6400
+    reg = 0x0000000003030000 0x0000000000001000
+    clocks = 0x0000000200000081 0x0000000200000082
+    clock-names = "clk_wgnclk_wgn1"
+    resets = 0x0000000300000056
+    reset-names = 0x7265735f77676e00
+    interrupts = 0x0000004000000004
+    interrupt-parent = 0x00000004
+  wiegand1
+    compatible = "cvitek,wiegand"
+    reg-names = 0x77696567616e6400
+    reg = 0x0000000003031000 0x0000000000001000
+    clocks = 0x0000000200000081 0x0000000200000083
+    clock-names = "clk_wgnclk_wgn1"
+    resets = 0x0000000300000057
+    reset-names = 0x7265735f77676e00
+    interrupts = 0x0000004100000004
+    interrupt-parent = 0x00000004
+  wiegand2
+    compatible = "cvitek,wiegand"
+    reg-names = 0x77696567616e6400
+    reg = 0x0000000003032000 0x0000000000001000
+    clocks = 0x0000000200000081 0x0000000200000084
+    clock-names = "clk_wgnclk_wgn1"
+    resets = 0x0000000300000058
+    reset-names = 0x7265735f77676e00
+    interrupts = 0x0000004200000004
+    interrupt-parent = 0x00000004
+  saradc
+    compatible = "cvitek,saradc"
+    reg-names = "top_domain_saradcrtc_domain_saradc"
+    reg = 0x00000000030f0000 0x0000000000001000 0x000000000502c000 0x0000000000001000
+    clocks = 0x0000000200000015
+    clock-names = "clk_saradc"
+    resets = 0x0000000300000034
+    reset-names = "res_saradc"
+    interrupts = 0x0000006400000001
+    interrupt-parent = 0x00000004
+  rtc
+    compatible = "cvitek,rtc"
+    reg = 0x0000000005026000 0x0000000000001000 0x0000000005025000 0x0000000000001000
+    clocks = 0x0000000200000013
+    clock-names = 0x636c6b5f72746300
+    interrupts = 0x0000001100000004
+    interrupt-parent = 0x00000004
+  cvitek-ion
+    compatible = "cvitek,cvitek-ion"
+    heap_carveout@0
+      compatible = 0x63766974656b2c63 0x617276656f757400
+      memory-region = 0x00000005
+  sysdma_remap
+    compatible = "cvitek,sysdma_remap"
+    reg = 0x0000000003000154 0x0000000000000010
+    ch-remap = 0x0000000000000005 0x0000000200000003 0x0000002600000026 0x0000000400000007
+    int_mux_base = 0x03000298
+    int_mux = 0x0007fc00
+  dma@0x4330000
+    compatible = "snps,dmac-bm"
+    reg = 0x0000000004330000 0x0000000000001000
+    clock-names = "clk_sdma_axi"
+    clocks = 0x000000020000002c
+    dma-channels = 08
+    #dma-cells = 0x00000003
+    dma-requests = 10
+    chan_allocation_order = ""
+    chan_priority = 01
+    block_size = 0x00000400
+    dma-masters = 02
+    data-width = 0x0000000400000004
+    axi_tr_width = 0x00000004
+    block-ts = 0x0000000f
+    interrupts = 0x0000001d00000004
+    interrupt-parent = 0x00000004
+    phandle = 0x00000010
+  cv-wd@0x3010000
+    compatible = "snps,dw-wdt"
+    reg = 0x0000000003010000 0x0000000000001000
+    resets = 0x0000000300000030
+    clocks = 0x00000006
+    interrupts = 0x0000003a00000004
+  pwm@3060000
+    compatible = "cvitek,cvi-pwm"
+    reg = 0x0000000003060000 0x0000000000001000
+    clocks = 0x0000000200000033
+    #pwm-cells = 0x00000004
+    status = "okay"
+  pwm@3061000
+    compatible = "cvitek,cvi-pwm"
+    reg = 0x0000000003061000 0x0000000000001000
+    clocks = 0x0000000200000033
+    #pwm-cells = 0x00000004
+    status = "okay"
+  pwm@3062000
+    compatible = "cvitek,cvi-pwm"
+    reg = 0x0000000003062000 0x0000000000001000
+    clocks = 0x0000000200000033
+    #pwm-cells = 0x00000004
+    status = "okay"
+  pwm@3063000
+    compatible = "cvitek,cvi-pwm"
+    reg = 0x0000000003063000 0x0000000000001000
+    clocks = 0x0000000200000033
+    #pwm-cells = 0x00000004
+  pclk
+    #clock-cells = 0x00000000
+    compatible = "fixed-clock"
+    clock-frequency = 0x017d7840
+    phandle = 0x00000006
+  cvi-spif@10000000
+    compatible = 0x63766974656b2c63 0x76692d7370696600
+    bus-num = 0x00000000
+    reg = 0x0000000010000000 0x0000000010000000
+    reg-names = "spif"
+    sck-div = 0x00000003
+    sck_mhz = 0x0000012c
+    spi-max-frequency = 0x047868c0
+    interrupts = 0x0000005f00000004
+    interrupt-parent = 0x00000004
+    spiflash
+      compatible = "jedec,spi-nor"
+      spi-rx-bus-width = 0x00000004
+      spi-tx-bus-width = 0x00000004
+  spi0@04180000
+    compatible = 0x736e70732c64772d 0x6170622d73736900
+    reg = 0x0000000004180000 0x0000000000010000
+    clocks = 0x0000000200000071
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    interrupts = 0x0000003600000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+    num-cs = 0x00000001
+    spidev@0
+      compatible = "rohm,dh2228fv"
+      spi-max-frequency = 0x000f4240
+      reg = 0x00000000
+  spi1@04190000
+    compatible = 0x736e70732c64772d 0x6170622d73736900
+    reg = 0x0000000004190000 0x0000000000010000
+    clocks = 0x0000000200000071
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    interrupts = 0x0000003700000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+    num-cs = 0x00000001
+    spidev@0
+      compatible = "rohm,dh2228fv"
+      spi-max-frequency = 0x000f4240
+      reg = 0x00000000
+  spi2@041A0000
+    compatible = 0x736e70732c64772d 0x6170622d73736900
+    reg = 0x00000000041a0000 0x0000000000010000
+    clocks = 0x0000000200000071
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    bias-pull-up =
+    interrupts = 0x0000003800000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+    num-cs = 0x00000001
+    spidev@0
+      compatible = "rohm,dh2228fv"
+      spi-max-frequency = 0x000f4240
+      reg = 0x00000000
+    st7789@0
+      compatible = 0x736974726f6e6978 0x2c73743737383900
+      reg = 0x00000000
+      status = "disabled"
+      spi-max-frequency = 0x04c4b400
+      spi-cpol =
+      spi-cpha =
+      rotate = 0x00000000
+      fps = 0x0000003c
+      rgb =
+      buswidth = 0x00000008
+      dc = ""
+      reset = 00 00 00 08 00 00 00 0e 00 00 00 01
+      debug = 0x00000000
+  spi3@041B0000
+    compatible = 0x736e70732c64772d 0x6170622d73736900
+    reg = 0x00000000041b0000 0x0000000000010000
+    clocks = 0x0000000200000071
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    interrupts = 0x0000003900000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+    num-cs = 0x00000001
+    spidev@0
+      compatible = "rohm,dh2228fv"
+      spi-max-frequency = 0x000f4240
+      reg = 0x00000000
+  serial@04140000
+    compatible = "snps,dw-apb-uart"
+    reg = 0x0000000004140000 0x0000000000001000
+    reg-shift = 0x00000002
+    reg-io-width = 0x00000004
+    status = "okay"
+    interrupts = 0x0000002c00000004
+    interrupt-parent = 0x00000004
+    clocks = 0x0000000200000039
+  serial@04150000
+    compatible = "snps,dw-apb-uart"
+    reg = 0x0000000004150000 0x0000000000001000
+    reg-shift = 0x00000002
+    reg-io-width = 0x00000004
+    status = "okay"
+    interrupts = 0x0000002d00000004
+    interrupt-parent = 0x00000004
+    clocks = 0x000000020000003b
+  serial@04160000
+    compatible = "snps,dw-apb-uart"
+    reg = 0x0000000004160000 0x0000000000001000
+    reg-shift = 0x00000002
+    reg-io-width = 0x00000004
+    status = "okay"
+    interrupts = 0x0000002e00000004
+    interrupt-parent = 0x00000004
+    clocks = 0x000000020000003d
+  serial@04170000
+    compatible = "snps,dw-apb-uart"
+    reg = 0x0000000004170000 0x0000000000001000
+    reg-shift = 0x00000002
+    reg-io-width = 0x00000004
+    status = "okay"
+    interrupts = 0x0000002f00000004
+    interrupt-parent = 0x00000004
+    clocks = 0x000000020000003f
+  serial@041C0000
+    compatible = "snps,dw-apb-uart"
+    reg = 0x00000000041c0000 0x0000000000001000
+    clock-frequency = 0x017d7840
+    reg-shift = 0x00000002
+    reg-io-width = 0x00000004
+    status = "disabled"
+    interrupts = 0x0000003000000004
+    interrupt-parent = 0x00000004
+  gpio@03020000
+    compatible = "snps,dw-apb-gpio"
+    reg = 0x0000000003020000 0x0000000000001000
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    gpio-controller@0
+      compatible = "snps,dw-apb-gpio-port"
+      bank-name = "porta"
+      gpio-controller =
+      #gpio-cells = 0x00000002
+      snps,nr-gpios = 0x00000020
+      reg = 0x00000000
+      interrupt-controller =
+      interrupts = 0x0000003c00000004
+      interrupt-parent = 0x00000004
+      phandle = 0x00000008
+  gpio@03021000
+    compatible = "snps,dw-apb-gpio"
+    reg = 0x0000000003021000 0x0000000000001000
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    gpio-controller@1
+      compatible = "snps,dw-apb-gpio-port"
+      bank-name = "portb"
+      gpio-controller =
+      #gpio-cells = 0x00000002
+      snps,nr-gpios = 0x00000020
+      reg = 0x00000000
+      interrupt-controller =
+      interrupts = 0x0000003d00000004
+      interrupt-parent = 0x00000004
+      phandle = 0x00000009
+  gpio@03022000
+    compatible = "snps,dw-apb-gpio"
+    reg = 0x0000000003022000 0x0000000000001000
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    gpio-controller@2
+      compatible = "snps,dw-apb-gpio-port"
+      bank-name = "portc"
+      gpio-controller =
+      #gpio-cells = 0x00000002
+      snps,nr-gpios = 0x00000020
+      reg = 0x00000000
+      interrupt-controller =
+      interrupts = 0x0000003e00000004
+      interrupt-parent = 0x00000004
+  gpio@03023000
+    compatible = "snps,dw-apb-gpio"
+    reg = 0x0000000003023000 0x0000000000001000
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    gpio-controller@3
+      compatible = "snps,dw-apb-gpio-port"
+      bank-name = "portd"
+      gpio-controller =
+      #gpio-cells = 0x00000002
+      snps,nr-gpios = 0x00000020
+      reg = 0x00000000
+      interrupt-controller =
+      interrupts = 0x0000003f00000004
+      interrupt-parent = 0x00000004
+  gpio@05021000
+    compatible = "snps,dw-apb-gpio"
+    reg = 0x0000000005021000 0x0000000000001000
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    gpio-controller@4
+      compatible = "snps,dw-apb-gpio-port"
+      bank-name = "porte"
+      gpio-controller =
+      #gpio-cells = 0x00000002
+      snps,nr-gpios = 0x00000020
+      reg = 0x00000000
+      interrupt-controller =
+      interrupts = 0x0000004600000004
+      interrupt-parent = 0x00000004
+      phandle = 0x00000007
+  i2c@04000000
+    compatible = "snps,designware-i2c"
+    clocks = 0x0000000200000072
+    reg = 0x0000000004000000 0x0000000000001000
+    clock-frequency = 0x00061a80
+    #size-cells = 0x00000000
+    #address-cells = 0x00000001
+    resets = 0x000000030000001b
+    reset-names = "i2c0"
+    interrupts = 0x0000003100000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+  i2c@04010000
+    compatible = "snps,designware-i2c"
+    clocks = 0x0000000200000072
+    reg = 0x0000000004010000 0x0000000000001000
+    clock-frequency = 0x00061a80
+    #size-cells = 0x00000000
+    #address-cells = 0x00000001
+    resets = 0x000000030000001c
+    reset-names = "i2c1"
+    interrupts = 0x0000003200000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+  i2c@04020000
+    compatible = "snps,designware-i2c"
+    clocks = 0x0000000200000072
+    reg = 0x0000000004020000 0x0000000000001000
+    clock-frequency = 0x000186a0
+    resets = 0x000000030000001d
+    reset-names = "i2c2"
+    interrupts = 0x0000003300000004
+    interrupt-parent = 0x00000004
+    status = "disabled"
+  i2c@04030000
+    compatible = "snps,designware-i2c"
+    clocks = 0x0000000200000072
+    reg = 0x0000000004030000 0x0000000000001000
+    clock-frequency = 0x00061a80
+    resets = 0x000000030000001e
+    reset-names = "i2c3"
+    interrupts = 0x0000003400000004
+    interrupt-parent = 0x00000004
+    status = "okay"
+  i2c@04040000
+    compatible = "snps,designware-i2c"
+    clocks = 0x0000000200000072
+    reg = 0x0000000004040000 0x0000000000001000
+    clock-frequency = 0x00061a80
+    resets = 0x000000030000001f
+    reset-names = "i2c4"
+    interrupts = 0x0000003500000004
+    interrupt-parent = 0x00000004
+    scl-pinmux = 03 00 10 f0 00 00 00 02 00 00 00 03
+    sda-pinmux = 03 00 10 f4 00 00 00 02 00 00 00 03
+    scl-gpios = "       "
+    sda-gpios = "       "
+    status = "okay"
+    gt9xx@14
+      compatible = "goodix,gt9xx"
+      reg = 0x00000014
+      goodix,irq-gpio = ""
+      goodix,rst-gpio = ""
+      status = "okay"
+    hynitron@5a
+      compatible = 0x68796e6974726f6e 0x2c68796e5f747300 0x68796e2c37787800
+      reg = 0x0000005a
+      irq-gpio = ""
+      hynitron,irq-gpio = ""
+      reset-gpio = ""
+      hynitron,reset-gpio = ""
+      max-touch-number = 0x00000005
+      hynitron,max-touch-number = 0x00000005
+      display-coords = 0x0000000000000000 0x000001e000000280
+      hynitron,display-coords = 0x0000017000000228
+      pos-swap = 0x00000000
+      posx-reverse = 0x00000001
+      posy-reverse = 0x00000001
+      status = "okay"
+  eth_csrclk
+    clock-output-names = "eth_csrclk"
+    clock-frequency = 0x0ee6b280
+    #clock-cells = 0x00000000
+    compatible = "fixed-clock"
+    phandle = 0x0000000a
+  eth_ptpclk
+    clock-output-names = "eth_ptpclk"
+    clock-frequency = 0x02faf080
+    #clock-cells = 0x00000000
+    compatible = "fixed-clock"
+    phandle = 0x0000000b
+  stmmac-axi-config
+    snps,wr_osr_lmt = 0x00000001
+    snps,rd_osr_lmt = 0x00000002
+    snps,blen = "
+    phandle = 0x0000000c
+  rx-queues-config
+    snps,rx-queues-to-use = 0x00000001
+    phandle = 0x0000000d
+    queue0
+  tx-queues-config
+    snps,tx-queues-to-use = 0x00000001
+    phandle = 0x0000000e
+    queue0
+  ethernet@4070000
+    compatible = 0x63766974656b2c65 0x746865726e657400
+    reg = 0x0000000004070000 0x0000000000010000
+    clock-names = "stmmacethptp_ref"
+    clocks = 0x0000000a0000000b
+    tx-fifo-depth = 0x00002000
+    rx-fifo-depth = 0x00002000
+    snps,multicast-filter-bins = 0x00000000
+    snps,perfect-filter-entries = 0x00000001
+    snps,txpbl = 0x00000008
+    snps,rxpbl = 0x00000008
+    snps,aal =
+    snps,axi-config = 0x0000000c
+    snps,mtl-rx-config = 0x0000000d
+    snps,mtl-tx-config = 0x0000000e
+    phy-mode = "rmii"
+    interrupt-names = "macirq"
+    interrupts = 0x0000001f00000004
+    interrupt-parent = 0x00000004
+  cv-sd@4310000
+    compatible = "cvitek,cv181x-sd"
+    reg = 0x0000000004310000 0x0000000000001000
+    reg-names = "core_mem"
+    bus-width = 0x00000004
+    cap-sd-highspeed =
+    cap-mmc-highspeed =
+    sd-uhs-sdr12 =
+    sd-uhs-sdr25 =
+    sd-uhs-sdr50 =
+    sd-uhs-sdr104 =
+    no-sdio =
+    no-mmc =
+    src-frequency = 0x165a0bc0
+    min-frequency = 0x00061a80
+    max-frequency = 0x017d7840
+    64_addressing =
+    reset_tx_rx_phy =
+    reset-names = "sdhci"
+    pll_index = 0x00000006
+    pll_reg = 0x03002070
+    cvi-cd-gpios = 00 00 00 08 00 00 00 0d 00 00 00 01
+    interrupts = 0x0000002400000004
+    interrupt-parent = 0x00000004
+    no-1-8-v =
+  wifi-sd@4320000
+    compatible = "cvitek,cv181x-sdio"
+    bus-width = 0x00000004
+    reg = 0x0000000004320000 0x0000000000001000
+    reg_names = "core_mem"
+    src-frequency = 0x165a0bc0
+    min-frequency = 0x00061a80
+    max-frequency = 0x017d7840
+    64_addressing =
+    reset_tx_rx_phy =
+    non-removable =
+    pll_index = 0x00000007
+    pll_reg = 0x0300207c
+    no-mmc =
+    no-sd =
+    status = "okay"
+    interrupts = 0x0000002600000004
+    interrupt-parent = 0x00000004
+  i2s_mclk
+    clock-output-names = "i2s_mclk"
+    clock-frequency = 0x01770000
+    #clock-cells = 0x00000000
+    compatible = "fixed-clock"
+    phandle = 0x0000000f
+  i2s_subsys
+    compatible = "cvitek,i2s_tdm_subsys"
+    reg = 0x0000000004108000 0x0000000000000100
+    clocks = 00 00 00 0f 00 00 00 02 00 00 00 04 00 00 00 02 00 00 00 2d 00 00 00 02 00 00 00 2e 00 00 00 02 00 00 00 2f 00 00 00 02 00 00 00 30
+    clock-names = "i2sclkclk_a0pllclk_sdma_aud0clk_sdma_aud1clk_sdma_aud2clk_sdma_aud3"
+    master_base = 0x04110000
+  i2s@04100000
+    compatible = "cvitek,cv1835-i2s"
+    reg = 0x0000000004100000 0x0000000000002000
+    clocks = 0x0000000f00000000
+    clock-names = "i2sclk"
+    dev-id = 0x00000000
+    #sound-dai-cells = 0x00000000
+    dmas = 0x0000001000000000 0x0000000100000001
+    dma-names = "rx"
+    capability = "rx"
+    mclk_out = "false"
+    interrupts = 0x0000002800000004
+    interrupt-parent = 0x00000004
+  i2s@04130000
+    compatible = "cvitek,cv1835-i2s"
+    reg = 0x0000000004130000 0x0000000000002000
+    clocks = 0x0000000f00000000
+    clock-names = "i2sclk"
+    dev-id = 0x00000003
+    #sound-dai-cells = 0x00000000
+    dmas = 0x0000001000000007 0x0000000100000001
+    dma-names = "tx"
+    capability = "tx"
+    mclk_out = "true"
+    interrupts = 0x0000002b00000004
+    interrupt-parent = 0x00000004
+  adc@0300A100
+    compatible = "cvitek,cv182xaadc"
+    reg = 0x000000000300a100 0x0000000000000100
+    clocks = 0x0000000f00000000
+    clock-names = "i2sclk"
+    clk_source = 0x04130000
+  dac@0300A000
+    compatible = "cvitek,cv182xadac"
+    reg = 0x000000000300a000 0x0000000000000100
+    clocks = 0x0000000f00000000
+    clock-names = "i2sclk"
+    status = "okay"
+  pdm@0x041D0C00
+    compatible = "cvitek,cv1835pdm"
+    reg = 0x00000000041d0c00 0x0000000000000100
+    clocks = 0x0000000f00000000
+    clock-names = "i2sclk"
+  sound_adc
+    compatible = "cvitek,cv182xa-adc"
+    cvi,model = 0x4356313832584100
+    cvi,card_name = "cv182xa_adc"
+  sound_dac
+    compatible = "cvitek,cv182xa-dac"
+    cvi,model = 0x4356313832584100
+    cvi,card_name = "cv182xa_dac"
+  wifi_pin
+    compatible = 0x63766974656b2c77 0x6966692d70696e00
+    poweron-gpio = ""
+    wakeup-gpio = ""
+  bt_pin
+    compatible = "cvitek,bt-pin"
+    poweron-gpio = "    "
+  cif
+    compatible = "cvitek,cif"
+    reg = 0x000000000a0c2000 0x0000000000002000 0x000000000a0d0000 0x0000000000001000 0x000000000a0c4000 0x0000000000002000 0x000000000a0c6000 0x0000000000002000 0x0000000003001c30 0x0000000000000030
+    reg-names = "csi_mac0csi_wrap0csi_mac1csi_mac2pad_ctrl"
+    snsr-reset = 00 00 00 07 00 00 00 01 00 00 00 01
+    resets = 0x0000000300000046 0x0000000300000048 0x0000000300000047 0x0000000300000049
+    reset-names = "phy0phy1phy-apb0phy-apb1"
+    clocks = 0x000000020000005b 0x000000020000005c 0x0000000200000088 0x0000000200000003 0x0000000200000005 0x0000000200000002
+    clock-names = "clk_cam0clk_cam1clk_sys_2clk_mipimpllclk_disppllclk_fpll"
+    interrupts = 0x0000001a00000004 0x0000001b00000004
+    interrupt-names = "csi0csi1"
+    interrupt-parent = 0x00000004
+  mipi_tx
+    compatible = "cvitek,mipi_tx"
+    reset-gpio = 00 00 00 07 00 00 00 00 00 00 00 01
+    pwm-gpio = 00 00 00 07 00 00 00 02 00 00 00 01
+    clocks = 0x0000000200000069 0x000000020000006a
+    clock-names = "clk_dispclk_dsi"
+    status = "okay"
+  sys
+    compatible = "cvitek,sys"
+  base
+    compatible = "cvitek,base"
+    reg = 0x000000000a0c8000 0x0000000000000020
+    reg-names = 0x7669705f73797300
+  vi
+    compatible = "cvitek,vi"
+    reg = 0x000000000a000000 0x0000000000080000
+    clocks = 0x0000000200000050 0x0000000200000051 0x0000000200000088 0x000000020000009a 0x000000020000004f 0x0000000200000093 0x000000020000009d 0x000000020000005f 0x000000020000005d 0x000000020000005e 0x000000020000009f
+    clock-names = "clk_sys_0clk_sys_1clk_sys_2clk_sys_3clk_axiclk_csi_beclk_rawclk_isp_topclk_csi_mac0clk_csi_mac1clk_csi_mac2"
+    clock-freq-vip-sys1 = 0x11e1a300
+    interrupts = 0x0000001800000004
+    interrupt-parent = 0x00000004
+    interrupt-names = 0x69737000
+  vpss
+    compatible = "cvitek,vpss"
+    reg = 0x000000000a080000 0x0000000000010000 0x000000000a0d1000 0x0000000000000100
+    reg-names = "sc"
+    clocks = 0x0000000200000050 0x0000000200000051 0x0000000200000088 0x0000000200000060 0x0000000200000061 0x0000000200000062 0x0000000200000063 0x0000000200000064 0x0000000200000065 0x0000000200000066
+    clock-names = "clk_sys_0clk_sys_1clk_sys_2clk_img_dclk_img_vclk_sc_topclk_sc_dclk_sc_v1clk_sc_v2clk_sc_v3"
+    clock-freq-vip-sys1 = 0x11e1a300
+    interrupts = 0x0000001900000004
+    interrupt-names = "sc"
+    interrupt-parent = 0x00000004
+  ive
+    compatible = "cvitek,ive"
+    reg = 0x000000000a0a0000 0x0000000000003100
+    reg-names = "ive_base"
+    interrupt-names = 0x6976655f69727100
+    interrupt-parent = 0x00000004
+    interrupts = 0x0000006100000004
+  vo
+    compatible = "cvitek,vo"
+    reg = 0x000000000a080000 0x0000000000010000 0x000000000a0c8000 0x00000000000000a0 0x000000000a0d1000 0x0000000000000100
+    reg-names = 0x7363007669705f73 0x7973006470687900
+    clocks = 0x0000000200000069 0x000000020000006a 0x0000000200000068
+    clock-names = 0x636c6b5f64697370 0x00636c6b5f647369 0x00636c6b5f627400
+  reserved-memory
+    #size-cells = 0x00000002
+    #address-cells = 0x00000002
+    ranges =
+    mmode_resv0@80000000
+      reg = 0x0000000080000000 0x0000000000040000
+      phandle = 0x00000014
+    cvifb
+      alloc-ranges = 0x000000008ab30000 0x00000000007d0000
+      size = 0x00000000007d0000
+      status = "okay"
+      phandle = 0x00000011
+    ion
+      compatible = "ion-region"
+      size = 0x0000000004b00000
+      phandle = 0x00000005
+  cvifb
+    compatible = "cvitek,fb"
+    memory-region = 0x00000011
+    reg = 0x000000000a088000 0x0000000000001000
+    reg-names = "disp"
+    status = "okay"
+  dwa
+    compatible = "cvitek,dwa"
+    reg = 0x000000000a0c0000 0x0000000000001000
+    reg-names = 0x64776100
+    clocks = 0x0000000200000050 0x0000000200000051 0x0000000200000088 0x000000020000009a 0x000000020000009b 0x0000000200000067
+    clock-names = "clk_sys_0clk_sys_1clk_sys_2clk_sys_3clk_sys_4clk_dwa"
+    clock-freq-vip-sys1 = 0x11e1a300
+    interrupts = 0x0000001c00000004
+    interrupt-names = 0x64776100
+    interrupt-parent = 0x00000004
+  rgn
+    compatible = "cvitek,rgn"
+  vcodec
+    compatible = "cvitek,asic-vcodec"
+    reg = 0x000000000b020000 0x0000000000010000 0x000000000b010000 0x0000000000010000 0x000000000b030000 0x0000000000000100 0x000000000b058000 0x0000000000000100 0x000000000b050000 0x0000000000000400
+    reg-names = "h265h264vc_ctrlvc_sbmvc_addr_remap"
+    clocks = 0x0000000200000053 0x0000000200000055 0x0000000200000059 0x0000000200000056 0x000000020000005a 0x0000000200000054 0x0000000200000087 0x000000020000008e 0x000000020000008b
+    clock-names = "clk_axi_video_codecclk_h264cclk_apb_h264cclk_h265cclk_apb_h265cclk_vc_src0clk_vc_src1clk_vc_src2clk_cfg_reg_vc"
+    interrupts = 0x0000001600000004 0x0000001500000004 0x0000001700000004
+    interrupt-names = "h265h264sbm"
+    interrupt-parent = 0x00000004
+  jpu
+    compatible = "cvitek,asic-jpeg"
+    reg = 0x000000000b000000 0x0000000000000300 0x000000000b030000 0x0000000000000100 0x000000000b058000 0x0000000000000100
+    reg-names = "jpegvc_ctrlvc_sbm"
+    clocks = 0x0000000200000053 0x0000000200000057 0x0000000200000058 0x0000000200000054 0x0000000200000087 0x000000020000008e 0x000000020000008b
+    clock-names = "clk_axi_video_codecclk_jpegclk_apb_jpegclk_vc_src0clk_vc_src1clk_vc_src2clk_cfg_reg_vc"
+    resets = 0x0000000300000004
+    reset-names = "jpeg"
+    interrupts = 0x0000001400000004
+    interrupt-names = "jpeg"
+    interrupt-parent = 0x00000004
+  cvi_vc_drv
+    compatible = "cvitek,cvi_vc_drv"
+    reg = 0x000000000b030000 0x0000000000000100 0x000000000b058000 0x0000000000000100 0x000000000b050000 0x0000000000000400
+    reg-names = "vc_ctrlvc_sbmvc_addr_remap"
+  rtos_cmdqu
+    compatible = "cvitek,rtos_cmdqu"
+    reg = 0x0000000001900000 0x0000000000001000
+    reg-names = 0x6d61696c626f7800
+    interrupts = 0x0000006500000004
+    interrupt-names = 0x6d61696c626f7800
+    interrupt-parent = 0x00000004
+  usb@04340000
+    compatible = "cvitek,cv182x-usb"
+    reg = 0x0000000004340000 0x0000000000010000 0x0000000003006000 0x0000000000000058
+    dr_mode = 0x6f746700
+    g-use-dma =
+    g-rx-fifo-size = 0x00000218
+    g-np-tx-fifo-size = 0x00000020
+    g-tx-fifo-size = 0x0000030000000200 0x0000020000000180 0x0000008000000080
+    clocks = 0x0000000200000047 0x0000000200000048 0x0000000200000049 0x000000020000004a 0x000000020000004b
+    clock-names = "clk_axiclk_apbclk_125mclk_33kclk_12m"
+    vbus-gpio = "       "
+    status = "okay"
+    interrupts = 0x0000001e00000004
+    interrupt-parent = 0x00000004
+  thermal@030E0000
+    compatible = "cvitek,cv181x-thermal"
+    reg = 0x00000000030e0000 0x0000000000010000
+    clocks = 0x0000000200000014
+    clock-names = "clk_tempsen"
+    reset-names = 0x74656d7073656e00
+    #thermal-sensor-cells = 0x00000001
+    interrupts = 0x0000001000000004
+    interrupt-names = 0x74656d7073656e00
+    phandle = 0x00000012
+  thermal-zones
+    soc_thermal_0
+      polling-delay-passive = 0x000003e8
+      polling-delay = 0x000003e8
+      thermal-sensors = 0x0000001200000000
+      trips
+        soc_thermal_trip_0
+          temperature = 0x0001adb0
+          hysteresis = 0x00001388
+          type = 0x7061737369766500
+        soc_thermal_trip_1
+          temperature = 0x0001d4c0
+          hysteresis = 0x00001388
+          type = 0x7061737369766500
+        soc_thermal_crtical_0
+          temperature = 0x0001fbd0
+          hysteresis = 0x00000000
+          type = "critical"
+  cviaudio_core
+    compatible = "cvitek,audio"
+  audio_clock
+    compatible = "fixed-clock"
+    #clock-cells = 0x00000000
+    clock-frequency = 0x01770000
+  aliases
+    i2c0 = "/i2c@04000000"
+    i2c1 = "/i2c@04010000"
+    i2c2 = "/i2c@04020000"
+    i2c3 = "/i2c@04030000"
+    i2c4 = "/i2c@04040000"
+    serial0 = "/serial@04140000"
+    serial1 = "/serial@04150000"
+    serial2 = "/serial@04160000"
+    serial3 = "/serial@04170000"
+    serial4 = "/serial@041C0000"
+    ethernet0 = "/ethernet@4070000"
+  chosen
+    boot-hartid = 0x00000000
+    bootargs = 0x726f6f743d2f6465 0x762f6d6d63626c6b 0x30703220726f6f74 0x7761697420727720 0x636f6e736f6c653d 0x74747953302c3131 0x3532303020656172 0x6c79636f6e3d7362 0x692072697363762e 0x6677737a3d307838 0x303030302072656c 0x65617365206c6f67 0x6c6576656c3d3000
+    stdout-path = 0x73657269616c3000
+  cpus
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    timebase-frequency = 0x017d7840
+    cpu-map
+      cluster0
+        core0
+          cpu = 0x00000001
+    cpu@0
+      device_type = 0x63707500
+      reg = 0x00000000
+      status = "okay"
+      compatible = "riscv"
+      riscv,isa = "rv64imafdvcsu"
+      mmu-type = "riscv,sv39"
+      clock-frequency = 0x017d7840
+      interrupt-controller
+        #interrupt-cells = 0x00000001
+        interrupt-controller =
+        compatible = "riscv,cpu-intc"
+        phandle = 0x00000013
+  soc
+    #address-cells = 0x00000002
+    #size-cells = 0x00000002
+    compatible = "simple-bus"
+    ranges =
+    interrupt-controller@70000000
+      riscv,ndev = 0x00000065
+      riscv,max-priority = 0x00000007
+      reg-names = 0x636f6e74726f6c00
+      reg = 0x0000000070000000 0x0000000004000000
+      interrupts-extended = 0x00000013ffffffff 0x0000001300000009
+      interrupt-controller =
+      compatible = "riscv,plic0"
+      #interrupt-cells = 0x00000002
+      #address-cells = 0x00000000
+      phandle = 0x00000004
+    clint@74000000
+      interrupts-extended = 0x0000001300000003 0x0000001300000007
+      reg = 0x0000000074000000 0x0000000000010000
+      compatible = "riscv,clint0"
+      clint,has-no-64bit-mmio =
+  cooling
+    clocks = 0x0000000200000098 0x000000020000000f
+    clock-names = "clk_cpuclk_tpu_axi"
+    dev-freqs = 0x32a9f8801dcd6500 0x1954fc40165a0bc0 0x1954fc4011e1a300
+    compatible = "sophgo,cooling"
+    #cooling-cells = 0x00000002
+  memory@80000000
+    device_type = "memory"
+    reg = 0x0000000080000000 0x000000000fe00000
+  fast_image
+    compatible = "cvitek,rtos_image"
+    reg-names = "rtos_region"
+    reg = 0x000000008fe00000 0x0000000000200000
+    ion-size = 0x01600000
+  spi4@gpio
+    compatible = "spi-gpio"
+    sck-gpio = "
+    miso-gpio = "
+    mosi-gpio = "
+    cs-gpio = 00 00 00 08 00 00 00 18 00 00 00 01
+    num-chipselects = 0x00000001
+    status = "okay"
+    spidev@0
+      compatible = "spidev"
+      reg = 0x00000000
+  i2c5@gpio
+    compatible = "i2c-gpio"
+    scl-gpios = 00 00 00 08 00 00 00 0f 00 00 00 06
+    sda-gpios = 00 00 00 08 00 00 00 1b 00 00 00 06
+    i2c-gpio,delay-us = 0x00000005
+    status = "okay"
+  gpio-keys
+    compatible = "gpio-keys"
+    key-user
+      label = "User Key"
+      linux,code = 0x000001af
+      debounce-interval = 0x00000001
+      gpios = 00 00 00 08 00 00 00 1e 00 00 00 01
+  leds
+    compatible = "gpio-leds"
+    led-user
+      gpios = "
+      linux,default-trigger = "activity"
+Usable memory: 0x80000000 - 0x8fe00000

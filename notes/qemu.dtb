@@ -1,0 +1,159 @@
+  #address-cells = 0x00000002
+  #size-cells = 0x00000002
+  compatible = "riscv-virtio"
+  model = "riscv-virtio,qemu"
+  reserved-memory
+    #address-cells = 0x00000002
+    #size-cells = 0x00000002
+    ranges =
+    mmode_resv1@80000000
+      reg = 0x0000000080000000 0x0000000000040000
+      no-map =
+    mmode_resv0@80040000
+      reg = 0x0000000080040000 0x0000000000020000
+      no-map =
+  poweroff
+    value = 0x00005555
+    offset = 0x00000000
+    regmap = 0x00000004
+    compatible = 0x737973636f6e2d70 0x6f7765726f666600
+  reboot
+    value = 0x00007777
+    offset = 0x00000000
+    regmap = 0x00000004
+    compatible = "syscon-reboot"
+  platform-bus@4000000
+    interrupt-parent = 0x00000003
+    ranges = 0x0000000000000000 0x0400000002000000
+    #address-cells = 0x00000001
+    #size-cells = 0x00000001
+    compatible = "qemu,platformsimple-bus"
+  memory@80000000
+    device_type = "memory"
+    reg = 0x0000000080000000 0x0000000010000000
+  cpus
+    #address-cells = 0x00000001
+    #size-cells = 0x00000000
+    timebase-frequency = 0x00989680
+    cpu@0
+      phandle = 0x00000001
+      device_type = 0x63707500
+      reg = 0x00000000
+      status = "okay"
+      compatible = "riscv"
+      riscv,cbop-block-size = 0x00000040
+      riscv,cboz-block-size = 0x00000040
+      riscv,cbom-block-size = 0x00000040
+      riscv,isa-extensions = "imafdchzic64bzicbomzicbopzicbozziccamoaziccifzicclsmziccrsezicntrzicsrzifenceizihintntlzihintpausezihpmzmmulza64rszaamozalrsczawrszfazcazcdzbazbbzbczbsssccptrsscounterenwsstcsstvalasstvecdsvadusvvptc"
+      riscv,isa-base = "rv64i"
+      riscv,isa = "rv64imafdch_zic64b_zicbom_zicbop_zicboz_ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicsr_zifencei_zihintntl_zihintpause_zihpm_zmmul_za64rs_zaamo_zalrsc_zawrs_zfa_zca_zcd_zba_zbb_zbc_zbs_ssccptr_sscounterenw_sstc_sstvala_sstvecd_svadu_svvptc"
+      mmu-type = "riscv,sv57"
+      interrupt-controller
+        #interrupt-cells = 0x00000001
+        interrupt-controller =
+        compatible = "riscv,cpu-intc"
+        phandle = 0x00000002
+    cpu-map
+      cluster0
+        core0
+          cpu = 0x00000001
+  pmu
+    compatible = "riscv,pmu"
+  fw-cfg@10100000
+    dma-coherent =
+    reg = 0x0000000010100000 0x0000000000000018
+    compatible = "qemu,fw-cfg-mmio"
+  flash@20000000
+    bank-width = 0x00000004
+    reg = 0x0000000020000000 0x0000000002000000 0x0000000022000000 0x0000000002000000
+    compatible = "cfi-flash"
+  chosen
+    stdout-path = "/soc/serial@10000000"
+    rng-seed = 0xcdcae6b581f23292 0x284ca7322212c0ac 0xfbecfd54e9fe1ed5 0x2e259be53ebc0566
+  soc
+    #address-cells = 0x00000002
+    #size-cells = 0x00000002
+    compatible = "simple-bus"
+    ranges =
+    rtc@101000
+      interrupts = 0x0000000b
+      interrupt-parent = 0x00000003
+      reg = 0x0000000000101000 0x0000000000001000
+      compatible = "google,goldfish-rtc"
+    serial@10000000
+      interrupts = 0x0000000a
+      interrupt-parent = 0x00000003
+      clock-frequency = 0x00384000
+      reg = 0x0000000010000000 0x0000000000000100
+      compatible = "ns16550a"
+    test@100000
+      phandle = 0x00000004
+      reg = 0x0000000000100000 0x0000000000001000
+      compatible = "sifive,test1sifive,test0syscon"
+    virtio_mmio@10008000
+      interrupts = 0x00000008
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010008000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10007000
+      interrupts = 0x00000007
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010007000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10006000
+      interrupts = 0x00000006
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010006000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10005000
+      interrupts = 0x00000005
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010005000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10004000
+      interrupts = 0x00000004
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010004000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10003000
+      interrupts = 0x00000003
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010003000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10002000
+      interrupts = 0x00000002
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010002000 0x0000000000001000
+      compatible = "virtio,mmio"
+    virtio_mmio@10001000
+      interrupts = 0x00000001
+      interrupt-parent = 0x00000003
+      reg = 0x0000000010001000 0x0000000000001000
+      compatible = "virtio,mmio"
+    plic@c000000
+      phandle = 0x00000003
+      riscv,ndev = 0x0000005f
+      reg = 0x000000000c000000 0x0000000000600000
+      interrupts-extended = 0x00000002ffffffff 0x0000000200000009
+      interrupt-controller =
+      compatible = "sifive,plic-1.0.0riscv,plic0"
+      #address-cells = 0x00000000
+      #interrupt-cells = 0x00000001
+    clint@2000000
+      interrupts-extended = 0x0000000200000003 0x0000000200000007
+      reg = 0x0000000002000000 0x0000000000010000
+      compatible = "sifive,clint0riscv,clint0"
+    pci@30000000
+      interrupt-map-mask = 0x0000180000000000 0x0000000000000007
+      interrupt-map = 0x0000000000000000 0x0000000000000001 0x0000000300000020 0x0000000000000000 0x0000000000000002 0x0000000300000021 0x0000000000000000 0x0000000000000003 0x0000000300000022 0x0000000000000000 0x0000000000000004 0x0000000300000023 0x0000080000000000 0x0000000000000001 0x0000000300000021 0x0000080000000000 0x0000000000000002 0x0000000300000022 0x0000080000000000 0x0000000000000003 0x0000000300000023 0x0000080000000000 0x0000000000000004 0x0000000300000020 0x0000100000000000 0x0000000000000001 0x0000000300000022 0x0000100000000000 0x0000000000000002 0x0000000300000023 0x0000100000000000 0x0000000000000003 0x0000000300000020 0x0000100000000000 0x0000000000000004 0x0000000300000021 0x0000180000000000 0x0000000000000001 0x0000000300000023 0x0000180000000000 0x0000000000000002 0x0000000300000020 0x0000180000000000 0x0000000000000003 0x0000000300000021 0x0000180000000000 0x0000000000000004 0x0000000300000022
+      ranges = "@@@"
+      reg = 0x0000000030000000 0x0000000010000000
+      dma-coherent =
+      bus-range = 0x00000000000000ff
+      linux,pci-domain = 0x00000000
+      device_type = 0x70636900
+      compatible = "pci-host-ecam-generic"
+      #size-cells = 0x00000002
+      #interrupt-cells = 0x00000001
+      #address-cells = 0x00000003
+Usable memory: 0x80000000 - 0x90000000

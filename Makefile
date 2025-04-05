@@ -5,6 +5,8 @@ KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 BOOT_SD := $(BUILD_DIR)/boot.sd
 BOOT_ITS := $(BUILD_DIR)/boot.its
 
+FEATURES := --features print_dtb
+
 SD_MOUNT=/Volumes/KERNEL
 
 OBJCOPY := rust-objcopy
@@ -16,7 +18,7 @@ SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 all: $(BOOT_SD)
 
 $(KERNEL_BIN): $(SOURCES)
-	cargo build --target $(TARGET)
+	cargo build --target $(TARGET) $(FEATURES)
 	$(OBJCOPY) --binary-architecture=riscv64 --strip-all -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 
 $(BOOT_SD): $(KERNEL_BIN) bootdata/boot.its
