@@ -15,8 +15,8 @@ const FDT_END: u32 = 9;
 
 #[derive(Debug, Copy, Clone)]
 pub struct MemoryRegion {
-    pub base: u64,
-    pub size: u64,
+    pub base: usize,
+    pub size: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -161,8 +161,8 @@ pub unsafe fn get_usable_memory(dtb: *const u8) -> Option<MemoryRegion> {
             DtbToken::Prop if in_memory_node => {
                 if let Some((name, data, len)) = prop_opt {
                     if name == "reg" && len >= 16 {
-                        let base = read_be64(data);
-                        let size = read_be64(data.add(8));
+                        let base = read_be64(data) as usize;
+                        let size = read_be64(data.add(8)) as usize;
                         found = Some(MemoryRegion { base, size });
                     }
                 }

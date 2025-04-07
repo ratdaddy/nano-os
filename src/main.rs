@@ -8,14 +8,14 @@
 mod console;
 
 mod dtb;
+mod page_allocator;
 
 use core::panic::PanicInfo;
 
+extern "C" { static _stack_end: u8; }
+
 #[no_mangle]
 pub extern "C" fn _start(hart_id: usize, dtb_ptr: *const u8) -> ! {
-    extern "C" {
-        static _stack_end: u8;
-    }
 
     unsafe {
         core::arch::asm!(
@@ -38,8 +38,6 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
 
     println!("Hart ID: {}", hart_id);
 
-    println!("print_dtb enabled: {}", cfg!(feature = "print_dtb"));
-
     #[cfg(feature = "dtb_raw")]
     {
         println!("A1 pointer: {:?}", dtb_ptr);
@@ -58,9 +56,17 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
 
     let usable_memory;
     unsafe {
-        usable_memory = dtb::get_usable_memory(dtb_ptr).expect("DTB must provide usable memory");
+        usable_memory = dtb::get_usable_memory(dtb_ptr).expect("DTB doesn't have a memory node");
+        println!("Usable memory: {:#x} - {:#x}", usable_memory.base, usable_memory.base + usable_memory.size);
     }
-    println!("Usable memory: {:#x} - {:#x}", usable_memory.base, usable_memory.base + usable_memory.size);
+
+    unsafe {
+        page_allocator::init(&_stack_end as *const u8 as usize, usable_memory.base + usable_memory.size);
+    }
+
+    println!("Page allocator initialized: {} pages ({} free)",
+            page_allocator::total_page_count(),
+            page_allocator::free_page_count());
 
     loop {
         unsafe { core::arch::asm!("wfi") }
