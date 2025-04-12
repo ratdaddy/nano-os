@@ -1,3 +1,4 @@
+DTB=0x89ee2000, size=0x6000
   compatible = "cvitek,cv181x"
   #size-cells = 0x00000002
   #address-cells = 0x00000002

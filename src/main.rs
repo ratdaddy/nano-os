@@ -50,6 +50,9 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
     #[cfg(feature = "dtb_raw")]
     {
         println!("A1 pointer: {:?}", dtb_ptr);
+        let dtb_context;
+        unsafe { dtb_context = dtb::parse_dtb(dtb_ptr); }
+        println!("DTB size: {:#x}", dtb_context.total_size);
         hex_dump(dtb_ptr, 512);
     }
 

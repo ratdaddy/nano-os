@@ -1,3 +1,4 @@
+DTB=0x8fe00000, size=0x16e4
   #address-cells = 0x00000002
   #size-cells = 0x00000002
   compatible = "riscv-virtio"

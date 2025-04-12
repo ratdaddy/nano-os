@@ -30,6 +30,7 @@ pub enum DtbToken {
 }
 
 pub struct DtbContext {
+    pub total_size: usize,
     pub struct_ptr: *const u8,
     pub strings_ptr: *const u8,
 }
@@ -55,9 +56,10 @@ unsafe fn read_strz(ptr: *const u8) -> (&'static str, *const u8) {
 
 pub unsafe fn parse_dtb(dtb: *const u8) -> DtbContext {
     assert_eq!(read_be32(dtb), FDT_MAGIC, "Invalid DTB magic");
+    let total_size = read_be32(dtb.add(4)) as usize;
     let struct_ptr = dtb.add(read_be32(dtb.add(8)) as usize);
     let strings_ptr = dtb.add(read_be32(dtb.add(12)) as usize);
-    DtbContext { struct_ptr, strings_ptr }
+    DtbContext { total_size, struct_ptr, strings_ptr }
 }
 
 pub unsafe fn traverse_dtb<F: FnMut(DtbToken, usize, Option<&str>, Option<(&str, *const u8, usize)>)>(ctx: &DtbContext, mut f: F) {
