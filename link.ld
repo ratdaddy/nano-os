@@ -23,6 +23,7 @@ SECTIONS {
   }
 
   . = ALIGN(4K);
-  _stack_start = . + 16K;
   _stack_end = .;
+  . = . + 16K;
+  _stack_start = .;
 }

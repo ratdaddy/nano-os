@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub const PAGE_SIZE: usize = 4096;
 
 #[repr(C)]
@@ -36,15 +38,16 @@ impl PageAllocator {
         }
     }
 
-    pub fn alloc(&mut self) -> Option<*mut u8> {
+    pub fn alloc(&mut self) -> Option<usize> {
         self.free_pages -= 1;
         self.head.take().map(|node| {
             self.head = node.next.take();
-            node as *mut PageNode as *mut u8
+            println!("Allocated page at {:#x}", node as *mut PageNode as usize);
+            node as *mut PageNode as usize
         })
     }
 
-    pub fn dealloc(&mut self, ptr: *mut u8) {
+    pub fn dealloc(&mut self, ptr: usize) {
         self.free_pages += 1;
         unsafe {
             let node = ptr as *mut PageNode;
@@ -70,11 +73,11 @@ pub unsafe fn init(start: usize, end: usize) {
     (*addr_of_mut!(PAGE_ALLOCATOR)).init(start, end);
 }
 
-pub fn alloc() -> Option<*mut u8> {
+pub fn alloc() -> Option<usize> {
     unsafe { (*addr_of_mut!(PAGE_ALLOCATOR)).alloc() }
 }
 
-pub fn dealloc(ptr: *mut u8) {
+pub fn dealloc(ptr: usize) {
     unsafe { (*addr_of_mut!(PAGE_ALLOCATOR)).dealloc(ptr) }
 }
 
