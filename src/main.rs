@@ -3,41 +3,26 @@
 
 #![no_std]
 #![no_main]
+#![feature(naked_functions)]
+
+mod trampoline;
 
 #[macro_use]
 mod console;
 
 mod dtb;
 mod page_allocator;
-mod page_mapper;
-
-use core::panic::PanicInfo;
-
-extern "C" { static _stack_start: u8; }
+//mod page_mapper;
 
 #[no_mangle]
-pub extern "C" fn _start(hart_id: usize, dtb_ptr: *const u8) -> ! {
-    unsafe {
-        core::arch::asm!(
-            "la sp, {stack}",
-            stack = sym _stack_start,
-            options(nostack)
-        );
-    }
-
-    extern "C" { fn trap_handler(); }
-
-    unsafe {
+fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kernel_phys_end: usize) -> ! {
+     unsafe {
         core::arch::asm!(
             "csrw stvec, {}",
             in(reg) trap_handler as usize,
         );
-    }
+     }
 
-    rust_main(hart_id, dtb_ptr);
-}
-
-fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
     console::sbi_console_putchar(b'*');
     console::sbi_console_putchar(b'*');
     console::sbi_console_putchar(b'*');
@@ -47,13 +32,16 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
 
     println!("Hart ID: {}", hart_id);
 
+    println!("Kernel physical start: {:#x}", kernel_phys_start);
+    println!("Kernel physical end: {:#x}", kernel_phys_end);
+
     #[cfg(feature = "dtb_raw")]
     {
-        println!("A1 pointer: {:?}", dtb_ptr);
+        println!("dtb pointer: {:?}", dtb_ptr);
         let dtb_context;
         unsafe { dtb_context = dtb::parse_dtb(dtb_ptr); }
         println!("DTB size: {:#x}", dtb_context.total_size);
-        hex_dump(dtb_ptr, 512);
+        hex_dump(dtb_ptr, 128);
     }
 
     #[cfg(feature="print_dtb")]
@@ -63,7 +51,7 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
     }
 
     unsafe {
-        dtb::check_memory_layout(dtb_ptr);
+        dtb::check_memory_layout(dtb_ptr, kernel_phys_start);
     }
 
     let usable_memory;
@@ -73,13 +61,14 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
     }
 
     unsafe {
-        page_allocator::init(&_stack_start as *const u8 as usize, usable_memory.base + usable_memory.size);
+        page_allocator::init(kernel_phys_end, usable_memory.base + usable_memory.size);
     }
 
     println!("Page allocator initialized: {} pages ({} free)",
             page_allocator::total_page_count(),
             page_allocator::free_page_count());
 
+    /*
     let page_mapper = page_mapper::PageMapper::new();
 
     page_mapper.map_range(
@@ -107,6 +96,7 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8) -> ! {
     }
 
     println!("Successfully switched to using memory map");
+    */
 
     loop {
         unsafe { core::arch::asm!("wfi") }
@@ -139,6 +129,8 @@ fn hex_dump(base: *const u8, length: usize) {
         }
     }
 }
+
+use core::panic::PanicInfo;
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {

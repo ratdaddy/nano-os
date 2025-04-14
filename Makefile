@@ -5,8 +5,8 @@ KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 BOOT_SD := $(BUILD_DIR)/boot.sd
 BOOT_ITS := $(BUILD_DIR)/boot.its
 
-#FEATURES := --features print_dtb
-FEATURES := --features dtb_raw
+#FEATURES := --features print_dtb,dtb_raw
+FEATURES :=
 
 SD_MOUNT=/Volumes/KERNEL
 
@@ -14,7 +14,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds
 
 all: $(BOOT_SD)
 
@@ -34,6 +34,15 @@ copy: all
 	sync
 	@diskutil eject "$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//')"
 	@echo "Done."
+
+qemu-debug:
+	cargo run -- -S -gdb tcp::1234
+
+gdb:
+	docker run --rm -it -v $$(PWD):/workspace -w /workspace riscv-gdb
+
+gdb-docker:
+	cd gdb && docker build -t riscv-gdb .
 
 clean:
 	cargo clean

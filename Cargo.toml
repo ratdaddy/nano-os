@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 
 [profile.dev]
+lto = true
+codegen-units = 1
 panic = "abort"
 
 [profile.release]

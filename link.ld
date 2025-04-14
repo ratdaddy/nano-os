@@ -2,28 +2,67 @@ OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
 SECTIONS {
+  /* ------------------------ */
+  /* PHYSICAL BOOTSTRAP AREA  */
+  /* ------------------------ */
+
+  /* Execution begins here */
   . = 0x80200000;
 
-  .text : ALIGN(4K) {
-    *(.text._start)
-    *(.text*)
+  .text.trampoline : ALIGN(4K) {
+    _start = .;
+    KEEP(*(.text.trampoline))
   }
 
-  .rodata : ALIGN(4K) {
-    *(.rodata*)
+  .tramp_data : ALIGN(4K) {
+    KEEP(*(.data.trampoline))
   }
 
-  .data : ALIGN(4K) {
-    *(.data*)
-  }
+  /* Compute the next free aligned physical address */
+  __trampoline_phys_end = ALIGN(4K);
 
-  .bss : ALIGN(4K) {
-    *(.bss*)
-    *(COMMON)
+  /* ------------------------ */
+  /* KERNEL VIRTUAL REGION    */
+  /* ------------------------ */
+
+  /* Start kernel virtual address just after trampoline offset */
+  __kernel_phys_start = __trampoline_phys_end;
+  __kernel_virt_start = 0xffffffff00000000 + __kernel_phys_start;
+
+  . = __kernel_virt_start;
+
+  .text : AT(__kernel_phys_start) ALIGN(4K) {
+    _text_start = .;
+    *(.text .text.*)
+    _text_end = .;
   }
 
   . = ALIGN(4K);
-  _stack_end = .;
-  . = . + 16K;
-  _stack_start = .;
+
+  .rodata : {
+    _rodata_start = .;
+    *(.rodata .rodata.* .srodata .srodata.*)
+    _rodata_end = .;
+  }
+
+  . = ALIGN(4K);
+
+  .data : {
+    _data_start = .;
+    *(.data .data.*)
+    _data_end = .;
+  }
+
+  . = ALIGN(4K);
+
+  .bss : {
+    _bss_start = .;
+    *(.bss .bss.* COMMON)
+    _bss_end = .;
+  }
+
+  . = ALIGN(4K);
+
+  _kernel_end = .;
+  _kernel_phys_end = _kernel_end - 0xffffffff00000000;
 }

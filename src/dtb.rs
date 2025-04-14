@@ -1,10 +1,6 @@
-// src/dtb.rs
+#![allow(dead_code)]
 
 use core::ptr;
-
-extern "C" {
-    static _start: u8;
-}
 
 const FDT_MAGIC: u32 = 0xd00dfeed;
 const FDT_BEGIN_NODE: u32 = 1;
@@ -106,13 +102,11 @@ pub unsafe fn traverse_dtb<F: FnMut(DtbToken, usize, Option<&str>, Option<(&str,
     }
 }
 
-pub unsafe fn check_memory_layout(dtb: *const u8) {
+pub unsafe fn check_memory_layout(dtb: *const u8, kernel_phys_start: usize) {
     let ctx = parse_dtb(dtb);
     let mut addr_cells = 0;
     let mut size_cells = 0;
     let mut max_reserved_end: u64 = 0;
-    let kernel_start = &_start as *const u8 as usize as u64;
-
     let mut in_reserved_memory = false;
 
     traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| {
@@ -144,7 +138,7 @@ pub unsafe fn check_memory_layout(dtb: *const u8) {
 
     assert_eq!(addr_cells, 2, "DTB must have #address-cells = 2");
     assert_eq!(size_cells, 2, "DTB must have #size-cells = 2");
-    assert!(kernel_start >= max_reserved_end, "Kernel start address overlaps reserved memory!");
+    assert!(kernel_phys_start >= max_reserved_end as usize, "Kernel start address overlaps reserved memory!");
 }
 
 pub unsafe fn get_usable_memory(dtb: *const u8) -> Option<MemoryRegion> {
