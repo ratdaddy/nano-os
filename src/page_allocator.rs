@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-pub const PAGE_SIZE: usize = 4096;
+use crate::memory;
 
 #[repr(C)]
 struct PageNode {
@@ -18,24 +18,21 @@ impl PageAllocator {
         Self { head: None, free_pages: 0, total_pages: 0 }
     }
 
-    pub unsafe fn init(&mut self, start: usize, end: usize) {
-        println!("Page allocator initializing from {:#x} to {:#x}", start, end);
+    pub unsafe fn init<const N: usize>(&mut self, usable_memory: &heapless::Vec<memory::Region, N>) {
+        self.head = None;
+        self.free_pages = 0;
 
-        assert!(start & (PAGE_SIZE - 1) == 0, "Page allocator start address not page-aligned.");
-        assert!(end & (PAGE_SIZE - 1) == 0, "Page allocator end address not page-aligned.");
-
-        let mut current = start;
-
-        let num_pages = (end - start) / PAGE_SIZE;
-        self.total_pages = num_pages;
-        self.free_pages = num_pages;
-
-        while current < end {
-            let node = current as *mut PageNode;
-            (*node).next = self.head.take();
-            self.head = Some(&mut *node);
-            current = current + PAGE_SIZE;
+        for region in usable_memory.iter() {
+            println!("Page allocator initializing from {:#x} to {:#x}", region.start, region.end);
+            assert!(region.start & (memory::PAGE_SIZE - 1) == 0, "Page allocator start address not page-aligned.");
+            assert!(region.end & (memory::PAGE_SIZE - 1) == 0, "Page allocator end address not page-aligned.");
+            let mut addr = region.start;
+            while addr < region.end {
+                self.dealloc(addr);
+                addr += memory::PAGE_SIZE;
+            }
         }
+        self.total_pages = self.free_pages;
     }
 
     pub fn alloc(&mut self) -> Option<usize> {
@@ -69,8 +66,8 @@ use core::ptr::addr_of_mut;
 
 static mut PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
 
-pub unsafe fn init(start: usize, end: usize) {
-    (*addr_of_mut!(PAGE_ALLOCATOR)).init(start, end);
+pub unsafe fn init<const N: usize>(usable_memory: &heapless::Vec<memory::Region, N>) {
+    (*addr_of_mut!(PAGE_ALLOCATOR)).init(usable_memory);
 }
 
 pub fn alloc() -> Option<usize> {

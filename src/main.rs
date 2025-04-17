@@ -10,6 +10,7 @@ mod trampoline;
 #[macro_use]
 mod console;
 
+mod memory;
 mod dtb;
 mod page_allocator;
 //mod page_mapper;
@@ -35,12 +36,12 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
     println!("Kernel physical start: {:#x}", kernel_phys_start);
     println!("Kernel physical end: {:#x}", kernel_phys_end);
 
+    let dtb_context = unsafe { dtb::parse_dtb(dtb_ptr) };
+    println!("DTB pointer: {:?}", dtb_ptr);
+    println!("DTB size: {:#x}", dtb_context.total_size);
+
     #[cfg(feature = "dtb_raw")]
     {
-        println!("dtb pointer: {:?}", dtb_ptr);
-        let dtb_context;
-        unsafe { dtb_context = dtb::parse_dtb(dtb_ptr); }
-        println!("DTB size: {:#x}", dtb_context.total_size);
         hex_dump(dtb_ptr, 128);
     }
 
@@ -50,6 +51,7 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
         dtb::print_dtb(dtb_ptr);
     }
 
+    /*
     unsafe {
         dtb::check_memory_layout(dtb_ptr, kernel_phys_start);
     }
@@ -59,9 +61,44 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
         usable_memory = dtb::get_usable_memory(dtb_ptr).expect("DTB doesn't have a memory node");
         println!("Usable memory: {:#x} - {:#x}", usable_memory.base, usable_memory.base + usable_memory.size);
     }
+    */
+
+    const MAX_RESERVED_MEMORY: usize = 16;
+    const MAX_USABLE_MEMORY: usize = MAX_RESERVED_MEMORY + 1;
+
+    let mut reserved_memory: heapless::Vec<memory::Region, MAX_RESERVED_MEMORY> = heapless::Vec::new();
+    let mut usable_memory: heapless::Vec<memory::Region, MAX_USABLE_MEMORY> = heapless::Vec::new();
+
+    let memory = unsafe {
+        dtb::collect_memory_map(dtb_ptr, &mut reserved_memory).expect("Failed to collect memory map")
+    };
+
+    println!("Memory {:#x} - {:#x}", memory.start, memory.end);
+
+    let _ = reserved_memory.push(memory::Region {
+        start: memory.start,
+        end: memory::align_up(kernel_phys_end),
+    });
+
+    let _ = reserved_memory.push(memory::Region {
+        start: memory::align_down(dtb_ptr as usize),
+        end: memory::align_up(dtb_ptr as usize + dtb_context.total_size),
+    });
+
+    println!("Reserved memory regions:");
+    for region in reserved_memory.iter() {
+        println!("  {:#x} - {:#x}", region.start, region.end);
+    }
+
+    memory::compute_usable_regions(memory, &mut reserved_memory, &mut usable_memory);
+
+    println!("Usable memory regions:");
+    for region in usable_memory.iter() {
+        println!("  {:#x} - {:#x}", region.start, region.end);
+    }
 
     unsafe {
-        page_allocator::init(kernel_phys_end, usable_memory.base + usable_memory.size);
+        page_allocator::init(&usable_memory);
     }
 
     println!("Page allocator initialized: {} pages ({} free)",

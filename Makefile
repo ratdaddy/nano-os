@@ -14,7 +14,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run
 
 all: $(BOOT_SD)
 
@@ -34,6 +34,9 @@ copy: all
 	sync
 	@diskutil eject "$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//')"
 	@echo "Done."
+
+run:
+	cargo run $(FEATURES)
 
 qemu-debug:
 	cargo run -- -S -gdb tcp::1234
