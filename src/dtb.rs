@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use core::ptr;
 use crate::memory;
 
@@ -24,25 +22,6 @@ pub struct DtbContext {
     pub total_size: usize,
     pub struct_ptr: *const u8,
     pub strings_ptr: *const u8,
-}
-
-unsafe fn read_be32(ptr: *const u8) -> u32 {
-    u32::from_be(ptr::read_unaligned(ptr as *const u32))
-}
-
-unsafe fn read_be64(ptr: *const u8) -> u64 {
-    u64::from_be(ptr::read_unaligned(ptr as *const u64))
-}
-
-unsafe fn read_strz(ptr: *const u8) -> (&'static str, *const u8) {
-    let mut end = ptr;
-    while *end != 0 {
-        end = end.add(1);
-    }
-    let len = end.offset_from(ptr) as usize;
-    let s = core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len));
-    let aligned = (((end.add(1) as usize) + 3) & !3) as *const u8;
-    (s, aligned)
 }
 
 pub unsafe fn parse_dtb(dtb: *const u8) -> DtbContext {
@@ -151,6 +130,12 @@ pub unsafe fn collect_memory_map<const N: usize>(
                             start: aligned_start,
                             end: aligned_end,
                         });
+                    } else if depth == 1 && prop_name == "#address-cells" {
+                        let addr_cells = read_be32(data);
+                        assert_eq!(addr_cells, 2, "DTB must have #address-cells = 2");
+                    } else if depth == 1 && prop_name == "#size-cells" {
+                        let size_cells = read_be32(data);
+                        assert_eq!(size_cells, 2, "DTB must have #size-cells = 2");
                     }
                 }
             }
@@ -159,75 +144,6 @@ pub unsafe fn collect_memory_map<const N: usize>(
     });
 
     memory
-}
-
-
-pub unsafe fn check_memory_layout(dtb: *const u8, kernel_phys_start: usize) {
-    let ctx = parse_dtb(dtb);
-    let mut addr_cells = 0;
-    let mut size_cells = 0;
-    let mut max_reserved_end: u64 = 0;
-    let mut in_reserved_memory = false;
-
-    traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| {
-        if let DtbToken::BeginNode = token {
-            if let Some(name) = name_opt {
-                in_reserved_memory = name.starts_with("reserved-memory") || name.starts_with("mmode_resv");
-            }
-        } else if let DtbToken::Prop = token {
-            if let Some((name, data, len)) = prop_opt {
-                if depth == 1 {
-                    if name == "#address-cells" {
-                        addr_cells = read_be32(data);
-                    } else if name == "#size-cells" {
-                        size_cells = read_be32(data);
-                    }
-                }
-
-                if in_reserved_memory && name == "reg" && len >= 16 {
-                    let start = read_be64(data);
-                    let size = read_be64(data.add(8));
-                    let end = start + size;
-                    if end > max_reserved_end {
-                        max_reserved_end = end;
-                    }
-                }
-            }
-        }
-    });
-
-    assert_eq!(addr_cells, 2, "DTB must have #address-cells = 2");
-    assert_eq!(size_cells, 2, "DTB must have #size-cells = 2");
-    assert!(kernel_phys_start >= max_reserved_end as usize, "Kernel start address overlaps reserved memory!");
-}
-
-pub unsafe fn get_usable_memory(dtb: *const u8) -> Option<memory::Region> {
-    let ctx = parse_dtb(dtb);
-    let mut found = None;
-    let mut in_memory_node = false;
-
-    traverse_dtb(&ctx, |token, _depth, name_opt, prop_opt| {
-        match token {
-            DtbToken::BeginNode => {
-                if let Some(name) = name_opt {
-                    in_memory_node = name.starts_with("memory@");
-                }
-            }
-            DtbToken::EndNode => in_memory_node = false,
-            DtbToken::Prop if in_memory_node => {
-                if let Some((name, data, len)) = prop_opt {
-                    if name == "reg" && len >= 16 {
-                        let start = read_be64(data) as usize;
-                        let size = read_be64(data.add(8)) as usize;
-                        found = Some(memory::Region { start, end: start + size });
-                    }
-                }
-            }
-            _ => {}
-        }
-    });
-
-    found
 }
 
 #[allow(dead_code)]
@@ -275,4 +191,23 @@ pub unsafe fn print_dtb(dtb: *const u8) {
             _ => {}
         }
     });
+}
+
+unsafe fn read_be32(ptr: *const u8) -> u32 {
+    u32::from_be(ptr::read_unaligned(ptr as *const u32))
+}
+
+unsafe fn read_be64(ptr: *const u8) -> u64 {
+    u64::from_be(ptr::read_unaligned(ptr as *const u64))
+}
+
+unsafe fn read_strz(ptr: *const u8) -> (&'static str, *const u8) {
+    let mut end = ptr;
+    while *end != 0 {
+        end = end.add(1);
+    }
+    let len = end.offset_from(ptr) as usize;
+    let s = core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len));
+    let aligned = (((end.add(1) as usize) + 3) & !3) as *const u8;
+    (s, aligned)
 }

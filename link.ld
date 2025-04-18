@@ -26,8 +26,9 @@ SECTIONS {
   /* ------------------------ */
 
   /* Start kernel virtual address just after trampoline offset */
+  __high_half_phys = 0xffffffff00000000;
   __kernel_phys_start = __trampoline_phys_end;
-  __kernel_virt_start = 0xffffffff00000000 + __kernel_phys_start;
+  __kernel_virt_start = __high_half_phys + __kernel_phys_start;
 
   . = __kernel_virt_start;
 

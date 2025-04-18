@@ -13,7 +13,8 @@ mod console;
 mod memory;
 mod dtb;
 mod page_allocator;
-//mod page_mapper;
+mod page_mapper;
+mod kernel_memory_map;
 
 #[no_mangle]
 fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kernel_phys_end: usize) -> ! {
@@ -29,21 +30,18 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
     console::sbi_console_putchar(b'*');
     console::sbi_console_putchar(b'\n');
 
-    println!("Hello, world!");
+    println!("Welcome to the Nano KVM Lite kernel!");
 
     println!("Hart ID: {}", hart_id);
 
     println!("Kernel physical start: {:#x}", kernel_phys_start);
     println!("Kernel physical end: {:#x}", kernel_phys_end);
 
+    zero_bss();
+
     let dtb_context = unsafe { dtb::parse_dtb(dtb_ptr) };
     println!("DTB pointer: {:?}", dtb_ptr);
     println!("DTB size: {:#x}", dtb_context.total_size);
-
-    #[cfg(feature = "dtb_raw")]
-    {
-        hex_dump(dtb_ptr, 128);
-    }
 
     #[cfg(feature="print_dtb")]
     unsafe {
@@ -51,74 +49,11 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
         dtb::print_dtb(dtb_ptr);
     }
 
-    /*
-    unsafe {
-        dtb::check_memory_layout(dtb_ptr, kernel_phys_start);
-    }
+    let memory = page_allocator::init(dtb_ptr, kernel_phys_end);
 
-    let usable_memory;
-    unsafe {
-        usable_memory = dtb::get_usable_memory(dtb_ptr).expect("DTB doesn't have a memory node");
-        println!("Usable memory: {:#x} - {:#x}", usable_memory.base, usable_memory.base + usable_memory.size);
-    }
-    */
+    let root_table = kernel_memory_map::init(memory);
 
-    const MAX_RESERVED_MEMORY: usize = 16;
-    const MAX_USABLE_MEMORY: usize = MAX_RESERVED_MEMORY + 1;
-
-    let mut reserved_memory: heapless::Vec<memory::Region, MAX_RESERVED_MEMORY> = heapless::Vec::new();
-    let mut usable_memory: heapless::Vec<memory::Region, MAX_USABLE_MEMORY> = heapless::Vec::new();
-
-    let memory = unsafe {
-        dtb::collect_memory_map(dtb_ptr, &mut reserved_memory).expect("Failed to collect memory map")
-    };
-
-    println!("Memory {:#x} - {:#x}", memory.start, memory.end);
-
-    let _ = reserved_memory.push(memory::Region {
-        start: memory.start,
-        end: memory::align_up(kernel_phys_end),
-    });
-
-    let _ = reserved_memory.push(memory::Region {
-        start: memory::align_down(dtb_ptr as usize),
-        end: memory::align_up(dtb_ptr as usize + dtb_context.total_size),
-    });
-
-    println!("Reserved memory regions:");
-    for region in reserved_memory.iter() {
-        println!("  {:#x} - {:#x}", region.start, region.end);
-    }
-
-    memory::compute_usable_regions(memory, &mut reserved_memory, &mut usable_memory);
-
-    println!("Usable memory regions:");
-    for region in usable_memory.iter() {
-        println!("  {:#x} - {:#x}", region.start, region.end);
-    }
-
-    unsafe {
-        page_allocator::init(&usable_memory);
-    }
-
-    println!("Page allocator initialized: {} pages ({} free)",
-            page_allocator::total_page_count(),
-            page_allocator::free_page_count());
-
-    /*
-    let page_mapper = page_mapper::PageMapper::new();
-
-    page_mapper.map_range(
-        usable_memory.base,
-        usable_memory.base,
-        usable_memory.size,
-        page_mapper::PageFlags::READ.union(page_mapper::PageFlags::WRITE).union(page_mapper::PageFlags::EXECUTE).union(page_mapper::PageFlags::ACCESSED).union(page_mapper::PageFlags::DIRTY),
-        page_mapper::PageSize::Size2M,
-    );
-
-    println!("Memory mapped at root table: {:#x}", page_mapper.root_table as usize);
-
-    let ppn = page_mapper.root_table as usize >> 12;
+    let ppn = root_table as usize >> 12;
     let satp_value = (8 << 60) | ppn;
 
     println!("Switching to memory map with SATP value: {:#x}", satp_value);
@@ -133,37 +68,26 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
     }
 
     println!("Successfully switched to using memory map");
-    */
 
     loop {
         unsafe { core::arch::asm!("wfi") }
     }
 }
 
-#[allow(dead_code)]
-fn hex_dump(base: *const u8, length: usize) {
+fn zero_bss() {
+    extern "C" {
+        static mut _bss_start: u8;
+        static mut _bss_end: u8;
+    }
+
     unsafe {
-        for offset in (0..length).step_by(16) {
-            let line_addr = base.add(offset);
-            print!("{:08p}:", line_addr);
+        let bss_start = core::ptr::addr_of!(_bss_start) as usize;
+        let bss_end = core::ptr::addr_of!(_bss_end) as usize;
+        let size = bss_end - bss_start;
 
-            let mut ascii = [b'.'; 16];
+        println!("Zeroing BSS segment: {:#x} - {:#x} (size: {})", bss_start, bss_end, size);
 
-            for i in 0..16 {
-                let addr = base.add(offset + i);
-                let byte = core::ptr::read_volatile(addr);
-                print!(" {:02x}", byte);
-
-                ascii[i] = if byte.is_ascii_graphic() || byte == b' ' {
-                    byte
-                } else {
-                    b'.'
-                };
-            }
-
-            let ascii_str = core::str::from_utf8_unchecked(&ascii);
-            println!("  {}", ascii_str);
-        }
+        core::ptr::write_bytes(bss_start as *mut u8, 0, size);
     }
 }
 

@@ -141,7 +141,7 @@ impl PageMapper {
         &self,
         virt_start: usize,
         phys_start: usize,
-        size: usize,
+        end: usize,
         flags: PageFlags,
         page_size: PageSize,
     ) {
@@ -150,9 +150,11 @@ impl PageMapper {
 
         assert!(virt_start % step == 0, "virtual address not aligned");
         assert!(phys_start % step == 0, "physical address not aligned");
-        assert!(size % step == 0, "mapping size must be multiple of page size");
+        assert!(end % step == 0, "end address not  aligned");
 
         let mut offset = 0;
+        let size = end - virt_start;
+
         while offset < size {
             let virt = virt_start + offset;
             let phys = phys_start + offset;

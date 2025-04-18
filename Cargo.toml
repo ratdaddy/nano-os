@@ -19,5 +19,4 @@ name = "kernel"
 path = "src/main.rs"
 
 [features]
-dtb_raw = []
 print_dtb = []

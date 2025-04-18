@@ -8,7 +8,6 @@ pub static mut _stack_top: [u8; 4096 * 16] = [0; 4096 * 16];
 #[no_mangle]
 pub static mut _root_page_table: [u64; 512] = [0; 512];
 
-
 #[naked]
 #[no_mangle]
 #[link_section = ".text.trampoline"]

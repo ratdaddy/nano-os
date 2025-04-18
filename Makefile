@@ -5,7 +5,7 @@ KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 BOOT_SD := $(BUILD_DIR)/boot.sd
 BOOT_ITS := $(BUILD_DIR)/boot.its
 
-#FEATURES := --features print_dtb,dtb_raw
+#FEATURES := --features print_dtb
 FEATURES :=
 
 SD_MOUNT=/Volumes/KERNEL
