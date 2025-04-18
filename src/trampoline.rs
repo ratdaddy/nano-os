@@ -2,11 +2,11 @@ use core::arch::naked_asm;
 
 #[link_section = ".tramp_data"]
 #[no_mangle]
-pub static mut _stack_top: [u8; 4096 * 16] = [0; 4096 * 16];
+pub static mut _STACK_TOP: [u8; 4096 * 16] = [0; 4096 * 16];
 
 #[link_section = ".tramp_data"]
 #[no_mangle]
-pub static mut _root_page_table: [u64; 512] = [0; 512];
+pub static mut _ROOT_PAGE_TABLE: [u64; 512] = [0; 512];
 
 #[naked]
 #[no_mangle]
@@ -19,10 +19,10 @@ pub extern "C" fn _start() -> ! {
             "mv s1, a1",
 
             // Set stack pointer
-            "la sp, _stack_top + (4096 * 16)",
+            "la sp, _STACK_TOP + (4096 * 16)",
 
             // Clear root page table
-            "la t0, _root_page_table",
+            "la t0, _ROOT_PAGE_TABLE",
             "li t1, 0",
             "li t2, 512",
             "0:",
@@ -37,18 +37,18 @@ pub extern "C" fn _start() -> ! {
             "li t4, 0x0CF",           // V|R|W|X|A|D
             "or t3, t3, t4",
 
-            // root_page_table[2] = t3
-            "la t0, _root_page_table",
+            // ROOT_PAGE_TABLE[2] = t3
+            "la t0, _ROOT_PAGE_TABLE",
             "sd t3, 16(t0)",          // 2 * 8
 
-            // root_page_table[510] = t3
+            // ROOT_PAGE_TABLE[510] = t3
             "li t5, 510",
             "slli t5, t5, 3",
             "add t5, t5, t0",
             "sd t3, 0(t5)",
 
-            // Build SATP: (8 << 60) | (root_page_table >> 12)
-            "la t6, _root_page_table",
+            // Build SATP: (8 << 60) | (ROOT_PAGE_TABLE >> 12)
+            "la t6, _ROOT_PAGE_TABLE",
             "srli t6, t6, 12",
 
             "li t5, 1",
@@ -62,14 +62,13 @@ pub extern "C" fn _start() -> ! {
             "mv a0, s0",
             "mv a1, s1",
 
-            // Pass along phys mem start and end addresses
+            // Pass along kernel phys mem start and end addresses
             "la a2, _start",
             "la a3, _kernel_phys_end",
 
             // Jump to rust_main
             "la t0, rust_main",
             "jr t0",
-
         );
     }
 }
