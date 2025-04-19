@@ -5,6 +5,7 @@ use core::ptr::addr_of_mut;
 #[repr(C)]
 struct PageNode {
     next: Option<&'static mut PageNode>,
+    page_count: usize,
 }
 
 pub struct PageAllocator {
@@ -68,8 +69,8 @@ pub fn alloc() -> Option<usize> {
 }
 
 #[allow(dead_code)]
-pub fn dealloc(ptr: usize) {
-    unsafe { (*addr_of_mut!(PAGE_ALLOCATOR)).dealloc(ptr) }
+pub fn dealloc(ptr: usize, page_count: usize) {
+    unsafe { (*addr_of_mut!(PAGE_ALLOCATOR)).dealloc(ptr, page_count) }
 }
 
 pub fn free_page_count() -> usize {
@@ -93,29 +94,45 @@ impl PageAllocator {
             println!("Page allocator initializing from {:#x} to {:#x}", region.start, region.end);
             assert!(region.start & (memory::PAGE_SIZE - 1) == 0, "Page allocator start address not page-aligned.");
             assert!(region.end & (memory::PAGE_SIZE - 1) == 0, "Page allocator end address not page-aligned.");
-            let mut addr = region.start;
-            while addr < region.end {
-                self.dealloc(addr);
-                addr += memory::PAGE_SIZE;
-            }
+
+            let start = region.start;
+            let end = region.end;
+            let page_count = (end - start) / memory::PAGE_SIZE;
+            assert_eq!(start % memory::PAGE_SIZE, 0);
+            assert_eq!(end % memory::PAGE_SIZE, 0);
+
+            self.dealloc(start, page_count);
         }
+
         self.total_pages = self.free_pages;
     }
 
     pub fn alloc(&mut self) -> Option<usize> {
+        let node_ref = self.head.as_mut()?;
+        node_ref.page_count -= 1;
+
+        let addr = Self::block_start(node_ref) + node_ref.page_count * memory::PAGE_SIZE;
+
+        if node_ref.page_count == 0 {
+            self.head = node_ref.next.take();
+        }
+
+        println!("Allocated page at {:#x}", addr as *mut PageNode as usize);
+
         self.free_pages -= 1;
-        self.head.take().map(|node| {
-            self.head = node.next.take();
-            println!("Allocated page at {:#x}", node as *mut PageNode as usize);
-            node as *mut PageNode as usize
-        })
+        Some(addr)
     }
 
-    pub fn dealloc(&mut self, ptr: usize) {
-        self.free_pages += 1;
+    fn block_start(node: &PageNode) -> usize {
+        node as *const PageNode as usize
+    }
+
+    pub fn dealloc(&mut self, ptr: usize, page_count: usize) {
+        self.free_pages += page_count;
         unsafe {
             let node = ptr as *mut PageNode;
             (*node).next = self.head.take();
+            (*node).page_count = page_count;
             self.head = Some(&mut *node);
         }
     }
