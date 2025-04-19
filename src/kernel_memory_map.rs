@@ -1,6 +1,9 @@
 use crate::memory;
 use crate::page_mapper;
 
+pub const KERNEL_STACK_START: usize = 0xffff_ffff_ffe0_0000;
+const KERNEL_STACK_STARTING_SIZE: usize = 0x4000;
+
 pub fn init(memory: memory::Region) -> *mut page_mapper::PageTable {
     let page_mapper = page_mapper::PageMapper::new();
 
@@ -99,6 +102,16 @@ pub fn init(memory: memory::Region) -> *mut page_mapper::PageTable {
         bss_end,
         PageFlags::READ.union(PageFlags::WRITE).union(PageFlags::ACCESSED).union(PageFlags::DIRTY),
         page_mapper::PageSize::Size4K,
+    );
+
+    // Map the high half kernel stack segment
+    println!("Mapping kernel stack segment: virt: {:#x} - {:#x}",
+             KERNEL_STACK_START - KERNEL_STACK_STARTING_SIZE, KERNEL_STACK_START);
+
+    page_mapper.allocate_and_map_pages(
+        KERNEL_STACK_START - KERNEL_STACK_STARTING_SIZE,
+        KERNEL_STACK_STARTING_SIZE,
+        PageFlags::READ.union(PageFlags::WRITE).union(PageFlags::ACCESSED).union(PageFlags::DIRTY),
     );
 
     println!("Memory mapped at root table: {:#x}", page_mapper.root_table as usize);

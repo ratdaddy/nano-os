@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::page_allocator;
+use crate::memory;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PageSize {
@@ -150,7 +151,7 @@ impl PageMapper {
 
         assert!(virt_start % step == 0, "virtual address not aligned");
         assert!(phys_start % step == 0, "physical address not aligned");
-        assert!(end % step == 0, "end address not  aligned");
+        assert!(end % step == 0, "end address not aligned");
 
         let mut offset = 0;
         let size = end - virt_start;
@@ -199,6 +200,21 @@ impl PageMapper {
             l0_entry.set(phys, flags);
 
             offset += step;
+        }
+    }
+
+    pub fn allocate_and_map_pages(
+        &self,
+        virt: usize,
+        size: usize,
+        flags: PageFlags,
+    ) {
+        let page_count = size / memory::PAGE_SIZE;
+
+        for i in 0..page_count {
+            let phys = page_allocator::alloc().expect("Out of memory for page");
+            let virt_addr = virt + i * memory::PAGE_SIZE;
+            self.map_range(virt_addr, phys, virt_addr + memory::PAGE_SIZE, flags, PageSize::Size4K);
         }
     }
 }

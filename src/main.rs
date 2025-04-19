@@ -15,6 +15,7 @@ mod dtb;
 mod page_allocator;
 mod page_mapper;
 mod kernel_memory_map;
+mod kernel_main;
 
 #[no_mangle]
 fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kernel_phys_end: usize) -> ! {
@@ -69,9 +70,13 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
 
     println!("Successfully switched to using memory map");
 
-    loop {
-        unsafe { core::arch::asm!("wfi") }
+    unsafe {
+        core::arch::asm!("mv sp, {}", in(reg) kernel_memory_map::KERNEL_STACK_START);
     }
+
+    kernel_main::kernel_main();
+
+    panic!("Kernel main returned unexpectedly");
 }
 
 fn zero_bss() {
