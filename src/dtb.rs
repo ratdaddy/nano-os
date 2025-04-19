@@ -1,7 +1,8 @@
 use core::ptr;
+
 use crate::memory;
 
-const FDT_MAGIC: u32 = 0xd00dfeed;
+const FDT_MAGIC: u32 = 0xd00d_feed;
 const FDT_BEGIN_NODE: u32 = 1;
 const FDT_END_NODE: u32 = 2;
 const FDT_PROP: u32 = 3;
@@ -15,7 +16,7 @@ pub enum DtbToken {
     Prop,
     Nop,
     End,
-    Unknown
+    Unknown,
 }
 
 pub struct DtbContext {
@@ -32,7 +33,9 @@ pub unsafe fn parse_dtb(dtb: *const u8) -> DtbContext {
     DtbContext { total_size, struct_ptr, strings_ptr }
 }
 
-pub unsafe fn traverse_dtb<F: FnMut(DtbToken, usize, Option<&str>, Option<(&str, *const u8, usize)>)>(
+pub unsafe fn traverse_dtb<
+    F: FnMut(DtbToken, usize, Option<&str>, Option<(&str, *const u8, usize)>),
+>(
     ctx: &DtbContext,
     mut f: F,
 ) {
@@ -63,7 +66,8 @@ pub unsafe fn traverse_dtb<F: FnMut(DtbToken, usize, Option<&str>, Option<(&str,
                     end = end.add(1);
                 }
                 let name_len = end.offset_from(name_ptr) as usize;
-                let name = core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len));
+                let name =
+                    core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len));
                 f(DtbToken::Prop, depth, Some(""), Some((name, data, len)));
             }
             FDT_NOP => {
@@ -125,11 +129,12 @@ pub unsafe fn collect_memory_map<const N: usize>(
                         let aligned_start = memory::align_down(start);
                         let aligned_end = memory::align_up(start + size);
 
-                        assert!(aligned_start <= aligned_end, "Invalid reserved memory region: start > end");
-                        let _ = reserved.push(memory::Region {
-                            start: aligned_start,
-                            end: aligned_end,
-                        });
+                        assert!(
+                            aligned_start <= aligned_end,
+                            "Invalid reserved memory region: start > end"
+                        );
+                        let _ = reserved
+                            .push(memory::Region { start: aligned_start, end: aligned_end });
                     } else if depth == 1 && prop_name == "#address-cells" {
                         let addr_cells = read_be32(data);
                         assert_eq!(addr_cells, 2, "DTB must have #address-cells = 2");
@@ -150,46 +155,45 @@ pub unsafe fn collect_memory_map<const N: usize>(
 pub unsafe fn print_dtb(dtb: *const u8) {
     let ctx = parse_dtb(dtb);
 
-    traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| {
-        match token {
-            DtbToken::BeginNode => {
-                if let Some(name) = name_opt {
-                    for _ in 0..depth {
-                        print!("  ");
-                    }
-                    println!("N{}: {}", depth, name);
+    traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| match token {
+        DtbToken::BeginNode => {
+            if let Some(name) = name_opt {
+                for _ in 0..depth {
+                    print!("  ");
                 }
+                println!("N{}: {}", depth, name);
             }
-            DtbToken::EndNode => { }
-            DtbToken::Prop => {
-                if let Some((name, data, len)) = prop_opt {
-                    for _ in 0..depth {
-                        print!("  ");
-                    }
-                    if len == 4 {
-                        let val = read_be32(data);
-                        println!("P{}: {} = 0x{:08x}", depth, name, val);
-                    } else if len % 8 == 0 {
-                        print!("P{}: {} =", depth, name);
-                        for i in 0..(len / 8) {
-                            let val = read_be64(data.add(i * 8));
-                            print!(" 0x{:016x}", val);
-                        }
-                        println!();
-                    } else if len > 0 && *data.add(len - 1) == 0 {
-                        let s = core::str::from_utf8_unchecked(core::slice::from_raw_parts(data, len - 1));
-                        println!("P{}: {} = \"{}\"", depth, name, s);
-                    } else {
-                        print!("P{}: {} =", depth, name);
-                        for i in 0..len {
-                            print!(" {:02x}", *data.add(i));
-                        }
-                        println!();
-                    }
-                }
-            }
-            _ => {}
         }
+        DtbToken::EndNode => {}
+        DtbToken::Prop => {
+            if let Some((name, data, len)) = prop_opt {
+                for _ in 0..depth {
+                    print!("  ");
+                }
+                if len == 4 {
+                    let val = read_be32(data);
+                    println!("P{}: {} = 0x{:08x}", depth, name, val);
+                } else if len % 8 == 0 {
+                    print!("P{}: {} =", depth, name);
+                    for i in 0..(len / 8) {
+                        let val = read_be64(data.add(i * 8));
+                        print!(" 0x{:016x}", val);
+                    }
+                    println!();
+                } else if len > 0 && *data.add(len - 1) == 0 {
+                    let s =
+                        core::str::from_utf8_unchecked(core::slice::from_raw_parts(data, len - 1));
+                    println!("P{}: {} = \"{}\"", depth, name, s);
+                } else {
+                    print!("P{}: {} =", depth, name);
+                    for i in 0..len {
+                        print!(" {:02x}", *data.add(i));
+                    }
+                    println!();
+                }
+            }
+        }
+        _ => {}
     });
 }
 

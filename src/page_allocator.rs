@@ -1,6 +1,7 @@
-use crate::memory;
-use crate::dtb;
 use core::ptr::addr_of_mut;
+
+use crate::dtb;
+use crate::memory;
 
 #[repr(C)]
 struct PageNode {
@@ -22,19 +23,19 @@ pub fn init(dtb_ptr: *const u8, kernel_phys_end: usize) -> memory::Region {
     const MAX_RESERVED_MEMORY: usize = 16;
     const MAX_USABLE_MEMORY: usize = MAX_RESERVED_MEMORY + 1;
 
-    let mut reserved_memory: heapless::Vec<memory::Region, MAX_RESERVED_MEMORY> = heapless::Vec::new();
+    let mut reserved_memory: heapless::Vec<memory::Region, MAX_RESERVED_MEMORY> =
+        heapless::Vec::new();
     let mut usable_memory: heapless::Vec<memory::Region, MAX_USABLE_MEMORY> = heapless::Vec::new();
 
     let memory = unsafe {
-        dtb::collect_memory_map(dtb_ptr, &mut reserved_memory).expect("Failed to collect memory map")
+        dtb::collect_memory_map(dtb_ptr, &mut reserved_memory)
+            .expect("Failed to collect memory map")
     };
 
     println!("Memory {:#x} - {:#x}", memory.start, memory.end);
 
-    let _ = reserved_memory.push(memory::Region {
-        start: memory.start,
-        end: memory::align_up(kernel_phys_end),
-    });
+    let _ = reserved_memory
+        .push(memory::Region { start: memory.start, end: memory::align_up(kernel_phys_end) });
 
     let _ = reserved_memory.push(memory::Region {
         start: memory::align_down(dtb_ptr as usize),
@@ -46,7 +47,7 @@ pub fn init(dtb_ptr: *const u8, kernel_phys_end: usize) -> memory::Region {
         println!("  {:#x} - {:#x}", region.start, region.end);
     }
 
-    memory::compute_usable_regions(memory, &mut reserved_memory, &mut usable_memory);
+    memory::compute_usable_regions(memory, &reserved_memory, &mut usable_memory);
 
     println!("Usable memory regions:");
     for region in usable_memory.iter() {
@@ -57,9 +58,11 @@ pub fn init(dtb_ptr: *const u8, kernel_phys_end: usize) -> memory::Region {
         (*addr_of_mut!(PAGE_ALLOCATOR)).init(&usable_memory);
     }
 
-    println!("Page allocator initialized: {} pages ({} free)",
-            total_page_count(),
-            free_page_count());
+    println!(
+        "Page allocator initialized: {} pages ({} free)",
+        total_page_count(),
+        free_page_count()
+    );
 
     memory
 }
@@ -86,14 +89,23 @@ impl PageAllocator {
         Self { head: None, free_pages: 0, total_pages: 0 }
     }
 
-    pub unsafe fn init<const N: usize>(&mut self, usable_memory: &heapless::Vec<memory::Region, N>) {
+    pub unsafe fn init<const N: usize>(
+        &mut self,
+        usable_memory: &heapless::Vec<memory::Region, N>,
+    ) {
         self.head = None;
         self.free_pages = 0;
 
         for region in usable_memory.iter() {
             println!("Page allocator initializing from {:#x} to {:#x}", region.start, region.end);
-            assert!(region.start & (memory::PAGE_SIZE - 1) == 0, "Page allocator start address not page-aligned.");
-            assert!(region.end & (memory::PAGE_SIZE - 1) == 0, "Page allocator end address not page-aligned.");
+            assert!(
+                region.start & (memory::PAGE_SIZE - 1) == 0,
+                "Page allocator start address not page-aligned."
+            );
+            assert!(
+                region.end & (memory::PAGE_SIZE - 1) == 0,
+                "Page allocator end address not page-aligned."
+            );
 
             let start = region.start;
             let end = region.end;

@@ -1,5 +1,3 @@
-use heapless;
-
 #[derive(Debug, Copy, Clone)]
 pub struct Region {
     pub start: usize,

@@ -1,0 +1,10 @@
+# rustfmt.toml
+
+max_width = 100
+use_small_heuristics = "Max"
+hard_tabs = false
+tab_spaces = 4
+format_code_in_doc_comments = true
+normalize_doc_attributes = true
+group_imports = "StdExternalCrate"
+hex_literal_case = "Lower"  # 👈 use lowercase hex as discussed

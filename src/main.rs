@@ -10,21 +10,26 @@ mod trampoline;
 #[macro_use]
 mod console;
 
-mod memory;
 mod dtb;
+mod kernel_main;
+mod kernel_memory_map;
+mod memory;
 mod page_allocator;
 mod page_mapper;
-mod kernel_memory_map;
-mod kernel_main;
 
 #[no_mangle]
-fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kernel_phys_end: usize) -> ! {
-     unsafe {
+fn rust_main(
+    hart_id: usize,
+    dtb_ptr: *const u8,
+    kernel_phys_start: usize,
+    kernel_phys_end: usize,
+) -> ! {
+    unsafe {
         core::arch::asm!(
             "csrw stvec, {}",
             in(reg) trap_handler as usize,
         );
-     }
+    }
 
     console::sbi_console_putchar(b'*');
     console::sbi_console_putchar(b'*');
@@ -44,7 +49,7 @@ fn rust_main(hart_id: usize, dtb_ptr: *const u8, kernel_phys_start: usize, kerne
     println!("DTB pointer: {:?}", dtb_ptr);
     println!("DTB size: {:#x}", dtb_context.total_size);
 
-    #[cfg(feature="print_dtb")]
+    #[cfg(feature = "print_dtb")]
     unsafe {
         println!("DTB structure");
         dtb::print_dtb(dtb_ptr);
@@ -130,6 +135,8 @@ extern "C" fn trap_handler() {
 
     // Halt the system
     loop {
-        unsafe { core::arch::asm!("wfi"); }
+        unsafe {
+            core::arch::asm!("wfi");
+        }
     }
 }

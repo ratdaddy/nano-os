@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use crate::page_allocator;
 use crate::memory;
+use crate::page_allocator;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PageSize {
@@ -33,6 +33,8 @@ impl PageSize {
     }
 }
 
+use core::ops::BitOr;
+
 #[derive(Copy, Clone)]
 pub struct PageFlags {
     bits: usize,
@@ -55,9 +57,13 @@ impl PageFlags {
     pub fn bits(self) -> usize {
         self.bits
     }
+}
 
-    pub fn union(self, other: Self) -> Self {
-        Self { bits: self.bits | other.bits }
+impl BitOr for PageFlags {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self { bits: self.bits | rhs.bits }
     }
 }
 
@@ -72,7 +78,8 @@ impl PageTableEntry {
 
     pub fn set(&mut self, phys_addr: usize, flags: PageFlags) {
         let ppn = phys_to_ppn(phys_addr);
-        self.0 = (ppn << 10) | flags.union(PageFlags::VALID).bits();
+        let page_flags = flags | PageFlags::VALID;
+        self.0 = (ppn << 10) | page_flags.bits();
     }
 
     pub fn is_valid(&self) -> bool {
@@ -84,7 +91,7 @@ impl PageTableEntry {
     }
 
     pub fn flags(&self) -> PageFlags {
-        PageFlags { bits: self.0 & 0xFFF }
+        PageFlags { bits: self.0 & 0xfff }
     }
 
     pub fn raw(&self) -> usize {
@@ -93,7 +100,7 @@ impl PageTableEntry {
 }
 
 fn phys_to_ppn(addr: usize) -> usize {
-    (addr >> 12) & 0x000F_FFFF_FFFF // Sv39: 44 bits
+    (addr >> 12) & 0x000f_ffff_ffff // Sv39: 44 bits
 }
 
 pub trait VirtualAddressExt {
@@ -104,15 +111,15 @@ pub trait VirtualAddressExt {
 
 impl VirtualAddressExt for usize {
     fn vpn2(self) -> usize {
-        (self >> 30) & 0x1FF
+        (self >> 30) & 0x1ff
     }
 
     fn vpn1(self) -> usize {
-        (self >> 21) & 0x1FF
+        (self >> 21) & 0x1ff
     }
 
     fn vpn0(self) -> usize {
-        (self >> 12) & 0x1FF
+        (self >> 12) & 0x1ff
     }
 }
 
@@ -131,11 +138,11 @@ impl PageMapper {
         let root_frame = page_allocator::alloc().expect("Failed to allocate root page table");
         let root_ptr = root_frame as *mut PageTable;
 
-        unsafe { zero_page_table(root_ptr); }
-
-        Self {
-            root_table: root_ptr,
+        unsafe {
+            zero_page_table(root_ptr);
         }
+
+        Self { root_table: root_ptr }
     }
 
     pub fn map_range(
@@ -203,12 +210,7 @@ impl PageMapper {
         }
     }
 
-    pub fn allocate_and_map_pages(
-        &self,
-        virt: usize,
-        size: usize,
-        flags: PageFlags,
-    ) {
+    pub fn allocate_and_map_pages(&self, virt: usize, size: usize, flags: PageFlags) {
         let page_count = size / memory::PAGE_SIZE;
 
         for i in 0..page_count {
@@ -223,13 +225,13 @@ pub unsafe fn zero_page_table(ptr: *mut PageTable) {
     core::ptr::write_bytes(ptr, 0, 1);
 }
 
-fn alloc_next_level(
-    parent_entry: &mut PageTableEntry,
-) -> *mut PageTable {
+fn alloc_next_level(parent_entry: &mut PageTableEntry) -> *mut PageTable {
     let new_frame = page_allocator::alloc().expect("Out of memory for page table");
     let new_table = new_frame as *mut PageTable;
 
-    unsafe { zero_page_table(new_table); }
+    unsafe {
+        zero_page_table(new_table);
+    }
 
     parent_entry.set(new_frame, PageFlags::empty());
     new_table
