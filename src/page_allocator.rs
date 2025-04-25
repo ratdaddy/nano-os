@@ -147,6 +147,8 @@ impl PageAllocator {
             (*node).page_count = page_count;
             self.head = Some(&mut *node);
         }
+
+        println!("Deallocated page at {:#x}", ptr);
     }
 
     pub fn free_page_count(&self) -> usize {

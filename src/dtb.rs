@@ -1,7 +1,7 @@
 use core::ptr;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::memory;
-
 const FDT_MAGIC: u32 = 0xd00d_feed;
 const FDT_BEGIN_NODE: u32 = 1;
 const FDT_END_NODE: u32 = 2;
@@ -24,6 +24,15 @@ pub struct DtbContext {
     pub struct_ptr: *const u8,
     pub strings_ptr: *const u8,
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CpuType {
+    Unknown = 0,
+    Qemu = 1,
+    LicheeRVNano = 2,
+}
+
+static CPU_TYPE: AtomicU8 = AtomicU8::new(CpuType::Unknown as u8);
 
 pub unsafe fn parse_dtb(dtb: *const u8) -> DtbContext {
     assert_eq!(read_be32(dtb), FDT_MAGIC, "Invalid DTB magic");
@@ -149,6 +158,45 @@ pub unsafe fn collect_memory_map<const N: usize>(
     });
 
     memory
+}
+pub fn get_cpu_type() -> CpuType {
+    match CPU_TYPE.load(Ordering::Relaxed) {
+        1 => CpuType::Qemu,
+        2 => CpuType::LicheeRVNano,
+        _ => CpuType::Unknown,
+    }
+}
+
+pub fn detect_cpu_type(dtb: *const u8) {
+    if get_cpu_type() != CpuType::Unknown {
+        return;
+    }
+
+    let ctx = unsafe { parse_dtb(dtb) };
+
+    let mut found = false;
+
+    unsafe {
+        traverse_dtb(&ctx, |token, depth, _node_name, prop| {
+            if found {
+                return;
+            }
+
+            if let (DtbToken::Prop, 1, Some(("compatible", data, len))) = (token, depth, prop) {
+                let slice = core::slice::from_raw_parts(data, len);
+                if let Ok(compat_str) = core::str::from_utf8(slice) {
+                    if compat_str.contains("cv181x") {
+                        CPU_TYPE.store(CpuType::LicheeRVNano as u8, Ordering::Relaxed);
+                        found = true;
+                    }
+                }
+            }
+        });
+    }
+
+    if !found {
+        CPU_TYPE.store(CpuType::Qemu as u8, Ordering::Relaxed);
+    }
 }
 
 #[allow(dead_code)]

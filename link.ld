@@ -59,6 +59,7 @@ SECTIONS {
   .bss : {
     _bss_start = .;
     *(.bss .bss.* COMMON)
+    *(.sbss .sbss.* .scommon)
     _bss_end = .;
   }
 

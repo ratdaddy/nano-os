@@ -38,6 +38,12 @@ copy: all
 run:
 	cargo run $(FEATURES)
 
+lint:
+	cargo clippy
+
+format:
+	cargo fmt
+
 qemu-debug:
 	cargo run -- -S -gdb tcp::1234
 

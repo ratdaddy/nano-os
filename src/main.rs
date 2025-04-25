@@ -13,6 +13,7 @@ mod console;
 mod dtb;
 mod kernel_main;
 mod kernel_memory_map;
+mod kernel_trap;
 mod memory;
 mod page_allocator;
 mod page_mapper;
@@ -54,6 +55,8 @@ fn rust_main(
         println!("DTB structure");
         dtb::print_dtb(dtb_ptr);
     }
+
+    dtb::detect_cpu_type(dtb_ptr);
 
     let memory = page_allocator::init(dtb_ptr, kernel_phys_end);
 
