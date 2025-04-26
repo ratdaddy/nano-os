@@ -20,3 +20,4 @@ path = "src/main.rs"
 
 [features]
 print_dtb = []
+page_allocator_debug = []

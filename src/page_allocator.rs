@@ -129,6 +129,8 @@ impl PageAllocator {
             self.head = node_ref.next.take();
         }
 
+        #[allow(dead_code)]
+        #[cfg(feature = "page_allocator_debug")]
         println!("Allocated page at {:#x}", addr as *mut PageNode as usize);
 
         self.free_pages -= 1;
@@ -148,6 +150,8 @@ impl PageAllocator {
             self.head = Some(&mut *node);
         }
 
+        #[allow(dead_code)]
+        #[cfg(feature = "page_allocator_debug")]
         println!("Deallocated page at {:#x}", ptr);
     }
 

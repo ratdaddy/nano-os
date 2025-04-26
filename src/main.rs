@@ -4,6 +4,9 @@
 #![no_std]
 #![no_main]
 #![feature(naked_functions)]
+#![feature(alloc_error_handler)]
+
+extern crate alloc;
 
 mod trampoline;
 
@@ -11,12 +14,15 @@ mod trampoline;
 mod console;
 
 mod dtb;
+mod kernel_allocator;
 mod kernel_main;
 mod kernel_memory_map;
 mod kernel_trap;
 mod memory;
 mod page_allocator;
 mod page_mapper;
+
+use core::panic::PanicInfo;
 
 #[no_mangle]
 fn rust_main(
@@ -50,6 +56,7 @@ fn rust_main(
     println!("DTB pointer: {:?}", dtb_ptr);
     println!("DTB size: {:#x}", dtb_context.total_size);
 
+    #[allow(dead_code)]
     #[cfg(feature = "print_dtb")]
     unsafe {
         println!("DTB structure");
@@ -60,23 +67,7 @@ fn rust_main(
 
     let memory = page_allocator::init(dtb_ptr, kernel_phys_end);
 
-    let root_table = kernel_memory_map::init(memory);
-
-    let ppn = root_table as usize >> 12;
-    let satp_value = (8 << 60) | ppn;
-
-    println!("Switching to memory map with SATP value: {:#x}", satp_value);
-
-    unsafe {
-        core::arch::asm!(
-            "csrw satp, {0}",
-            "sfence.vma zero, zero",
-            in(reg) satp_value,
-            options(nostack)
-        );
-    }
-
-    println!("Successfully switched to using memory map");
+    kernel_memory_map::init(memory);
 
     unsafe {
         core::arch::asm!("mv sp, {}", in(reg) kernel_memory_map::KERNEL_STACK_START);
@@ -104,7 +95,10 @@ fn zero_bss() {
     }
 }
 
-use core::panic::PanicInfo;
+#[alloc_error_handler]
+fn alloc_error(layout: core::alloc::Layout) -> ! {
+    panic!("allocation error: {:?}", layout);
+}
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {

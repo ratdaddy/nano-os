@@ -1,3 +1,9 @@
+use alloc::vec::Vec;
+use alloc::vec;
+use alloc::boxed::Box;
+
+use crate::kernel_allocator;
+
 extern "C" {
     fn trap_entry();
 }
@@ -15,6 +21,10 @@ pub fn kernel_main() {
     }
 
     test_stack_allocation();
+
+    test_alloc1();
+    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    test_alloc2();
 
     loop {
         unsafe { core::arch::asm!("wfi") }
@@ -40,4 +50,24 @@ fn test_stack_allocation() {
 fn consume_array(arr: [u8; 10 * 1024]) {
     let avg = arr.iter().map(|&b| b as u32).sum::<u32>() / arr.len() as u32;
     println!("Average: {}", avg);
+}
+
+
+fn test_alloc1() {
+    let mut v = Vec::new();
+    v.push(42);
+    v.push(100);
+    v.push(200);
+    v.push(300);
+    v.push(300);
+    let mut w = Vec::new();
+    w.push(42);
+    w.push(100);
+    println!("Allocated vector: {:?}", v);
+    let buffer1: Box<[u8]> = vec![0u8; 10000].into_boxed_slice();
+    let buffer2: Box<[u8]> = vec![0u8; 10000].into_boxed_slice();
+}
+
+fn test_alloc2() {
+    let buffer: Box<[u8]> = vec![0u8; 0x6f00].into_boxed_slice();
 }

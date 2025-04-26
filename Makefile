@@ -19,7 +19,7 @@ SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 all: $(BOOT_SD)
 
 $(KERNEL_BIN): $(SOURCES)
-	cargo build --target $(TARGET) $(FEATURES)
+	cargo -Z build-std=core,alloc build --target $(TARGET) $(FEATURES)
 	$(OBJCOPY) --binary-architecture=riscv64 --strip-all -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 
 $(BOOT_SD): $(KERNEL_BIN) bootdata/boot.its
@@ -36,7 +36,7 @@ copy: all
 	@echo "Done."
 
 run:
-	cargo run $(FEATURES)
+	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
 lint:
 	cargo clippy
@@ -45,7 +45,7 @@ format:
 	cargo fmt
 
 qemu-debug:
-	cargo run -- -S -gdb tcp::1234
+	cargo -Z build-std=core,alloc run -- -S -gdb tcp::1234
 
 gdb:
 	docker run --rm -it -v $$(PWD):/workspace -w /workspace riscv-gdb

@@ -50,7 +50,7 @@ SECTIONS {
 
   .data : {
     _data_start = .;
-    *(.data .data.*)
+    *(.data .data.* .sdata .sdata.* .data.rel.ro .data.rel.ro.*)
     _data_end = .;
   }
 
@@ -58,8 +58,7 @@ SECTIONS {
 
   .bss : {
     _bss_start = .;
-    *(.bss .bss.* COMMON)
-    *(.sbss .sbss.* .scommon)
+    *(.bss .bss.* COMMON .sbss .sbss.* .scommon)
     _bss_end = .;
   }
 

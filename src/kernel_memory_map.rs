@@ -1,8 +1,10 @@
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use page_mapper::PageFlags;
 
 use crate::dtb;
+use crate::kernel_allocator;
 use crate::memory;
 use crate::page_mapper;
 
@@ -17,9 +19,12 @@ const KERNEL_STACK_END: usize = KERNEL_STACK_START - 0x20_0000;
 pub static KERNEL_TRAP_STACK_START: usize = HIGH_HALF_PHYS_START + 0xffff_c000;
 const KERNEL_TRAP_STACK_SIZE: usize = 0x4000;
 
+const KERNEL_HEAP_START: usize = 0xffff_ffff_c000_0000;
+static KERNEL_HEAP_END: AtomicUsize = AtomicUsize::new(KERNEL_HEAP_START + 4 * memory::PAGE_SIZE);
+
 static mut KERNEL_PAGE_MAPPER: MaybeUninit<page_mapper::PageMapper> = MaybeUninit::uninit();
 
-pub fn init(memory: memory::Region) -> *const page_mapper::PageTable {
+pub fn init(memory: memory::Region) {
     init_page_mapper();
 
     // Identity map the actual physical memory range
@@ -171,10 +176,48 @@ pub fn init(memory: memory::Region) -> *const page_mapper::PageTable {
         );
     });
 
+    // Map and initialize the kernel heap
+
+    println!(
+        "Mapping kernel heap segment: virt: {:#x} - {:#x}",
+        KERNEL_HEAP_START, KERNEL_HEAP_END.load(Ordering::SeqCst)
+    );
+
+    let initial_heap_size = KERNEL_HEAP_END.load(Ordering::SeqCst) - KERNEL_HEAP_START;
+
+    with_page_mapper(|mapper| {
+        mapper.allocate_and_map_pages(
+            KERNEL_HEAP_START,
+            initial_heap_size,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+        );
+    });
+
     let root_table = root_table();
     println!("Memory mapped at root table: {:#x}", root_table as usize);
 
-    root_table
+    let ppn = root_table as usize >> 12;
+    let satp_value = (8 << 60) | ppn;
+
+    println!("Switching to memory map with SATP value: {:#x}", satp_value);
+
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, {0}",
+            "sfence.vma zero, zero",
+            in(reg) satp_value,
+            options(nostack)
+        );
+    }
+
+    println!("Successfully switched to using memory map");
+
+    unsafe {
+        kernel_allocator::ALLOCATOR.init(
+            KERNEL_HEAP_START,
+            initial_heap_size,
+        );
+    }
 }
 
 pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
@@ -224,6 +267,44 @@ pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
     println!("Kernel stack grown to: {:#x}", grow_end);
 
     true
+}
+
+pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
+    let size = memory::align_up(size);
+
+    let old_end = KERNEL_HEAP_END.load(Ordering::SeqCst);
+    let new_end = old_end.checked_add(size)?;
+
+    println!(
+        "Growing kernel heap: virt: {:#x} - {:#x}",
+        old_end, new_end
+    );
+
+    with_page_mapper(|mapper| {
+        mapper.allocate_and_map_pages(
+            old_end,
+            size,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+        );
+    });
+
+    if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        unsafe {
+            core::arch::asm!(
+                ".long 0x0020000b",
+                ".long 0x0190000b",
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+
+    unsafe {
+        core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
+    }
+
+    KERNEL_HEAP_END.store(new_end, Ordering::SeqCst);
+
+    Some((old_end, size))
 }
 
 pub fn init_page_mapper() {
