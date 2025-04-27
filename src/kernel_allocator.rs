@@ -65,7 +65,6 @@ impl LinkedListAllocator {
             Some(block) => *block as *mut BlockHeader,
             None => null_mut(),
         };
-        let mut last: *mut BlockHeader = null_mut();
 
         while !current.is_null() {
             let curr = &mut *current;
@@ -74,7 +73,6 @@ impl LinkedListAllocator {
                 return Some(curr);
             }
 
-            last = current;
             current = match curr.next.as_mut() {
                 Some(next_block) => *next_block as *mut BlockHeader,
                 None => null_mut(),

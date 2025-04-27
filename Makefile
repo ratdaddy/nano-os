@@ -38,6 +38,9 @@ copy: all
 run:
 	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
+test:
+	cargo -Z build-std=core,alloc test --target $(TARGET) $(FEATURES)
+
 lint:
 	cargo clippy
 

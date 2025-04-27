@@ -51,11 +51,10 @@ fn consume_array(arr: [u8; 10 * 1024]) {
     println!("Average: {}", avg);
 }
 
-
 fn test_alloc1() {
     println!("\n*** Testing allocation ***");
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
-    let buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
+    let _buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
     let mut v = Vec::new();
     v.push(42);
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
@@ -64,24 +63,14 @@ fn test_alloc1() {
     v.push(300);
     v.push(300);
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
-    /*
-    let mut w = Vec::new();
-    w.push(42);
-    w.push(100);
-    println!("Allocated vector: {:?}", v);
-    let buffer1: Box<[u8]> = vec![0u8; 10000].into_boxed_slice();
-    let buffer2: Box<[u8]> = vec![0u8; 10000].into_boxed_slice();
-    */
 }
 
 fn test_alloc2() {
     let mut v = Vec::new();
     v.push(42);
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
-    let buffer1: Box<[u8]> = vec![0u8; 16000].into_boxed_slice();
-    let buffer2: Box<[u8]> = vec![0u8; 4016].into_boxed_slice();
-    let buffer2: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
+    let _buffer1: Box<[u8]> = vec![0u8; 16000].into_boxed_slice();
+    let _buffer2: Box<[u8]> = vec![0u8; 4016].into_boxed_slice();
+    let _buffer3: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
-
-    //let buffer: Box<[u8]> = vec![0u8; 0x6f00].into_boxed_slice();
 }

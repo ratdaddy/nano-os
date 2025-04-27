@@ -5,6 +5,9 @@
 #![no_main]
 #![feature(naked_functions)]
 #![feature(alloc_error_handler)]
+#![feature(custom_test_frameworks)]
+#![test_runner(test::test_runner)]
+#![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
 
@@ -21,9 +24,11 @@ mod kernel_trap;
 mod memory;
 mod page_allocator;
 mod page_mapper;
+mod test;
 
 use core::panic::PanicInfo;
 
+#[cfg(not(test))]
 #[no_mangle]
 fn rust_main(
     hart_id: usize,
@@ -100,6 +105,7 @@ fn alloc_error(layout: core::alloc::Layout) -> ! {
     panic!("allocation error: {:?}", layout);
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     println!("Panic: {}", _info);
@@ -136,4 +142,19 @@ extern "C" fn trap_handler() {
             core::arch::asm!("wfi");
         }
     }
+}
+
+#[cfg(test)]
+#[no_mangle]
+fn rust_main() -> ! {
+    test_main();
+    println!("All tests passed!");
+    test::exit_qemu();
+}
+
+#[cfg(test)]
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    println!("Test panic: {info}");
+    test::exit_qemu();
 }
