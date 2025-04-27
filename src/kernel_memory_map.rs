@@ -270,6 +270,7 @@ pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
 }
 
 pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
+    println!("Growing kernel heap by: {:#x}", size);
     let size = memory::align_up(size);
 
     let old_end = KERNEL_HEAP_END.load(Ordering::SeqCst);
