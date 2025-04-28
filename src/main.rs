@@ -148,13 +148,13 @@ extern "C" fn trap_handler() {
 #[no_mangle]
 fn rust_main() -> ! {
     test_main();
-    println!("All tests passed!");
+    println!("\x1b[32mAll tests passed!\x1b[0m");
     test::exit_qemu();
 }
 
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!("Test panic: {info}");
+    println!("\x1b[31mTest panic: {info}\x1b[0m");
     test::exit_qemu();
 }

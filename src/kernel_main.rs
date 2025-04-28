@@ -55,6 +55,7 @@ fn test_alloc1() {
     println!("\n*** Testing allocation ***");
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
     let _buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
+    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
     let mut v = Vec::new();
     v.push(42);
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
