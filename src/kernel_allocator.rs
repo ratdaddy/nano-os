@@ -87,21 +87,23 @@ impl LinkedListAllocator {
 
         let size = (layout.size() + size_of::<BlockHeader>()).max(memory::PAGE_SIZE);
         let (new_addr, actual_size) = (self.grow_heap_fn)(size)?;
-        let new_block = new_addr as *mut BlockHeader;
 
-        let last_block = (*self.tail.get())
+        let last_block_ref = (*self.tail.get())
             .as_mut()
             .expect("Kernel allocator tail must exist");
+        let last_block: &mut BlockHeader = *last_block_ref;
 
         if !last_block.used {
             last_block.size += actual_size;
             return Some(last_block);
         } else {
+            let last_block_ptr = last_block as *mut BlockHeader;
+            let new_block = new_addr as *mut BlockHeader;
             *new_block = BlockHeader {
                 size: actual_size - size_of::<BlockHeader>(),
                 used: false,
                 next: None,
-                prev: Some(unsafe { core::mem::transmute::<&mut BlockHeader, &'static mut BlockHeader>(last_block) }),
+                prev: Some(&mut *last_block_ptr),
                 free_next: None,
                 free_prev: None,
             };
@@ -123,41 +125,38 @@ impl LinkedListAllocator {
                 used: false,
                 next: block.next.take(),
                 prev: Some(&mut *(block as *mut BlockHeader)),
-                free_next: block.free_next.take(),
-                free_prev: block.free_prev.take(),
+                free_next: None,
+                free_prev: None,
             };
 
-            let old_free_next_ptr = (*new_block_ptr).free_next.as_mut().map(|b| *b as *mut BlockHeader);
-            let old_free_prev_ptr = (*new_block_ptr).free_prev.as_mut().map(|b| *b as *mut BlockHeader);
-
-            if let Some(next_free_ptr) = old_free_next_ptr {
-                (*next_free_ptr).free_prev = Some(&mut *new_block_ptr);
+            // insert new block at the head of the free list
+            if let Some(old_head) = (&mut *self.free_head.get()).take() {
+                old_head.free_prev = Some(&mut *new_block_ptr);
+                (*new_block_ptr).free_next = Some(old_head);
             }
 
-            if let Some(prev_free_ptr) = old_free_prev_ptr {
-                (*prev_free_ptr).free_next = Some(&mut *new_block_ptr);
-            } else {
-                *self.free_head.get() = Some(&mut *new_block_ptr);
-            }
+            *self.free_head.get() = Some(&mut *new_block_ptr);
 
+            // insert new block into the linked list after the current block
             if let Some(next_block) = (&mut *new_block_ptr).next.as_mut() {
                 next_block.prev = Some(&mut *new_block_ptr);
             } else {
                 *self.tail.get() = Some(&mut *new_block_ptr);
             }
 
-            block.size = total_needed;
             block.next = Some(&mut *new_block_ptr);
-        } else {
-            if let Some(prev) = block.free_prev.take() {
-                prev.free_next = block.free_next.take();
-            } else {
-                *self.free_head.get() = block.free_next.take();
-            }
 
-            if let Some(next) = block.free_next.as_mut() {
-                next.free_prev = block.free_prev.take();
-            }
+            block.size = total_needed;
+        }
+        // remove current block from the free list
+        if let Some(prev_block) = block.free_prev.as_mut() {
+            prev_block.free_next = block.free_next.take();
+        } else {
+            *self.free_head.get() = block.free_next.take();
+        }
+
+        if let Some(next_block) = block.free_next.as_mut() {
+            next_block.free_prev = block.free_prev.take();
         }
 
         block.used = true;
@@ -213,9 +212,11 @@ impl LinkedListAllocator {
                 block.used,
             );
             println!(
-                "  Next: {:?}, Prev: {:?}, Free Next: {:?}, Free Prev: {:?}",
+                "  Next: {:?}, Prev: {:?}",
                 block.next.as_ref().map(|b| *b as *const _),
                 block.prev.as_ref().map(|b| *b as *const _),
+            );
+            println!("  Free Next: {:?}, Free Prev: {:?}",
                 block.free_next.as_ref().map(|b| *b as *const _),
                 block.free_prev.as_ref().map(|b| *b as *const _)
             );
@@ -388,14 +389,10 @@ mod tests {
             let full_layout = Layout::from_size_align(initial_tail.size, 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(full_layout);
 
-            // Now the last block is fully used.
-
-            // Step 2: Trigger growth by allocating more
             let layout = Layout::from_size_align(256, 8).unwrap();
             let new_ptr = TEST_ALLOCATOR.alloc(layout);
             assert!(!new_ptr.is_null(), "Allocation after growth failed");
 
-            // Step 3: Tail should now point to a brand new block
             let new_tail = (*TEST_ALLOCATOR.tail.get())
                 .as_ref()
                 .expect("Tail must exist after growth");
