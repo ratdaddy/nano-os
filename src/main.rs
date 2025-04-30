@@ -147,6 +147,12 @@ extern "C" fn trap_handler() {
 #[cfg(test)]
 #[no_mangle]
 fn rust_main() -> ! {
+    unsafe {
+        core::arch::asm!(
+            "csrw stvec, {}",
+            in(reg) trap_handler as usize,
+        );
+    }
     test_main();
     println!("\x1b[32mAll tests passed!\x1b[0m");
     test::exit_qemu();

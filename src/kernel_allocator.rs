@@ -11,6 +11,24 @@ const MIN_BLOCK_SIZE: usize = size_of::<BlockHeader>() + 8;
 #[global_allocator]
 pub static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::new();
 
+unsafe impl GlobalAlloc for LinkedListAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if let Some(block) = self.find_fit(layout) {
+            self.split_block(block, layout)
+        } else {
+            null_mut()
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        if ptr.is_null() {
+            return;
+        }
+
+        self.dealloc_and_coalesce(ptr as *mut BlockHeader);
+    }
+}
+
 #[repr(C)]
 #[derive(Debug)]
 struct BlockHeader {
@@ -66,6 +84,18 @@ impl LinkedListAllocator {
         *self.free_head.get() = Some(&mut *block);
     }
 
+    unsafe fn insert_free_block(&self, new_block: *mut BlockHeader) {
+        (*new_block).free_next = None;
+        (*new_block).free_prev = None;
+
+        if let Some(old_head) = (&mut *self.free_head.get()).take() {
+            old_head.free_prev = Some(&mut *new_block);
+            (*new_block).free_next = Some(old_head);
+        }
+
+        *self.free_head.get() = Some(&mut *new_block);
+    }
+
     unsafe fn find_fit(&self, layout: Layout) -> Option<&'static mut BlockHeader> {
         let mut current = match (*self.head.get()).as_mut() {
             Some(block) => *block as *mut BlockHeader,
@@ -107,8 +137,12 @@ impl LinkedListAllocator {
                 free_next: None,
                 free_prev: None,
             };
+            self.insert_free_block(new_block);
+
+            // insert new block into the linked list after the last block
             last_block.next = Some(&mut *new_block);
             *self.tail.get() = Some(&mut *new_block);
+
             return Some(&mut *new_block);
         }
     }
@@ -129,13 +163,7 @@ impl LinkedListAllocator {
                 free_prev: None,
             };
 
-            // insert new block at the head of the free list
-            if let Some(old_head) = (&mut *self.free_head.get()).take() {
-                old_head.free_prev = Some(&mut *new_block_ptr);
-                (*new_block_ptr).free_next = Some(old_head);
-            }
-
-            *self.free_head.get() = Some(&mut *new_block_ptr);
+            self.insert_free_block(new_block_ptr);
 
             // insert new block into the linked list after the current block
             if let Some(next_block) = (&mut *new_block_ptr).next.as_mut() {
@@ -156,6 +184,7 @@ impl LinkedListAllocator {
         }
 
         if let Some(next_block) = block.free_next.as_mut() {
+            println!("************ THIS NEEDS A TEST ************");
             next_block.free_prev = block.free_prev.take();
         }
 
@@ -163,31 +192,58 @@ impl LinkedListAllocator {
         block.start_ptr()
     }
 
-    unsafe fn coalesce(&self) {
-        let mut current = match (*self.head.get()).as_mut() {
+    unsafe fn dealloc_and_coalesce(&self, ptr: *mut BlockHeader) {
+        let block_ptr = (ptr as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
+        (*block_ptr).used = false;
+
+        if let Some(next_block) = (*block_ptr).next.as_mut() {
+            if !next_block.used {
+                (*block_ptr).size += size_of::<BlockHeader>() + next_block.size;
+
+                // remove next block from free list
+                if let Some(prev_block) = next_block.free_prev.as_mut() {
+                    prev_block.free_next = next_block.free_next.take();
+                    println!("************ THIS NEEDS A TEST ************");
+                } else {
+                    *self.free_head.get() = next_block.free_next.take();
+                }
+
+                if let Some(next_next_block) = next_block.free_next.as_mut() {
+                    next_next_block.free_prev = next_block.free_prev.take();
+                    println!("************ THIS NEEDS A TEST ************");
+                }
+
+                // remove next block from linked list
+                if let Some(next_next_block) = next_block.next.as_mut() {
+                    next_next_block.prev = Some(&mut *block_ptr);
+                } else {
+                    println!("************ THIS NEEDS A TEST ************");
+                    *self.tail.get() = Some(&mut *block_ptr);
+                }
+
+                (*block_ptr).next = next_block.next.take();
+            }
+        }
+
+        let mut prev = match (*block_ptr).prev.as_mut() {
             Some(block) => *block as *mut BlockHeader,
             None => null_mut(),
         };
 
-        while !current.is_null() {
-            let curr = &mut *current;
-            let mut curr_end = curr.end_ptr();
-            let curr_used = curr.used;
-
-            while let Some(next) = curr.next.as_mut() {
-                if !curr_used && !next.used && curr_end == next as *const _ as usize {
-                    curr.size += size_of::<BlockHeader>() + next.size;
-                    curr.next = next.next.take();
-                    curr_end = curr.end_ptr();
-                } else {
-                    break;
-                }
+        if !prev.is_null() && !(*prev).used {
+            // remove current block from list
+            if let Some(next_block) = (*block_ptr).next.as_mut() {
+                next_block.prev = (*block_ptr).prev.take();
+                (*prev).next = Some(next_block);
+            } else {
+                println!("************ THIS NEEDS A TEST ************");
+                *self.tail.get() = (*block_ptr).prev.take();
+                (*prev).next = None;
             }
 
-            current = match curr.next.as_mut() {
-                Some(next_block) => *next_block as *mut BlockHeader,
-                None => null_mut(),
-            };
+            (*prev).size += size_of::<BlockHeader>() + (*block_ptr).size;
+        } else {
+            self.insert_free_block(block_ptr);
         }
     }
 
@@ -231,27 +287,6 @@ impl LinkedListAllocator {
 }
 
 unsafe impl Sync for LinkedListAllocator {}
-
-unsafe impl GlobalAlloc for LinkedListAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if let Some(block) = self.find_fit(layout) {
-            self.split_block(block, layout)
-        } else {
-            null_mut()
-        }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        if ptr.is_null() {
-            return;
-        }
-
-        let header_ptr = (ptr as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
-        (*header_ptr).used = false;
-
-        //self.coalesce();
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -469,6 +504,140 @@ mod tests {
         }
     }
 
+    #[test_case]
+    fn test_coalesce_none() {
+        unsafe {
+            println!("Testing coalesce with no adjacent free blocks...");
+            setup_allocator();
+
+            let layout = Layout::from_size_align(128, 8).unwrap();
+            let block1 = TEST_ALLOCATOR.alloc(layout);
+            let block2 = TEST_ALLOCATOR.alloc(layout);
+            let block3 = TEST_ALLOCATOR.alloc(layout);
+TEST_ALLOCATOR.dealloc(block2, layout);
+
+            // No coalescing should happen since block1 and block3 are both used
+            let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+            let header = &*header_ptr;
+
+            assert_eq!(header.size, 128, "Freed block should retain its size after no coalescing");
+            assert!(!header.used, "Freed block should be marked free");
+
+            assert_heap_invariants();
+        }
+    }
+
+    #[test_case]
+    fn test_coalesce_with_next() {
+        unsafe {
+            println!("Testing coalesce with next free block...");
+            setup_allocator();
+
+            let layout = Layout::from_size_align(128, 8).unwrap();
+            let block1 = TEST_ALLOCATOR.alloc(layout);
+            let block2 = TEST_ALLOCATOR.alloc(layout);
+            let block3 = TEST_ALLOCATOR.alloc(layout);
+            let block4 = TEST_ALLOCATOR.alloc(layout);
+
+            TEST_ALLOCATOR.dealloc(block3, layout);
+            TEST_ALLOCATOR.dealloc(block2, layout);
+
+            let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+            let header = &*header_ptr;
+
+            assert_eq!(
+                header.size,
+                128 + core::mem::size_of::<BlockHeader>() + 128,
+                "Block2 should have absorbed Block3"
+            );
+
+            assert!(!header.used, "Merged block should be free");
+
+            assert_heap_invariants();
+        }
+    }
+
+    #[test_case]
+    fn test_coalesce_with_prev() {
+        unsafe {
+            println!("Testing coalesce with previous free block...");
+            setup_allocator();
+
+            let layout = Layout::from_size_align(128, 8).unwrap();
+            let block1 = TEST_ALLOCATOR.alloc(layout);
+            let block2 = TEST_ALLOCATOR.alloc(layout);
+            let block3 = TEST_ALLOCATOR.alloc(layout);
+
+            TEST_ALLOCATOR.dealloc(block1, layout);
+            TEST_ALLOCATOR.dealloc(block2, layout);
+
+            let header_ptr = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+            let header = &*header_ptr;
+
+            // Should have merged block1 and block2
+            assert_eq!(
+                header.size,
+                128 + core::mem::size_of::<BlockHeader>() + 128,
+                "Block1 should have absorbed Block2"
+            );
+
+            assert!(!header.used, "Merged block should be free");
+
+            assert_heap_invariants();
+        }
+    }
+
+    //#[test_case]
+    fn test_coalesce_with_prev_and_next() {
+        unsafe {
+            println!("Testing coalesce with both previous and next free blocks...");
+            setup_allocator();
+
+            let layout = Layout::from_size_align(128, 8).unwrap();
+            let block1 = TEST_ALLOCATOR.alloc(layout);
+            let block2 = TEST_ALLOCATOR.alloc(layout);
+            let block3 = TEST_ALLOCATOR.alloc(layout);
+            let block4 = TEST_ALLOCATOR.alloc(layout);
+
+            TEST_ALLOCATOR.dealloc(block2, layout);
+            TEST_ALLOCATOR.dealloc(block3, layout);
+
+            let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+            let header = &*header_ptr;
+
+            // Should have merged block2 and block3 into one block
+            assert_eq!(
+                header.size,
+                128 + core::mem::size_of::<BlockHeader>() + 128,
+                "Block2 and Block3 should have merged"
+            );
+
+            assert!(!header.used, "Merged block should be free");
+
+            // Now free block1 and trigger merging of block1 + (block2+block3)
+            TEST_ALLOCATOR.dealloc(block1, layout);
+
+            let final_header_ptr = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+            let final_header = &*final_header_ptr;
+
+            let expected_total_size = 128
+                + core::mem::size_of::<BlockHeader>()
+                + 128
+                + core::mem::size_of::<BlockHeader>()
+                + 128;
+
+            assert_eq!(
+                final_header.size,
+                expected_total_size,
+                "Block1, Block2, and Block3 should have all merged"
+            );
+
+            assert!(!final_header.used, "Merged block should be free");
+
+            assert_heap_invariants();
+        }
+    }
+
     unsafe fn setup_allocator() {
         TEST_ALLOCATOR.init(TEST_HEAP.0.as_ptr() as usize, TEST_HEAP_SIZE / 2);
     }
@@ -592,6 +761,31 @@ mod tests {
 
             last_free_addr = block_addr;
             free_current = free_block.free_next.as_ref();
+        }
+
+        let mut mem_current = (*TEST_ALLOCATOR.head.get()).as_ref();
+
+        while let Some(block) = mem_current {
+            if !block.used {
+                let mut found_in_free_list = false;
+
+                let mut free_current = (*TEST_ALLOCATOR.free_head.get()).as_ref();
+                while let Some(free_block) = free_current {
+                    if (*free_block as *const BlockHeader) == (*block as *const BlockHeader) {
+                        found_in_free_list = true;
+                        break;
+                    }
+                    free_current = free_block.free_next.as_ref();
+                }
+
+                assert!(
+                    found_in_free_list,
+                    "Block {:p} marked free but not found in free list",
+                    *block
+                );
+            }
+
+            mem_current = block.next.as_ref();
         }
     }
 }

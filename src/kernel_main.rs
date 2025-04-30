@@ -24,6 +24,7 @@ pub fn kernel_main() {
 
     test_alloc1();
     test_alloc2();
+    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
 
     loop {
         unsafe { core::arch::asm!("wfi") }
@@ -55,10 +56,8 @@ fn test_alloc1() {
     println!("\n*** Testing allocation ***");
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
     let _buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
     let mut v = Vec::new();
     v.push(42);
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
     v.push(100);
     v.push(200);
     v.push(300);
