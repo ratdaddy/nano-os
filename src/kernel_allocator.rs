@@ -34,10 +34,10 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
 struct BlockHeader {
     size: usize,
     used: bool,
-    next: Option<&'static mut BlockHeader>,
-    prev: Option<&'static mut BlockHeader>,
-    free_next: Option<&'static mut BlockHeader>,
-    free_prev: Option<&'static mut BlockHeader>,
+    next: *mut BlockHeader,
+    prev: *mut BlockHeader,
+    free_next: *mut BlockHeader,
+    free_prev: *mut BlockHeader,
 }
 
 impl BlockHeader {
@@ -53,18 +53,18 @@ impl BlockHeader {
 }
 
 pub struct LinkedListAllocator {
-    head: UnsafeCell<Option<&'static mut BlockHeader>>,
-    tail: UnsafeCell<Option<&'static mut BlockHeader>>,
-    free_head: UnsafeCell<Option<&'static mut BlockHeader>>,
+    head: UnsafeCell<*mut BlockHeader>,
+    tail: UnsafeCell<*mut BlockHeader>,
+    free_head: UnsafeCell<*mut BlockHeader>,
     grow_heap_fn: fn(usize) -> Option<(usize, usize)>,
 }
 
 impl LinkedListAllocator {
     pub const fn new() -> Self {
         LinkedListAllocator {
-            head: UnsafeCell::new(None),
-            tail: UnsafeCell::new(None),
-            free_head: UnsafeCell::new(None),
+            head: UnsafeCell::new(null_mut()),
+            tail: UnsafeCell::new(null_mut()),
+            free_head: UnsafeCell::new(null_mut()),
             grow_heap_fn: kernel_memory_map::grow_kernel_heap,
         }
     }
@@ -74,171 +74,159 @@ impl LinkedListAllocator {
         *block = BlockHeader {
             size: heap_size - size_of::<BlockHeader>(),
             used: false,
-            next: None,
-            prev: None,
-            free_next: None,
-            free_prev: None,
+            next: null_mut(),
+            prev: null_mut(),
+            free_next: null_mut(),
+            free_prev: null_mut(),
         };
-        *self.head.get() = Some(&mut *block);
-        *self.tail.get() = Some(&mut *block);
-        *self.free_head.get() = Some(&mut *block);
+        *self.head.get() = block;
+        *self.tail.get() = block;
+        *self.free_head.get() = block;
     }
 
     unsafe fn insert_free_block(&self, new_block: *mut BlockHeader) {
-        (*new_block).free_next = None;
-        (*new_block).free_prev = None;
+        (*new_block).free_next = *self.free_head.get();
+        (*new_block).free_prev = null_mut();
 
-        if let Some(old_head) = (&mut *self.free_head.get()).take() {
-            old_head.free_prev = Some(&mut *new_block);
-            (*new_block).free_next = Some(old_head);
+        if !(*self.free_head.get()).is_null() {
+            (**self.free_head.get()).free_prev = new_block;
         }
 
-        *self.free_head.get() = Some(&mut *new_block);
+        *self.free_head.get() = new_block;
     }
 
-    unsafe fn find_fit(&self, layout: Layout) -> Option<&'static mut BlockHeader> {
-        let mut current = match (*self.head.get()).as_mut() {
-            Some(block) => *block as *mut BlockHeader,
-            None => null_mut(),
-        };
+    unsafe fn find_fit(&self, layout: Layout) -> Option<*mut BlockHeader> {
+        let mut current = *self.head.get();
 
         while !current.is_null() {
             let curr = &mut *current;
 
             if !curr.used && curr.size >= layout.size() {
-                return Some(curr);
+                return Some(current);
             }
 
-            current = match curr.next.as_mut() {
-                Some(next_block) => *next_block as *mut BlockHeader,
-                None => null_mut(),
-            };
+            current = curr.next;
         }
 
         let size = (layout.size() + size_of::<BlockHeader>()).max(memory::PAGE_SIZE);
         let (new_addr, actual_size) = (self.grow_heap_fn)(size)?;
 
-        let last_block_ref = (*self.tail.get())
-            .as_mut()
-            .expect("Kernel allocator tail must exist");
-        let last_block: &mut BlockHeader = *last_block_ref;
+        let last_block = *self.tail.get();
+        assert!(!last_block.is_null());
 
-        if !last_block.used {
-            last_block.size += actual_size;
+        if !(*last_block).used {
+            (*last_block).size += actual_size;
             return Some(last_block);
         } else {
-            let last_block_ptr = last_block as *mut BlockHeader;
             let new_block = new_addr as *mut BlockHeader;
             *new_block = BlockHeader {
                 size: actual_size - size_of::<BlockHeader>(),
                 used: false,
-                next: None,
-                prev: Some(&mut *last_block_ptr),
-                free_next: None,
-                free_prev: None,
+                next: null_mut(),
+                prev: last_block,
+                free_next: null_mut(),
+                free_prev: null_mut(),
             };
             self.insert_free_block(new_block);
 
-            // insert new block into the linked list after the last block
-            last_block.next = Some(&mut *new_block);
-            *self.tail.get() = Some(&mut *new_block);
+            // insert_after(last_block, new_block)
+            (*last_block).next = new_block;
+            *self.tail.get() = new_block;
 
-            return Some(&mut *new_block);
+            return Some(new_block);
         }
     }
 
-    unsafe fn split_block(&self, block: &mut BlockHeader, layout: Layout) -> *mut u8 {
+    unsafe fn split_block(&self, block: *mut BlockHeader, layout: Layout) -> *mut u8 {
+        let block_ref = &mut *block;
         let total_needed = layout.size().max(MIN_BLOCK_SIZE);
-        let excess = block.size - total_needed;
+        let excess = block_ref.size - total_needed;
 
         if excess > MIN_BLOCK_SIZE {
-            let new_block_ptr = block.start_ptr().add(total_needed) as *mut BlockHeader;
+            let new_block_ptr = block_ref.start_ptr().add(total_needed) as *mut BlockHeader;
 
-            *(&mut *new_block_ptr) = BlockHeader {
+            *new_block_ptr = BlockHeader {
                 size: excess - size_of::<BlockHeader>(),
                 used: false,
-                next: block.next.take(),
-                prev: Some(&mut *(block as *mut BlockHeader)),
-                free_next: None,
-                free_prev: None,
+                next: block_ref.next,
+                prev: block,
+                free_next: null_mut(),
+                free_prev: null_mut(),
             };
 
             self.insert_free_block(new_block_ptr);
 
-            // insert new block into the linked list after the current block
-            if let Some(next_block) = (&mut *new_block_ptr).next.as_mut() {
-                next_block.prev = Some(&mut *new_block_ptr);
+            // insert_after(block_ref, new_block_ptr);
+            if !(*new_block_ptr).next.is_null() {
+                (*(*new_block_ptr).next).prev = new_block_ptr;
             } else {
-                *self.tail.get() = Some(&mut *new_block_ptr);
+                *self.tail.get() = new_block_ptr;
             }
 
-            block.next = Some(&mut *new_block_ptr);
+            block_ref.next = new_block_ptr;
 
-            block.size = total_needed;
+            block_ref.size = total_needed;
         }
-        // remove current block from the free list
-        if let Some(prev_block) = block.free_prev.as_mut() {
-            prev_block.free_next = block.free_next.take();
+
+        // remove_from_free_list(block_ref);
+        if !block_ref.free_prev.is_null() {
+            (*block_ref.free_prev).free_next = block_ref.free_next;
         } else {
-            *self.free_head.get() = block.free_next.take();
+            *self.free_head.get() = block_ref.free_next;
         }
 
-        if let Some(next_block) = block.free_next.as_mut() {
-            println!("************ THIS NEEDS A TEST ************");
-            next_block.free_prev = block.free_prev.take();
+        if !block_ref.free_next.is_null() {
+            (*block_ref.free_next).free_prev = block_ref.free_prev;
+            println!("***************** THIS NEEDS A TEST: D *****************");
         }
 
-        block.used = true;
-        block.start_ptr()
+        block_ref.used = true;
+        block_ref.start_ptr()
     }
 
     unsafe fn dealloc_and_coalesce(&self, ptr: *mut BlockHeader) {
         let block_ptr = (ptr as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
         (*block_ptr).used = false;
 
-        if let Some(next_block) = (*block_ptr).next.as_mut() {
-            if !next_block.used {
-                (*block_ptr).size += size_of::<BlockHeader>() + next_block.size;
+        let next = (*block_ptr).next;
+        if !next.is_null() && !(*next).used {
+            (*block_ptr).size += size_of::<BlockHeader>() + (*next).size;
 
-                // remove next block from free list
-                if let Some(prev_block) = next_block.free_prev.as_mut() {
-                    prev_block.free_next = next_block.free_next.take();
-                    println!("************ THIS NEEDS A TEST ************");
-                } else {
-                    *self.free_head.get() = next_block.free_next.take();
-                }
-
-                if let Some(next_next_block) = next_block.free_next.as_mut() {
-                    next_next_block.free_prev = next_block.free_prev.take();
-                    println!("************ THIS NEEDS A TEST ************");
-                }
-
-                // remove next block from linked list
-                if let Some(next_next_block) = next_block.next.as_mut() {
-                    next_next_block.prev = Some(&mut *block_ptr);
-                } else {
-                    println!("************ THIS NEEDS A TEST ************");
-                    *self.tail.get() = Some(&mut *block_ptr);
-                }
-
-                (*block_ptr).next = next_block.next.take();
+            // remove_from_free_list(next);
+            if !(*next).free_prev.is_null() {
+                (*(*next).free_prev).free_next = (*next).free_next;
+                println!("***************** THIS NEEDS A TEST: A *****************");
+            } else {
+                *self.free_head.get() = (*next).free_next;
             }
+
+            if !(*next).free_next.is_null() {
+                (*(*next).free_next).free_prev = (*next).free_prev;
+            }
+
+            // remove_from_list(next);
+            let next_next = (*next).next;
+            if !next_next.is_null() {
+                (*next_next).prev = block_ptr;
+            } else {
+                println!("***************** THIS NEEDS A TEST: B *****************");
+                *self.tail.get() = block_ptr;
+            }
+
+            (*block_ptr).next = next_next;
         }
 
-        let mut prev = match (*block_ptr).prev.as_mut() {
-            Some(block) => *block as *mut BlockHeader,
-            None => null_mut(),
-        };
-
+        let prev = (*block_ptr).prev;
         if !prev.is_null() && !(*prev).used {
-            // remove current block from list
-            if let Some(next_block) = (*block_ptr).next.as_mut() {
-                next_block.prev = (*block_ptr).prev.take();
-                (*prev).next = Some(next_block);
+            // remove_from_list(block_ptr);
+            let next = (*block_ptr).next;
+            if !next.is_null() {
+                (*next).prev = prev;
+                (*prev).next = next;
             } else {
-                println!("************ THIS NEEDS A TEST ************");
-                *self.tail.get() = (*block_ptr).prev.take();
-                (*prev).next = None;
+                println!("***************** THIS NEEDS A TEST: C *****************");
+                *self.tail.get() = prev;
+                (*prev).next = null_mut();
             }
 
             (*prev).size += size_of::<BlockHeader>() + (*block_ptr).size;
@@ -251,38 +239,39 @@ impl LinkedListAllocator {
     pub unsafe fn dump_heap(&self) {
         print!("\n--- Heap Dump Start ---");
         println!(" Head: {:?}, Free head: {:?}",
-                 (*self.head.get()).as_ref().map(|b| *b as *const _),
-                 (*self.free_head.get()).as_ref().map(|b| *b as *const _)
-         );
+            *self.head.get(),
+            *self.free_head.get(),
+        );
 
-        let mut current = (*self.head.get()).as_ref();
-
+        let mut current = *self.head.get();
         let mut index = 0;
-        while let Some(block) = current {
+
+        while !current.is_null() {
+            let block = &*current;
             println!(
                 "Block {} at {:p}: size = {}, end = {:#x}, used = {}",
                 index,
-                *block,
+                current,
                 block.size,
                 (block.start_ptr() as usize) + block.size,
                 block.used,
             );
             println!(
                 "  Next: {:?}, Prev: {:?}",
-                block.next.as_ref().map(|b| *b as *const _),
-                block.prev.as_ref().map(|b| *b as *const _),
+                block.next,
+                block.prev,
             );
             println!("  Free Next: {:?}, Free Prev: {:?}",
-                block.free_next.as_ref().map(|b| *b as *const _),
-                block.free_prev.as_ref().map(|b| *b as *const _)
+                block.free_next,
+                block.free_prev,
             );
 
-            current = block.next.as_ref();
+            current = block.next;
             index += 1;
         }
 
         print!("--- Heap Dump End ---");
-        println!(" Tail: {:?}", (*self.tail.get()).as_ref().map(|b| *b as *const _));
+        println!(" Tail: {:?}", *self.tail.get());
     }
 }
 
@@ -301,9 +290,9 @@ mod tests {
     static mut TEST_HEAP: AlignedHeap = AlignedHeap([0; TEST_HEAP_SIZE]);
 
     static TEST_ALLOCATOR: LinkedListAllocator = LinkedListAllocator {
-        head: UnsafeCell::new(None),
-        tail: UnsafeCell::new(None),
-        free_head: UnsafeCell::new(None),
+        head: UnsafeCell::new(null_mut()),
+        tail: UnsafeCell::new(null_mut()),
+        free_head: UnsafeCell::new(null_mut()),
         grow_heap_fn: test_grow_heap,
     };
 
@@ -333,7 +322,7 @@ mod tests {
 
             let header_ptr = (freed_block as usize - core::mem::size_of::<BlockHeader>()) as *const BlockHeader;
             let header = &*header_ptr;
-            let existing_block_ptr = *header.next.as_ref().expect("Next block should exist") as *const BlockHeader;
+            let existing_block_ptr = header.next;
 
             let alloc_size = 64;
             let layout = Layout::from_size_align(alloc_size, 8).unwrap();
@@ -344,10 +333,10 @@ mod tests {
             assert!(header.used, "Allocated block should be marked as used");
             assert!(header.size >= alloc_size, "Allocated block too small");
 
-            let next_block = header.next.as_ref().expect("Next block should exist after split");
-            assert_ne!(*next_block as *const BlockHeader, existing_block_ptr, "Next block should not be the same as the existing block");
+            let next_block = header.next;
+            assert_ne!(next_block, existing_block_ptr, "Next block should not be the same as the existing block");
 
-            assert!(!next_block.used, "Next block should be free after split");
+            assert!(!(*next_block).used, "Next block should be free after split");
 
             assert_heap_invariants();
         }
@@ -361,7 +350,7 @@ mod tests {
 
             let header_ptr = (freed_block as usize - core::mem::size_of::<BlockHeader>()) as *const BlockHeader;
             let header = &*header_ptr;
-            let existing_block_ptr = *header.next.as_ref().expect("Next block should exist") as *const BlockHeader;
+            let existing_block_ptr = (*header).next;
 
             let layout = Layout::from_size_align(size, 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(layout);
@@ -371,7 +360,7 @@ mod tests {
             assert!(header.used, "Exact fit block should be marked as used");
             assert!(header.size >= size, "Allocated block size incorrect for exact fit");
 
-            let next_block_ptr = *header.next.as_ref().expect("Next block should exist after split") as *const BlockHeader;
+            let next_block_ptr = (*header).next;
             assert_eq!(existing_block_ptr, next_block_ptr,
                 "Exact fit block should have the same next as previously (no split should have occurred)"
             );
@@ -392,7 +381,7 @@ mod tests {
                 .as_ref()
                 .expect("Tail must exist at start");
 
-            let initial_tail_addr = *initial_tail as *const _ as usize;
+            let initial_tail_addr = initial_tail as *const _ as usize;
             let initial_tail_size = initial_tail.size;
 
             let alloc_size = 1024;
@@ -417,28 +406,24 @@ mod tests {
             println!("Testing heap growth with new block creation...");
             setup_allocator();
 
-            let initial_tail = (*TEST_ALLOCATOR.tail.get())
-                .as_ref()
-                .expect("Tail must exist at start");
+            let initial_tail = *TEST_ALLOCATOR.tail.get();
 
-            let full_layout = Layout::from_size_align(initial_tail.size, 8).unwrap();
+            let full_layout = Layout::from_size_align((*initial_tail).size, 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(full_layout);
 
             let layout = Layout::from_size_align(256, 8).unwrap();
             let new_ptr = TEST_ALLOCATOR.alloc(layout);
             assert!(!new_ptr.is_null(), "Allocation after growth failed");
 
-            let new_tail = (*TEST_ALLOCATOR.tail.get())
-                .as_ref()
-                .expect("Tail must exist after growth");
+            let new_tail = *TEST_ALLOCATOR.tail.get();
 
             assert_ne!(
-                *new_tail as *const _ as usize,
-                initial_tail as *const _ as usize,
+                new_tail,
+                initial_tail,
                 "Tail should have moved (new block should have been created)"
             );
 
-            assert!(!new_tail.used, "New tail block should be free (after growth)");
+            assert!(!(*new_tail).used, "New tail block should be free (after growth)");
 
             assert_heap_invariants();
         }
@@ -450,22 +435,18 @@ mod tests {
             println!("Testing free list after init...");
             setup_allocator();
 
-            let free_head = (*TEST_ALLOCATOR.free_head.get())
-                .as_ref()
-                .expect("Free head must exist after init");
+            let free_head = *TEST_ALLOCATOR.free_head.get();
 
-            let head = (*TEST_ALLOCATOR.head.get())
-                .as_ref()
-                .expect("Head block must exist after init");
+            let head = *TEST_ALLOCATOR.head.get();
 
             assert_eq!(
-                *free_head as *const BlockHeader,
-                *head as *const BlockHeader,
+                free_head,
+                head,
                 "Free head should point to initial free block"
             );
 
-            assert!(free_head.free_next.is_none(), "Free head should have no next free block");
-            assert!(free_head.free_prev.is_none(), "Free head should have no prev free block");
+            assert!((*free_head).free_next.is_null(), "Free head should have no next free block");
+            assert!((*free_head).free_prev.is_null(), "Free head should have no prev free block");
 
             assert_heap_invariants();
         }
@@ -477,27 +458,22 @@ mod tests {
             println!("Testing free list after allocation removes block...");
             setup_allocator();
 
-            let original_free_head = (*TEST_ALLOCATOR.free_head.get())
-                .as_ref()
-                .expect("Free head must exist after init");
-
-            let original_free_head_ptr = *original_free_head as *const BlockHeader;
+            let original_free_head = *TEST_ALLOCATOR.free_head.get();
 
             let alloc_layout = Layout::from_size_align(128, 8).unwrap();
             let alloc_ptr = TEST_ALLOCATOR.alloc(alloc_layout);
 
             assert!(!alloc_ptr.is_null(), "Allocation failed unexpectedly");
 
-            let mut free_current = (*TEST_ALLOCATOR.free_head.get()).as_ref();
+            let mut free_current = *TEST_ALLOCATOR.free_head.get();
 
-            while let Some(block) = free_current {
-                let block_addr = *block as *const BlockHeader;
+            while !free_current.is_null() {
                 assert_ne!(
-                    block_addr,
-                    original_free_head_ptr,
+                    free_current,
+                    original_free_head,
                     "Allocated block still present in free list after allocation"
                 );
-                free_current = block.free_next.as_ref();
+                free_current = (*free_current).free_next;
             }
 
             assert_heap_invariants();
@@ -679,113 +655,108 @@ TEST_ALLOCATOR.dealloc(block2, layout);
     }
 
     unsafe fn assert_heap_invariants() {
-        let mut current = (*TEST_ALLOCATOR.head.get()).as_ref();
-        let mut last_block_addr = 0usize;
+        let mut current = *TEST_ALLOCATOR.head.get();
+        let mut last_block_addr = null_mut();
 
-        while let Some(block) = current {
-            let block_addr = *block as *const _ as usize;
+        while !current.is_null() {
+            assert_eq!(current as usize % 8, 0, "Block address not properly aligned: {:p}", current);
 
-            assert_eq!(block_addr % 8, 0, "Block address not properly aligned: {:p}", *block);
+            assert!((*current).size > 0, "Block size must be greater than 0");
 
-            assert!(block.size > 0, "Block size must be greater than 0");
+            assert!(current > last_block_addr, "Block addresses not strictly increasing");
 
-            assert!(block_addr > last_block_addr, "Block addresses not strictly increasing");
-
-            if let Some(next_block) = block.next.as_ref() {
-                let next_prev_ptr = next_block.prev.as_ref()
-                    .expect("Next block should have a prev pointer");
+            let next_ptr = (*current).next;
+            if !next_ptr.is_null() {
+                let next_prev_ptr = (*next_ptr).prev;
                 assert_eq!(
-                    *next_prev_ptr as *const _,
-                    *block as *const _,
+                    next_prev_ptr,
+                    current,
                     "Next block's prev does not point back to current block"
                 );
             }
 
-            if let Some(prev_block) = block.prev.as_ref() {
-                let prev_next_ptr = prev_block.next.as_ref()
-                    .expect("Prev block should have a next pointer");
+            let prev_ptr = (*current).prev;
+            if !prev_ptr.is_null() {
+                let prev_next_ptr = (*prev_ptr).next;
                 assert_eq!(
-                    *prev_next_ptr as *const _,
-                    *block as *const _,
+                    prev_next_ptr,
+                    current,
                     "Prev block's next does not point forward to current block"
                 );
             }
 
-            last_block_addr = block_addr;
+            last_block_addr = current;
 
-            current = block.next.as_ref();
+            current = (*current).next;
         }
 
-        let tail_block = (*TEST_ALLOCATOR.tail.get())
-            .as_ref()
-            .expect("Allocator tail must exist");
-        let tail_block_addr = *tail_block as *const _ as usize;
+        let tail_block = *TEST_ALLOCATOR.tail.get();
 
         assert_eq!(
             last_block_addr,
-            tail_block_addr,
+            tail_block,
             "Allocator tail does not point to last block in heap"
         );
 
-        let mut free_current = (*TEST_ALLOCATOR.free_head.get()).as_ref();
-        let mut last_free_addr = 0usize;
+        let mut free_current = *TEST_ALLOCATOR.free_head.get();
+        let mut last_free_addr = null_mut();
 
-        while let Some(free_block) = free_current {
-            let block_addr = *free_block as *const _ as usize;
+        while !free_current.is_null() {
+            let block_addr = free_current;
 
             assert!(
-                !free_block.used,
+                !(*free_current).used,
                 "Free block is marked used: {:p}",
-                *free_block
+                free_current
             );
 
-            if let Some(next_free_block) = free_block.free_next.as_ref() {
-                let next_free_prev = next_free_block.free_prev.as_ref()
-                    .expect("Next free block should have a free_prev pointer");
+            let next_free_block = (*free_current).free_next;
+            if !next_free_block.is_null() {
+                let next_free_prev = (*next_free_block).free_prev;
                 assert_eq!(
-                    *next_free_prev as *const _,
-                    *free_block as *const _,
+                    next_free_prev,
+                    free_current,
                     "Next free block's free_prev does not point back to current free block"
                 );
             }
 
-            if let Some(prev_free_block) = free_block.free_prev.as_ref() {
-                let prev_free_next = prev_free_block.free_next.as_ref()
-                    .expect("Prev free block should have a free_next pointer");
+            let prev_free_block = (*free_current).free_prev;
+            if !prev_free_block.is_null() {
+                let prev_free_next = (*prev_free_block).free_next;
                 assert_eq!(
-                    *prev_free_next as *const _,
-                    *free_block as *const _,
+                    prev_free_next,
+                    free_current,
                     "Prev free block's free_next does not point forward to current free block"
                 );
             }
 
             last_free_addr = block_addr;
-            free_current = free_block.free_next.as_ref();
+            free_current = (*free_current).free_next;
         }
 
-        let mut mem_current = (*TEST_ALLOCATOR.head.get()).as_ref();
+        let mut mem_current = *TEST_ALLOCATOR.head.get();
 
-        while let Some(block) = mem_current {
-            if !block.used {
+        while !mem_current.is_null() {
+            if !(*mem_current).used {
                 let mut found_in_free_list = false;
 
-                let mut free_current = (*TEST_ALLOCATOR.free_head.get()).as_ref();
-                while let Some(free_block) = free_current {
-                    if (*free_block as *const BlockHeader) == (*block as *const BlockHeader) {
+                let mut free_current = *TEST_ALLOCATOR.free_head.get();
+                while !free_current.is_null() {
+                    if free_current == mem_current {
                         found_in_free_list = true;
                         break;
                     }
-                    free_current = free_block.free_next.as_ref();
+                    free_current = (*free_current).free_next;
                 }
 
                 assert!(
                     found_in_free_list,
                     "Block {:p} marked free but not found in free list",
-                    *block
+                    mem_current
                 );
             }
 
-            mem_current = block.next.as_ref();
+            mem_current = (*mem_current).next;
         }
     }
 }
