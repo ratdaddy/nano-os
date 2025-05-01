@@ -70,8 +70,8 @@ impl LinkedListAllocator {
     }
 
     pub unsafe fn init(&self, heap_start: usize, heap_size: usize) {
-        let block = heap_start as *mut BlockHeader;
-        *block = BlockHeader {
+        let this = heap_start as *mut BlockHeader;
+        *this = BlockHeader {
             size: heap_size - size_of::<BlockHeader>(),
             used: false,
             next: null_mut(),
@@ -79,20 +79,74 @@ impl LinkedListAllocator {
             free_next: null_mut(),
             free_prev: null_mut(),
         };
-        *self.head.get() = block;
-        *self.tail.get() = block;
-        *self.free_head.get() = block;
+        *self.head.get() = this;
+        *self.tail.get() = this;
+        *self.free_head.get() = this;
     }
 
-    unsafe fn insert_free_block(&self, new_block: *mut BlockHeader) {
-        (*new_block).free_next = *self.free_head.get();
-        (*new_block).free_prev = null_mut();
+    unsafe fn insert_free_block(&self, this: *mut BlockHeader) {
+        (*this).free_next = *self.free_head.get();
+        (*this).free_prev = null_mut();
 
         if !(*self.free_head.get()).is_null() {
-            (**self.free_head.get()).free_prev = new_block;
+            (**self.free_head.get()).free_prev = this;
         }
 
-        *self.free_head.get() = new_block;
+        *self.free_head.get() = this;
+    }
+
+    unsafe fn remove_free_block(&self, this: *mut BlockHeader) {
+        if !(*this).free_prev.is_null() {
+            (*(*this).free_prev).free_next = (*this).free_next;
+        } else {
+            *self.free_head.get() = (*this).free_next;
+        }
+
+        if !(*this).free_next.is_null() {
+            (*(*this).free_next).free_prev = (*this).free_prev;
+        }
+    }
+
+    unsafe fn append_to_list(&self, this: *mut BlockHeader) {
+        let last = *self.tail.get();
+
+        (*this).next = null_mut();
+        (*this).prev = last;
+
+        (*last).next = this;
+
+        *self.tail.get() = this;
+    }
+
+    unsafe fn insert_after(&self, this: *mut BlockHeader, new_block: *mut BlockHeader) {
+            let next = (*this).next;
+
+            if !next.is_null() {
+                (*next).prev = new_block;
+            } else {
+                *self.tail.get() = new_block;
+            }
+            (*new_block).next = next;
+
+            (*this).next = new_block;
+            (*new_block).prev = this;
+    }
+
+    unsafe fn remove_from_list(&self, this: *mut BlockHeader) {
+        let next = (*this).next;
+        let prev = (*this).prev;
+        assert!(!prev.is_null(), "Head will never be removed");
+
+        if !next.is_null() {
+            (*next).prev = prev;
+            (*prev).next = next;
+        } else {
+            println!("***************** THIS NEEDS A TEST: B *****************");
+            *self.tail.get() = prev;
+
+        }
+
+        (*prev).next = next;
     }
 
     unsafe fn find_fit(&self, layout: Layout) -> Option<*mut BlockHeader> {
@@ -101,87 +155,68 @@ impl LinkedListAllocator {
         while !current.is_null() {
             let curr = &mut *current;
 
-            if !curr.used && curr.size >= layout.size() {
+            if !(*current).used && (*current).size >= layout.size() {
                 return Some(current);
             }
 
-            current = curr.next;
+            current = (*current).next;
         }
 
         let size = (layout.size() + size_of::<BlockHeader>()).max(memory::PAGE_SIZE);
-        let (new_addr, actual_size) = (self.grow_heap_fn)(size)?;
+        let (new_heap, actual_size) = (self.grow_heap_fn)(size)?;
 
-        let last_block = *self.tail.get();
-        assert!(!last_block.is_null());
+        let last = *self.tail.get();
+        assert!(!last.is_null());
 
-        if !(*last_block).used {
-            (*last_block).size += actual_size;
-            return Some(last_block);
+        if !(*last).used {
+            (*last).size += actual_size;
+            return Some(last);
         } else {
-            let new_block = new_addr as *mut BlockHeader;
-            *new_block = BlockHeader {
+            let this = new_heap as *mut BlockHeader;
+            *this = BlockHeader {
                 size: actual_size - size_of::<BlockHeader>(),
                 used: false,
                 next: null_mut(),
-                prev: last_block,
+                prev: null_mut(),
                 free_next: null_mut(),
                 free_prev: null_mut(),
             };
-            self.insert_free_block(new_block);
 
-            // insert_after(last_block, new_block)
-            (*last_block).next = new_block;
-            *self.tail.get() = new_block;
+            self.insert_free_block(this);
 
-            return Some(new_block);
+            self.append_to_list(this);
+
+            return Some(this);
         }
     }
 
-    unsafe fn split_block(&self, block: *mut BlockHeader, layout: Layout) -> *mut u8 {
-        let block_ref = &mut *block;
+    unsafe fn split_block(&self, this: *mut BlockHeader, layout: Layout) -> *mut u8 {
         let total_needed = layout.size().max(MIN_BLOCK_SIZE);
-        let excess = block_ref.size - total_needed;
+        let excess = (*this).size - total_needed;
 
         if excess > MIN_BLOCK_SIZE {
-            let new_block_ptr = block_ref.start_ptr().add(total_needed) as *mut BlockHeader;
+            let new_block = (*this).start_ptr().add(total_needed) as *mut BlockHeader;
 
-            *new_block_ptr = BlockHeader {
+            *new_block = BlockHeader {
                 size: excess - size_of::<BlockHeader>(),
                 used: false,
-                next: block_ref.next,
-                prev: block,
+                next: null_mut(),
+                prev: null_mut(),
                 free_next: null_mut(),
                 free_prev: null_mut(),
             };
 
-            self.insert_free_block(new_block_ptr);
+            self.insert_free_block(new_block);
 
-            // insert_after(block_ref, new_block_ptr);
-            if !(*new_block_ptr).next.is_null() {
-                (*(*new_block_ptr).next).prev = new_block_ptr;
-            } else {
-                *self.tail.get() = new_block_ptr;
-            }
+            self.insert_after(this, new_block);
 
-            block_ref.next = new_block_ptr;
-
-            block_ref.size = total_needed;
+            (*this).size = total_needed;
         }
 
-        // remove_from_free_list(block_ref);
-        if !block_ref.free_prev.is_null() {
-            (*block_ref.free_prev).free_next = block_ref.free_next;
-        } else {
-            *self.free_head.get() = block_ref.free_next;
-        }
+        self.remove_free_block(this);
 
-        if !block_ref.free_next.is_null() {
-            (*block_ref.free_next).free_prev = block_ref.free_prev;
-            println!("***************** THIS NEEDS A TEST: D *****************");
-        }
-
-        block_ref.used = true;
-        block_ref.start_ptr()
+        (*this).used = true;
+        (*this).start_ptr()
     }
 
     unsafe fn dealloc_and_coalesce(&self, ptr: *mut BlockHeader) {
@@ -189,45 +224,19 @@ impl LinkedListAllocator {
         (*block_ptr).used = false;
 
         let next = (*block_ptr).next;
+
         if !next.is_null() && !(*next).used {
             (*block_ptr).size += size_of::<BlockHeader>() + (*next).size;
 
-            // remove_from_free_list(next);
-            if !(*next).free_prev.is_null() {
-                (*(*next).free_prev).free_next = (*next).free_next;
-                println!("***************** THIS NEEDS A TEST: A *****************");
-            } else {
-                *self.free_head.get() = (*next).free_next;
-            }
+            self.remove_free_block(next);
 
-            if !(*next).free_next.is_null() {
-                (*(*next).free_next).free_prev = (*next).free_prev;
-            }
-
-            // remove_from_list(next);
-            let next_next = (*next).next;
-            if !next_next.is_null() {
-                (*next_next).prev = block_ptr;
-            } else {
-                println!("***************** THIS NEEDS A TEST: B *****************");
-                *self.tail.get() = block_ptr;
-            }
-
-            (*block_ptr).next = next_next;
+            self.remove_from_list(next);
         }
 
         let prev = (*block_ptr).prev;
+
         if !prev.is_null() && !(*prev).used {
-            // remove_from_list(block_ptr);
-            let next = (*block_ptr).next;
-            if !next.is_null() {
-                (*next).prev = prev;
-                (*prev).next = next;
-            } else {
-                println!("***************** THIS NEEDS A TEST: C *****************");
-                *self.tail.get() = prev;
-                (*prev).next = null_mut();
-            }
+            self.remove_from_list(block_ptr);
 
             (*prev).size += size_of::<BlockHeader>() + (*block_ptr).size;
         } else {
@@ -247,26 +256,25 @@ impl LinkedListAllocator {
         let mut index = 0;
 
         while !current.is_null() {
-            let block = &*current;
             println!(
                 "Block {} at {:p}: size = {}, end = {:#x}, used = {}",
                 index,
                 current,
-                block.size,
-                (block.start_ptr() as usize) + block.size,
-                block.used,
+                (*current).size,
+                ((*current).start_ptr() as usize) + (*current).size,
+                (*current).used,
             );
             println!(
                 "  Next: {:?}, Prev: {:?}",
-                block.next,
-                block.prev,
+                (*current).next,
+                (*current).prev,
             );
             println!("  Free Next: {:?}, Free Prev: {:?}",
-                block.free_next,
-                block.free_prev,
+                (*current).free_next,
+                (*current).free_prev,
             );
 
-            current = block.next;
+            current = (*current).next;
             index += 1;
         }
 
@@ -563,7 +571,7 @@ TEST_ALLOCATOR.dealloc(block2, layout);
         }
     }
 
-    //#[test_case]
+    #[test_case]
     fn test_coalesce_with_prev_and_next() {
         unsafe {
             println!("Testing coalesce with both previous and next free blocks...");
@@ -575,8 +583,8 @@ TEST_ALLOCATOR.dealloc(block2, layout);
             let block3 = TEST_ALLOCATOR.alloc(layout);
             let block4 = TEST_ALLOCATOR.alloc(layout);
 
-            TEST_ALLOCATOR.dealloc(block2, layout);
             TEST_ALLOCATOR.dealloc(block3, layout);
+            TEST_ALLOCATOR.dealloc(block2, layout);
 
             let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
             let header = &*header_ptr;
