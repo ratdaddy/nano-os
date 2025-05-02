@@ -141,7 +141,6 @@ impl LinkedListAllocator {
             (*next).prev = prev;
             (*prev).next = next;
         } else {
-            println!("***************** THIS NEEDS A TEST: B *****************");
             *self.tail.get() = prev;
 
         }
@@ -313,10 +312,9 @@ mod tests {
             let ptr = TEST_ALLOCATOR.alloc(layout);
             assert!(!ptr.is_null());
 
-            let header_ptr = (ptr as usize - size_of::<BlockHeader>()) as *const BlockHeader;
-            let header = &*header_ptr;
-            assert!(header.used, "Block should be marked as used");
-            assert!(header.size >= alloc_size, "Block size should be at least 32 bytes");
+            let header = (ptr as usize - size_of::<BlockHeader>()) as *const BlockHeader;
+            assert!((*header).used, "Block should be marked as used");
+            assert!((*header).size >= alloc_size, "Block size should be at least 32 bytes");
         }
     }
 
@@ -324,11 +322,10 @@ mod tests {
     fn test_split_allocation() {
         unsafe {
             println!("Testing split allocation...");
-            let (freed_block, _size) = setup_fragmented_heap_for_test();
+            let (freed, _size) = setup_fragmented_heap_for_test();
 
-            let header_ptr = (freed_block as usize - core::mem::size_of::<BlockHeader>()) as *const BlockHeader;
-            let header = &*header_ptr;
-            let existing_block_ptr = header.next;
+            let this = (freed as usize - core::mem::size_of::<BlockHeader>()) as *const BlockHeader;
+            let existing_block = (*this).next;
 
             let alloc_size = 64;
             let layout = Layout::from_size_align(alloc_size, 8).unwrap();
@@ -336,13 +333,13 @@ mod tests {
 
             assert!(!ptr.is_null(), "Allocation returned null pointer");
 
-            assert!(header.used, "Allocated block should be marked as used");
-            assert!(header.size >= alloc_size, "Allocated block too small");
+            assert!((*this).used, "Allocated block should be marked as used");
+            assert!((*this).size >= alloc_size, "Allocated block too small");
 
-            let next_block = header.next;
-            assert_ne!(next_block, existing_block_ptr, "Next block should not be the same as the existing block");
+            let next = (*this).next;
+            assert_ne!(next, existing_block, "Next block should not be the same as the existing block");
 
-            assert!(!(*next_block).used, "Next block should be free after split");
+            assert!(!(*next).used, "Next block should be free after split");
 
             assert_heap_invariants();
         }
@@ -352,22 +349,21 @@ mod tests {
     fn test_exact_fit_allocation() {
         unsafe {
             println!("Testing exact fit allocation...");
-            let (freed_block, size) = setup_fragmented_heap_for_test();
+            let (freed, size) = setup_fragmented_heap_for_test();
 
-            let header_ptr = (freed_block as usize - core::mem::size_of::<BlockHeader>()) as *const BlockHeader;
-            let header = &*header_ptr;
-            let existing_block_ptr = (*header).next;
+            let this = (freed as usize - core::mem::size_of::<BlockHeader>()) as *const BlockHeader;
+            let existing_block = (*this).next;
 
             let layout = Layout::from_size_align(size, 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(layout);
 
             assert!(!ptr.is_null(), "Exact fit allocation returned null pointer");
 
-            assert!(header.used, "Exact fit block should be marked as used");
-            assert!(header.size >= size, "Allocated block size incorrect for exact fit");
+            assert!((*this).used, "Exact fit block should be marked as used");
+            assert!((*this).size >= size, "Allocated block size incorrect for exact fit");
 
-            let next_block_ptr = (*header).next;
-            assert_eq!(existing_block_ptr, next_block_ptr,
+            let next = (*this).next;
+            assert_eq!(existing_block, next,
                 "Exact fit block should have the same next as previously (no split should have occurred)"
             );
 
@@ -381,14 +377,11 @@ mod tests {
             println!("Testing heap growth with existing free block...");
             setup_allocator();
 
-            let _initial_ptr = TEST_ALLOCATOR.alloc(Layout::from_size_align(3072, 8).unwrap());
+            let _ptr = TEST_ALLOCATOR.alloc(Layout::from_size_align(3072, 8).unwrap());
 
-            let initial_tail = (*TEST_ALLOCATOR.tail.get())
-                .as_ref()
-                .expect("Tail must exist at start");
+            let initial_tail = *TEST_ALLOCATOR.tail.get();
 
-            let initial_tail_addr = initial_tail as *const _ as usize;
-            let initial_tail_size = initial_tail.size;
+            let initial_tail_size = (*initial_tail).size;
 
             let alloc_size = 1024;
             let layout = Layout::from_size_align(alloc_size, 8).unwrap();
@@ -396,11 +389,10 @@ mod tests {
 
             assert!(!ptr.is_null(), "Allocation after growth failed");
 
-            let new_tail = (*TEST_ALLOCATOR.tail.get())
-                .as_ref()
-                .expect("Tail must exist after growth");
+            let new_tail = *TEST_ALLOCATOR.tail.get();
 
-            assert!(initial_tail.size >= alloc_size, "Tail block size should have grown");
+            assert!((*initial_tail).size >= alloc_size, "Tail block size should have grown");
+            assert!(new_tail != initial_tail, "Tail should have moved");
 
             assert_heap_invariants();
         }
@@ -496,14 +488,13 @@ mod tests {
             let block1 = TEST_ALLOCATOR.alloc(layout);
             let block2 = TEST_ALLOCATOR.alloc(layout);
             let block3 = TEST_ALLOCATOR.alloc(layout);
-TEST_ALLOCATOR.dealloc(block2, layout);
 
-            // No coalescing should happen since block1 and block3 are both used
-            let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
-            let header = &*header_ptr;
+            TEST_ALLOCATOR.dealloc(block2, layout);
 
-            assert_eq!(header.size, 128, "Freed block should retain its size after no coalescing");
-            assert!(!header.used, "Freed block should be marked free");
+            let header2 = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+
+            assert_eq!((*header2).size, 128, "Freed block should retain its size after no coalescing");
+            assert!(!(*header2).used, "Freed block should be marked free");
 
             assert_heap_invariants();
         }
@@ -524,16 +515,15 @@ TEST_ALLOCATOR.dealloc(block2, layout);
             TEST_ALLOCATOR.dealloc(block3, layout);
             TEST_ALLOCATOR.dealloc(block2, layout);
 
-            let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
-            let header = &*header_ptr;
+            let header2 = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
 
             assert_eq!(
-                header.size,
+                (*header2).size,
                 128 + core::mem::size_of::<BlockHeader>() + 128,
                 "Block2 should have absorbed Block3"
             );
 
-            assert!(!header.used, "Merged block should be free");
+            assert!(!(*header2).used, "Merged block should be free");
 
             assert_heap_invariants();
         }
@@ -553,17 +543,14 @@ TEST_ALLOCATOR.dealloc(block2, layout);
             TEST_ALLOCATOR.dealloc(block1, layout);
             TEST_ALLOCATOR.dealloc(block2, layout);
 
-            let header_ptr = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
-            let header = &*header_ptr;
-
-            // Should have merged block1 and block2
+            let header1 = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
             assert_eq!(
-                header.size,
+                (*header1).size,
                 128 + core::mem::size_of::<BlockHeader>() + 128,
                 "Block1 should have absorbed Block2"
             );
 
-            assert!(!header.used, "Merged block should be free");
+            assert!(!(*header1).used, "Merged block should be free");
 
             assert_heap_invariants();
         }
@@ -582,25 +569,10 @@ TEST_ALLOCATOR.dealloc(block2, layout);
             let block4 = TEST_ALLOCATOR.alloc(layout);
 
             TEST_ALLOCATOR.dealloc(block3, layout);
+            TEST_ALLOCATOR.dealloc(block1, layout);
             TEST_ALLOCATOR.dealloc(block2, layout);
 
-            let header_ptr = (block2 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
-            let header = &*header_ptr;
-
-            // Should have merged block2 and block3 into one block
-            assert_eq!(
-                header.size,
-                128 + core::mem::size_of::<BlockHeader>() + 128,
-                "Block2 and Block3 should have merged"
-            );
-
-            assert!(!header.used, "Merged block should be free");
-
-            // Now free block1 and trigger merging of block1 + (block2+block3)
-            TEST_ALLOCATOR.dealloc(block1, layout);
-
-            let final_header_ptr = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
-            let final_header = &*final_header_ptr;
+            let header1 = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
 
             let expected_total_size = 128
                 + core::mem::size_of::<BlockHeader>()
@@ -609,12 +581,41 @@ TEST_ALLOCATOR.dealloc(block2, layout);
                 + 128;
 
             assert_eq!(
-                final_header.size,
+                (*header1).size,
                 expected_total_size,
                 "Block1, Block2, and Block3 should have all merged"
             );
 
-            assert!(!final_header.used, "Merged block should be free");
+            assert!(!(*header1).used, "Merged block should be free");
+
+            assert_heap_invariants();
+        }
+    }
+
+    #[test_case]
+    fn test_coalesce_all_blocks() {
+        unsafe {
+            println!("Testing coalesce with all blocks free...");
+            setup_allocator();
+            let original_size = (*(*TEST_ALLOCATOR.head.get())).size;
+
+            let layout = Layout::from_size_align(128, 8).unwrap();
+            let block1 = TEST_ALLOCATOR.alloc(layout);
+            let block2 = TEST_ALLOCATOR.alloc(layout);
+            let block3 = TEST_ALLOCATOR.alloc(layout);
+            let block4 = TEST_ALLOCATOR.alloc(layout);
+
+            TEST_ALLOCATOR.dealloc(block1, layout);
+            TEST_ALLOCATOR.dealloc(block2, layout);
+            TEST_ALLOCATOR.dealloc(block3, layout);
+            TEST_ALLOCATOR.dealloc(block4, layout);
+
+            let header1 = (block1 as usize - core::mem::size_of::<BlockHeader>()) as *mut BlockHeader;
+
+            assert_eq!( (*header1).size, original_size, "All blocks should have merged into one"
+            );
+
+            assert!(!(*header1).used, "Merged block should be free");
 
             assert_heap_invariants();
         }
