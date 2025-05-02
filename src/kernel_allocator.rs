@@ -150,16 +150,14 @@ impl LinkedListAllocator {
     }
 
     unsafe fn find_fit(&self, layout: Layout) -> Option<*mut BlockHeader> {
-        let mut current = *self.head.get();
+        let mut current_free = *self.free_head.get();
 
-        while !current.is_null() {
-            let curr = &mut *current;
-
-            if !(*current).used && (*current).size >= layout.size() {
-                return Some(current);
+        while !current_free.is_null() {
+            if !(*current_free).used && (*current_free).size >= layout.size() {
+                return Some(current_free);
             }
 
-            current = (*current).next;
+            current_free = (*current_free).free_next;
         }
 
         let size = (layout.size() + size_of::<BlockHeader>()).max(memory::PAGE_SIZE);
