@@ -52,9 +52,13 @@ fn consume_array(arr: [u8; 10 * 1024]) {
     println!("Average: {}", avg);
 }
 
+#[repr(align(128))]
+struct Align128(u8);
+
 fn test_alloc1() {
     println!("\n*** Testing allocation ***");
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    /*
     let _buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
     let mut v = Vec::new();
     v.push(42);
@@ -62,6 +66,11 @@ fn test_alloc1() {
     v.push(200);
     v.push(300);
     v.push(300);
+    */
+    let _buffer2: Box<[u8]> = vec![0u8; 109].into_boxed_slice();
+    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    let _buffer3 = Box::new(Align128(255));
+    //let _buffer2: Box<[u8]> = vec![0u8; 101].into_boxed_slice();
     unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
 }
 
