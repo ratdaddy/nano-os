@@ -32,34 +32,111 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
 #[repr(C)]
 #[derive(Debug)]
 struct BlockHeader {
-    size: usize,
-    used: bool,
-    next: *mut BlockHeader,
-    prev: *mut BlockHeader,
-    free_next: *mut BlockHeader,
-    free_prev: *mut BlockHeader,
+    _size: usize,
+    _used: bool,
+    _next: *mut BlockHeader,
+    _prev: *mut BlockHeader,
+    _free_next: *mut BlockHeader,
+    _free_prev: *mut BlockHeader,
 }
 
 impl BlockHeader {
     fn new(size: usize, used: bool) -> Self {
         BlockHeader {
-            size,
-            used,
-            next: null_mut(),
-            prev: null_mut(),
-            free_next: null_mut(),
-            free_prev: null_mut(),
+            _size: size,
+            _used: used,
+            _next: null_mut(),
+            _prev: null_mut(),
+            _free_next: null_mut(),
+            _free_prev: null_mut(),
         }
     }
 
-    fn start_ptr(&self) -> *mut u8 {
+    #[inline]
+    fn alloc_area_start(&self) -> *mut u8 {
         unsafe {
             (self as *const _ as *mut u8).add(size_of::<BlockHeader>())
         }
     }
 
+    #[inline]
+    fn next(&self) -> *mut BlockHeader {
+        self._next
+    }
+
+    #[inline]
+    fn set_next(&mut self, next: *mut BlockHeader) {
+        self._next = next;
+    }
+
+    #[inline]
+    fn prev(&self) -> *mut BlockHeader {
+        self._prev
+    }
+
+    #[inline]
+    fn set_prev(&mut self, prev: *mut BlockHeader) {
+        self._prev = prev;
+    }
+
+    #[inline]
+    fn free_next(&self) -> *mut BlockHeader {
+        self._free_next
+    }
+
+    #[inline]
+    fn set_free_next(&mut self, next: *mut BlockHeader) {
+        self._free_next = next;
+    }
+
+    #[inline]
+    fn free_prev(&self) -> *mut BlockHeader {
+        self._free_prev
+    }
+
+    #[inline]
+    fn set_free_prev(&mut self, prev: *mut BlockHeader) {
+        self._free_prev = prev;
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        self._size
+    }
+
+    #[inline]
+    fn set_size(&mut self, size: usize) {
+        self._size = size;
+    }
+
+    #[inline]
+    fn add_size(&mut self, size: usize) {
+        self._size += size;
+    }
+
+    #[inline]
+    fn is_used(&self) -> bool {
+        self._used
+    }
+
+    #[inline]
+    fn set_used(&mut self) {
+        self._used = true;
+    }
+
+    #[inline]
+    fn is_free(&self) -> bool {
+        !self._used
+    }
+
+    #[inline]
+    fn set_free(&mut self) {
+        self._used = false;
+    }
+
+    #[inline]
     fn end_ptr(&self) -> usize {
-        self as *const _ as usize + size_of::<BlockHeader>() + self.size
+        self as *const _ as usize + size_of::<BlockHeader>() + self._size
     }
 }
 
@@ -95,67 +172,67 @@ impl LinkedListAllocator {
     }
 
     unsafe fn insert_free_block(&self, this: *mut BlockHeader) {
-        (*this).free_next = *self.free_head.get();
-        (*this).free_prev = null_mut();
+        (*this).set_free_next(*self.free_head.get());
+        (*this).set_free_prev(null_mut());
 
         if !(*self.free_head.get()).is_null() {
-            (**self.free_head.get()).free_prev = this;
+            (**self.free_head.get()).set_free_prev(this);
         }
 
         *self.free_head.get() = this;
     }
 
     unsafe fn remove_free_block(&self, this: *mut BlockHeader) {
-        if !(*this).free_prev.is_null() {
-            (*(*this).free_prev).free_next = (*this).free_next;
+        if !(*this).free_prev().is_null() {
+            (*(*this).free_prev()).set_free_next((*this).free_next());
         } else {
-            *self.free_head.get() = (*this).free_next;
+            *self.free_head.get() = (*this).free_next();
         }
 
-        if !(*this).free_next.is_null() {
-            (*(*this).free_next).free_prev = (*this).free_prev;
+        if !(*this).free_next().is_null() {
+            (*(*this).free_next()).set_free_prev((*this).free_prev());
         }
     }
 
     unsafe fn append_to_list(&self, this: *mut BlockHeader) {
         let last = *self.tail.get();
 
-        (*this).next = null_mut();
-        (*this).prev = last;
+        (*this).set_next(null_mut());
+        (*this).set_prev(last);
 
-        (*last).next = this;
+        (*last).set_next(this);
 
         *self.tail.get() = this;
     }
 
     unsafe fn insert_after(&self, this: *mut BlockHeader, new_block: *mut BlockHeader) {
-            let next = (*this).next;
+            let next = (*this).next();
 
             if !next.is_null() {
-                (*next).prev = new_block;
+                (*next).set_prev(new_block);
             } else {
                 *self.tail.get() = new_block;
             }
-            (*new_block).next = next;
+            (*new_block).set_next(next);
 
-            (*this).next = new_block;
-            (*new_block).prev = this;
+            (*this).set_next(new_block);
+            (*new_block).set_prev(this);
     }
 
     unsafe fn remove_from_list(&self, this: *mut BlockHeader) {
-        let next = (*this).next;
-        let prev = (*this).prev;
+        let next = (*this).next();
+        let prev = (*this).prev();
         assert!(!prev.is_null(), "Head will never be removed");
 
         if !next.is_null() {
-            (*next).prev = prev;
-            (*prev).next = next;
+            (*next).set_prev(prev);
+            (*prev).set_next(next);
         } else {
             *self.tail.get() = prev;
 
         }
 
-        (*prev).next = next;
+        (*prev).set_next(next);
     }
 
     unsafe fn find_fit(&self, layout: Layout) -> Option<(*mut BlockHeader, *mut BlockHeader)> {
@@ -167,11 +244,11 @@ impl LinkedListAllocator {
 
         if align <= 8 {
             while !current_free.is_null() {
-                if (*current_free).size >= total_needed {
+                if (*current_free).size() >= total_needed {
                     return Some((current_free, current_free));
                 }
 
-                current_free = (*current_free).free_next;
+                current_free = (*current_free).free_next();
             }
         } else {
             while !current_free.is_null() {
@@ -179,7 +256,7 @@ impl LinkedListAllocator {
                     return Some((current_free, aligned_location));
                 }
 
-                current_free = (*current_free).free_next;
+                current_free = (*current_free).free_next();
             }
         }
 
@@ -189,8 +266,8 @@ impl LinkedListAllocator {
         let last = *self.tail.get();
         assert!(!last.is_null());
 
-        if !(*last).used {
-            (*last).size += actual_size;
+        if (*last).is_free() {
+            (*last).add_size(actual_size);
             let aligned_location = check_aligned_fit(last, size, align).expect("Failed to find aligned fit");
             return Some((last, aligned_location));
         } else {
@@ -208,11 +285,11 @@ impl LinkedListAllocator {
 
     unsafe fn split_block(&self, this: *mut BlockHeader, aligned_block: *mut BlockHeader, layout: Layout) -> *mut u8 {
         let total_needed = align_up(layout.size().max(MIN_BLOCK_SIZE - size_of::<BlockHeader>()), 8);
-        if this == aligned_block {
-            let excess = (*this).size - total_needed;
+        let excess = (*this).size() - total_needed;
 
+        if this == aligned_block {
             if excess > MIN_BLOCK_SIZE {
-                let new_block = (*this).start_ptr().add(total_needed) as *mut BlockHeader;
+                let new_block = (*this).alloc_area_start().add(total_needed) as *mut BlockHeader;
 
                 *new_block = BlockHeader::new(excess - size_of::<BlockHeader>(), false);
 
@@ -220,24 +297,21 @@ impl LinkedListAllocator {
 
                 self.insert_after(this, new_block);
 
-                (*this).size = total_needed;
+                (*this).set_size(total_needed);
             }
 
             self.remove_free_block(this);
 
-            (*this).used = true;
-            (*this).start_ptr()
+            (*this).set_used();
+            (*this).alloc_area_start()
         } else {
-            let original_size = (*this).size;
-            (*this).size = aligned_block as usize - (*this).start_ptr() as usize;
+            (*this).set_size(aligned_block as usize - (*this).alloc_area_start() as usize);
 
             *aligned_block = BlockHeader::new(total_needed, true);
             self.insert_after(this, aligned_block);
 
-            let excess = original_size - total_needed;
-
             if excess > MIN_BLOCK_SIZE {
-                let new_block = (*aligned_block).start_ptr().add(total_needed) as *mut BlockHeader;
+                let new_block = (*aligned_block).alloc_area_start().add(total_needed) as *mut BlockHeader;
 
                 *new_block = BlockHeader::new(excess - size_of::<BlockHeader>(), false);
 
@@ -246,30 +320,30 @@ impl LinkedListAllocator {
                 self.insert_after(aligned_block, new_block);
             }
 
-            (*aligned_block).start_ptr()
+            (*aligned_block).alloc_area_start()
         }
     }
 
     unsafe fn dealloc_and_coalesce(&self, ptr: *mut BlockHeader) {
         let block_ptr = (ptr as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
-        (*block_ptr).used = false;
+        (*block_ptr).set_free();
 
-        let next = (*block_ptr).next;
+        let next = (*block_ptr).next();
 
-        if !next.is_null() && !(*next).used {
-            (*block_ptr).size += size_of::<BlockHeader>() + (*next).size;
+        if !next.is_null() && (*next).is_free() {
+            (*block_ptr).add_size(size_of::<BlockHeader>() + (*next).size());
 
             self.remove_free_block(next);
 
             self.remove_from_list(next);
         }
 
-        let prev = (*block_ptr).prev;
+        let prev = (*block_ptr).prev();
 
-        if !prev.is_null() && !(*prev).used {
+        if !prev.is_null() && (*prev).is_free() {
             self.remove_from_list(block_ptr);
 
-            (*prev).size += size_of::<BlockHeader>() + (*block_ptr).size;
+            (*prev).add_size(size_of::<BlockHeader>() + (*block_ptr).size());
         } else {
             self.insert_free_block(block_ptr);
         }
@@ -291,21 +365,21 @@ impl LinkedListAllocator {
                 "Block {} at {:p}: size = {}, end = {:#x}, used = {}",
                 index,
                 current,
-                (*current).size,
-                ((*current).start_ptr() as usize) + (*current).size,
-                (*current).used,
+                (*current).size(),
+                ((*current).alloc_area_start() as usize) + (*current).size(),
+                (*current).is_used(),
             );
             println!(
                 "  Next: {:?}, Prev: {:?}",
-                (*current).next,
-                (*current).prev,
+                (*current).next(),
+                (*current).prev(),
             );
             println!("  Free Next: {:?}, Free Prev: {:?}",
-                (*current).free_next,
-                (*current).free_prev,
+                (*current).free_next(),
+                (*current).free_prev(),
             );
 
-            current = (*current).next;
+            current = (*current).next();
             index += 1;
         }
 
@@ -321,8 +395,8 @@ unsafe fn check_aligned_fit(
     alloc_size: usize,
     align: usize,
 ) -> Option<*mut BlockHeader> {
-    let start = (*block).start_ptr() as usize;
-    let end = (*block).end_ptr();
+    let start = (*block).alloc_area_start() as usize;
+    let end = (*block).end_ptr() as usize;
 
     let mut aligned = align_up(start, align);
 
@@ -371,8 +445,8 @@ mod tests {
             assert!(!ptr.is_null());
 
             let header = (ptr as usize - size_of::<BlockHeader>()) as *const BlockHeader;
-            assert!((*header).used, "Block should be marked as used");
-            assert!((*header).size >= alloc_size, "Block size should be at least 32 bytes");
+            assert!((*header).is_used(), "Block should be marked as used");
+            assert!((*header).size() >= alloc_size, "Block size should be at least 32 bytes");
 
             assert_heap_invariants();
         }
@@ -385,7 +459,7 @@ mod tests {
             let (freed, _size) = setup_fragmented_heap_for_test();
 
             let this = (freed as usize - size_of::<BlockHeader>()) as *const BlockHeader;
-            let existing_block = (*this).next;
+            let existing_block = (*this).next();
 
             let alloc_size = 64;
             let layout = Layout::from_size_align(alloc_size, 8).unwrap();
@@ -393,13 +467,13 @@ mod tests {
 
             assert!(!ptr.is_null(), "Allocation returned null pointer");
 
-            assert!((*this).used, "Allocated block should be marked as used");
-            assert!((*this).size >= alloc_size, "Allocated block too small");
+            assert!((*this).is_used(), "Allocated block should be marked as used");
+            assert!((*this).size() >= alloc_size, "Allocated block too small");
 
-            let next = (*this).next;
+            let next = (*this).next();
             assert_ne!(next, existing_block, "Next block should not be the same as the existing block");
 
-            assert!(!(*next).used, "Next block should be free after split");
+            assert!((*next).is_free(), "Next block should be free after split");
 
             assert_heap_invariants();
         }
@@ -419,9 +493,9 @@ mod tests {
 
             assert!(!ptr.is_null(), "Allocation returned null pointer");
 
-            assert!((*this).used, "Allocated block should be marked as used");
-            assert!((*this).size >= alloc_size, "Allocated block too small");
-            assert!((*this).size + size_of::<BlockHeader>() == MIN_BLOCK_SIZE, "Allocated block should be minimum size");
+            assert!((*this).is_used(), "Allocated block should be marked as used");
+            assert!((*this).size() >= alloc_size, "Allocated block too small");
+            assert!((*this).size() + size_of::<BlockHeader>() == MIN_BLOCK_SIZE, "Allocated block should be minimum size");
 
             assert_heap_invariants();
         }
@@ -434,17 +508,17 @@ mod tests {
             let (freed, size) = setup_fragmented_heap_for_test();
 
             let this = (freed as usize - size_of::<BlockHeader>()) as *const BlockHeader;
-            let existing_block = (*this).next;
+            let existing_block = (*this).next();
 
             let layout = Layout::from_size_align(size, 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(layout);
 
             assert!(!ptr.is_null(), "Exact fit allocation returned null pointer");
 
-            assert!((*this).used, "Exact fit block should be marked as used");
-            assert!((*this).size >= size, "Allocated block size incorrect for exact fit");
+            assert!((*this).is_used(), "Exact fit block should be marked as used");
+            assert!((*this).size() >= size, "Allocated block size incorrect for exact fit");
 
-            let next = (*this).next;
+            let next = (*this).next();
             assert_eq!(existing_block, next,
                 "Exact fit block should have the same next as previously (no split should have occurred)"
             );
@@ -463,7 +537,7 @@ mod tests {
 
             let initial_tail = *TEST_ALLOCATOR.tail.get();
 
-            let initial_tail_size = (*initial_tail).size;
+            let initial_tail_size = (*initial_tail).size();
 
             let alloc_size = 1024;
             let layout = Layout::from_size_align(alloc_size, 8).unwrap();
@@ -473,7 +547,7 @@ mod tests {
 
             let new_tail = *TEST_ALLOCATOR.tail.get();
 
-            assert!((*initial_tail).size >= alloc_size, "Tail block size should have grown");
+            assert!((*initial_tail).size() >= alloc_size, "Tail block size should have grown");
             assert!(new_tail != initial_tail, "Tail should have moved");
 
             assert_heap_invariants();
@@ -488,7 +562,7 @@ mod tests {
 
             let initial_tail = *TEST_ALLOCATOR.tail.get();
 
-            let full_layout = Layout::from_size_align((*initial_tail).size, 8).unwrap();
+            let full_layout = Layout::from_size_align((*initial_tail).size(), 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(full_layout);
 
             let layout = Layout::from_size_align(256, 8).unwrap();
@@ -503,7 +577,7 @@ mod tests {
                 "Tail should have moved (new block should have been created)"
             );
 
-            assert!(!(*new_tail).used, "New tail block should be free (after growth)");
+            assert!((*new_tail).is_free(), "New tail block should be free (after growth)");
 
             assert_heap_invariants();
         }
@@ -525,8 +599,8 @@ mod tests {
                 "Free head should point to initial free block"
             );
 
-            assert!((*free_head).free_next.is_null(), "Free head should have no next free block");
-            assert!((*free_head).free_prev.is_null(), "Free head should have no prev free block");
+            assert!((*free_head).free_next().is_null(), "Free head should have no next free block");
+            assert!((*free_head).free_prev().is_null(), "Free head should have no prev free block");
 
             assert_heap_invariants();
         }
@@ -553,7 +627,7 @@ mod tests {
                     original_free_head,
                     "Allocated block still present in free list after allocation"
                 );
-                free_current = (*free_current).free_next;
+                free_current = (*free_current).free_next();
             }
 
             assert_heap_invariants();
@@ -575,8 +649,8 @@ mod tests {
 
             let header2 = (block2 as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
 
-            assert_eq!((*header2).size, 128, "Freed block should retain its size after no coalescing");
-            assert!(!(*header2).used, "Freed block should be marked free");
+            assert_eq!((*header2).size(), 128, "Freed block should retain its size after no coalescing");
+            assert!((*header2).is_free(), "Freed block should be marked free");
 
             assert_heap_invariants();
         }
@@ -600,12 +674,12 @@ mod tests {
             let header2 = (block2 as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
 
             assert_eq!(
-                (*header2).size,
+                (*header2).size(),
                 128 + size_of::<BlockHeader>() + 128,
                 "Block2 should have absorbed Block3"
             );
 
-            assert!(!(*header2).used, "Merged block should be free");
+            assert!((*header2).is_free(), "Merged block should be free");
 
             assert_heap_invariants();
         }
@@ -627,12 +701,12 @@ mod tests {
 
             let header1 = (block1 as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
             assert_eq!(
-                (*header1).size,
+                (*header1).size(),
                 128 + size_of::<BlockHeader>() + 128,
                 "Block1 should have absorbed Block2"
             );
 
-            assert!(!(*header1).used, "Merged block should be free");
+            assert!((*header1).is_free(), "Merged block should be free");
 
             assert_heap_invariants();
         }
@@ -663,12 +737,12 @@ mod tests {
                 + 128;
 
             assert_eq!(
-                (*header1).size,
+                (*header1).size(),
                 expected_total_size,
                 "Block1, Block2, and Block3 should have all merged"
             );
 
-            assert!(!(*header1).used, "Merged block should be free");
+            assert!((*header1).is_free(), "Merged block should be free");
 
             assert_heap_invariants();
         }
@@ -679,7 +753,7 @@ mod tests {
         unsafe {
             println!("Testing coalesce with all blocks free...");
             setup_allocator();
-            let original_size = (*(*TEST_ALLOCATOR.head.get())).size;
+            let original_size = (*(*TEST_ALLOCATOR.head.get())).size();
 
             let layout = Layout::from_size_align(128, 8).unwrap();
             let block1 = TEST_ALLOCATOR.alloc(layout);
@@ -694,10 +768,10 @@ mod tests {
 
             let header1 = (block1 as usize - size_of::<BlockHeader>()) as *mut BlockHeader;
 
-            assert_eq!( (*header1).size, original_size, "All blocks should have merged into one"
+            assert_eq!( (*header1).size(), original_size, "All blocks should have merged into one"
             );
 
-            assert!(!(*header1).used, "Merged block should be free");
+            assert!((*header1).is_free(), "Merged block should be free");
 
             assert_heap_invariants();
         }
@@ -716,7 +790,7 @@ mod tests {
 
             let header = (ptr as usize - size_of::<BlockHeader>()) as *const BlockHeader;
 
-            let end = (*header).end_ptr();
+            let end = (*header).end_ptr() as usize;
             assert_eq!(end % 8, 0, "End address of allocated block should be aligned to 8 bytes");
 
             assert_heap_invariants();
@@ -795,7 +869,7 @@ mod tests {
 
             let initial_tail = *TEST_ALLOCATOR.tail.get();
 
-            let full_layout = Layout::from_size_align((*initial_tail).size, 8).unwrap();
+            let full_layout = Layout::from_size_align((*initial_tail).size(), 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(full_layout);
 
             let align = 256;
@@ -811,7 +885,7 @@ mod tests {
                 "Tail should have moved (new block should have been created)"
             );
 
-            assert!(!(*new_tail).used, "New tail block should be free (after growth)");
+            assert!((*new_tail).is_free(), "New tail block should be free (after growth)");
 
             assert!(!aligned_ptr.is_null(), "Allocation failed unexpectedly");
             assert_eq!(aligned_ptr as usize % align, 0, "Allocated pointer should be aligned to 128 bytes");
@@ -842,14 +916,9 @@ mod tests {
         let small_layout = Layout::from_size_align(128, 8).unwrap();
         let small_ptr = TEST_ALLOCATOR.alloc(small_layout);
 
-        let remaining_block = (*TEST_ALLOCATOR.head.get())
-            .as_ref()
-            .expect("Allocator head missing")
-            .next
-            .as_ref()
-            .expect("Small block should have next block after it");
+        let remaining_block = (**TEST_ALLOCATOR.head.get()).next();
 
-        let remaining_size = remaining_block.size;
+        let remaining_size = (*remaining_block).size();
 
         let big_layout = Layout::from_size_align(remaining_size, 8).unwrap();
         let big_ptr = TEST_ALLOCATOR.alloc(big_layout);
@@ -866,13 +935,13 @@ mod tests {
         while !current.is_null() {
             assert_eq!(current as usize % 8, 0, "Block address not properly aligned: {:p}", current);
 
-            assert!((*current).size >= MIN_BLOCK_SIZE - size_of::<BlockHeader>(), "Block size must be greater than MIN_BLOCK_SIZE");
+            assert!((*current).size() >= MIN_BLOCK_SIZE - size_of::<BlockHeader>(), "Block size must be greater than MIN_BLOCK_SIZE");
 
             assert!(current > last_block_addr, "Block addresses not strictly increasing");
 
-            let next_ptr = (*current).next;
+            let next_ptr = (*current).next();
             if !next_ptr.is_null() {
-                let next_prev_ptr = (*next_ptr).prev;
+                let next_prev_ptr = (*next_ptr).prev();
                 assert_eq!(
                     next_prev_ptr,
                     current,
@@ -880,9 +949,9 @@ mod tests {
                 );
             }
 
-            let prev_ptr = (*current).prev;
+            let prev_ptr = (*current).prev();
             if !prev_ptr.is_null() {
-                let prev_next_ptr = (*prev_ptr).next;
+                let prev_next_ptr = (*prev_ptr).next();
                 assert_eq!(
                     prev_next_ptr,
                     current,
@@ -891,12 +960,12 @@ mod tests {
             }
 
             if !next_ptr.is_null() {
-                assert_eq!(next_ptr as *mut BlockHeader, ((*current).size + size_of::<BlockHeader>() + current as usize) as *mut BlockHeader, "Next block address does not match expected address based on current block size");
+                assert_eq!(next_ptr as *mut BlockHeader, ((*current).size() + size_of::<BlockHeader>() + current as usize) as *mut BlockHeader, "Next block address does not match expected address based on current block size");
             }
 
             last_block_addr = current;
 
-            current = (*current).next;
+            current = (*current).next();
         }
 
         let tail_block = *TEST_ALLOCATOR.tail.get();
@@ -914,14 +983,14 @@ mod tests {
             let block_addr = free_current;
 
             assert!(
-                !(*free_current).used,
+                (*free_current).is_free(),
                 "Free block is marked used: {:p}",
                 free_current
             );
 
-            let next_free_block = (*free_current).free_next;
+            let next_free_block = (*free_current).free_next();
             if !next_free_block.is_null() {
-                let next_free_prev = (*next_free_block).free_prev;
+                let next_free_prev = (*next_free_block).free_prev();
                 assert_eq!(
                     next_free_prev,
                     free_current,
@@ -929,9 +998,9 @@ mod tests {
                 );
             }
 
-            let prev_free_block = (*free_current).free_prev;
+            let prev_free_block = (*free_current).free_prev();
             if !prev_free_block.is_null() {
-                let prev_free_next = (*prev_free_block).free_next;
+                let prev_free_next = (*prev_free_block).free_next();
                 assert_eq!(
                     prev_free_next,
                     free_current,
@@ -940,13 +1009,13 @@ mod tests {
             }
 
             last_free_addr = block_addr;
-            free_current = (*free_current).free_next;
+            free_current = (*free_current).free_next();
         }
 
         let mut mem_current = *TEST_ALLOCATOR.head.get();
 
         while !mem_current.is_null() {
-            if !(*mem_current).used {
+            if (*mem_current).is_free() {
                 let mut found_in_free_list = false;
 
                 let mut free_current = *TEST_ALLOCATOR.free_head.get();
@@ -955,7 +1024,7 @@ mod tests {
                         found_in_free_list = true;
                         break;
                     }
-                    free_current = (*free_current).free_next;
+                    free_current = (*free_current).free_next();
                 }
 
                 assert!(
@@ -965,7 +1034,7 @@ mod tests {
                 );
             }
 
-            mem_current = (*mem_current).next;
+            mem_current = (*mem_current).next();
         }
     }
 }
