@@ -6,7 +6,11 @@ use core::cell::UnsafeCell;
 use crate::kernel_memory_map;
 use crate::memory;
 
-const MIN_BLOCK_SIZE: usize = size_of::<BlockHeader>() + 8;
+const BLOCK_HEADER_SIZE: usize = size_of::<BlockHeader>();
+const MIN_BLOCK_SIZE: usize = BLOCK_HEADER_SIZE + 16;
+
+const NULL_OFFSET: u32 = 0xffff_fffe;
+const OFFSET_LOWER_BITS_MASK: u32 = !NULL_OFFSET;
 
 #[global_allocator]
 pub static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::new();
@@ -32,23 +36,21 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
 #[repr(C)]
 #[derive(Debug)]
 struct BlockHeader {
-    _size: usize,
-    _used: bool,
+    _size: u32,
     _next: *mut BlockHeader,
-    _prev: *mut BlockHeader,
-    _free_next: *mut BlockHeader,
-    _free_prev: *mut BlockHeader,
+    _prev: u32,
+    _free_next: u32,
+    _free_prev: u32,
 }
 
 impl BlockHeader {
     fn new(size: usize, used: bool) -> Self {
         BlockHeader {
-            _size: size,
-            _used: used,
+            _size: size as u32,
             _next: null_mut(),
-            _prev: null_mut(),
-            _free_next: null_mut(),
-            _free_prev: null_mut(),
+            _prev: NULL_OFFSET,
+            _free_next: NULL_OFFSET,
+            _free_prev: NULL_OFFSET | if used { 1 } else { 0 },
         }
     }
 
@@ -71,78 +73,131 @@ impl BlockHeader {
 
     #[inline]
     fn prev(&self) -> *mut BlockHeader {
-        self._prev
+        from_offset(self._prev)
     }
 
     #[inline]
     fn set_prev(&mut self, prev: *mut BlockHeader) {
-        self._prev = prev;
+        self._prev = to_offset(prev);
     }
 
     #[inline]
     fn free_next(&self) -> *mut BlockHeader {
-        self._free_next
+        from_offset(self._free_next)
     }
 
     #[inline]
     fn set_free_next(&mut self, next: *mut BlockHeader) {
-        self._free_next = next;
+        self._free_next = to_offset(next);
     }
 
     #[inline]
     fn free_prev(&self) -> *mut BlockHeader {
-        self._free_prev
+        let free_prev_offset = self._free_prev & NULL_OFFSET;
+
+        if free_prev_offset == NULL_OFFSET {
+            null_mut()
+        } else {
+            (heap_start() + free_prev_offset as usize) as *mut BlockHeader
+        }
     }
 
     #[inline]
     fn set_free_prev(&mut self, prev: *mut BlockHeader) {
-        self._free_prev = prev;
+        self._free_prev &= OFFSET_LOWER_BITS_MASK;
+
+        if prev.is_null() {
+            self._free_prev |= NULL_OFFSET;
+        } else {
+            self._free_prev |= (prev as *const _ as usize - heap_start()) as u32
+        }
     }
 
     #[inline]
     fn size(&self) -> usize {
-        self._size
+        self._size as usize
     }
 
     #[inline]
     fn set_size(&mut self, size: usize) {
-        self._size = size;
+        self._size = size as u32;
     }
 
     #[inline]
     fn add_size(&mut self, size: usize) {
-        self._size += size;
+        self._size += size as u32;
     }
 
     #[inline]
     fn is_used(&self) -> bool {
-        self._used
+        (self._free_prev & 1) != 0
     }
 
     #[inline]
     fn set_used(&mut self) {
-        self._used = true;
+        self._free_prev |= 1;
     }
 
     #[inline]
     fn is_free(&self) -> bool {
-        !self._used
+        (self._free_prev & 1) == 0
     }
 
     #[inline]
     fn set_free(&mut self) {
-        self._used = false;
+        self._free_prev &= !1;
     }
 
     #[inline]
     fn end_ptr(&self) -> usize {
-        self as *const _ as usize + size_of::<BlockHeader>() + self._size
+        self as *const _ as usize + size_of::<BlockHeader>() + self._size as usize
     }
+}
+
+#[cfg(test)]
+const TEST_HEAP_SIZE: usize = memory::PAGE_SIZE * 2;
+
+#[cfg(test)]
+#[repr(align(4096))]
+struct AlignedHeap([u8; TEST_HEAP_SIZE]);
+
+#[cfg(test)]
+static mut TEST_HEAP: AlignedHeap = AlignedHeap([0; TEST_HEAP_SIZE]);
+
+#[cfg(test)]
+#[inline]
+fn heap_start() -> usize {
+    unsafe { TEST_HEAP.0.as_ptr() as usize }
+}
+
+#[cfg(not(test))]
+#[inline]
+fn heap_start() -> usize {
+        kernel_memory_map::KERNEL_HEAP_START
 }
 
 #[inline]
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
+}
+
+
+#[inline]
+fn from_offset(offset: u32) -> *mut BlockHeader {
+    if offset == NULL_OFFSET {
+        null_mut()
+    } else {
+        (heap_start() + offset as usize) as *mut BlockHeader
+    }
+}
+
+#[inline]
+fn to_offset(pointer: *mut BlockHeader) -> u32 {
+    if pointer.is_null() {
+        NULL_OFFSET
+    } else {
+        (pointer as *const _ as usize - heap_start()) as u32
+    }
 }
 
 pub struct LinkedListAllocator {
@@ -164,7 +219,7 @@ impl LinkedListAllocator {
 
     pub unsafe fn init(&self, heap_start: usize, heap_size: usize) {
         let this = heap_start as *mut BlockHeader;
-        *this = BlockHeader::new(heap_size - size_of::<BlockHeader>(), false);
+        *this = BlockHeader::new(heap_size - BLOCK_HEADER_SIZE, false);
 
         *self.head.get() = this;
         *self.tail.get() = this;
@@ -192,6 +247,9 @@ impl LinkedListAllocator {
         if !(*this).free_next().is_null() {
             (*(*this).free_next()).set_free_prev((*this).free_prev());
         }
+
+        (*this).set_free_next(null_mut());
+        (*this).set_free_prev(null_mut());
     }
 
     unsafe fn append_to_list(&self, this: *mut BlockHeader) {
@@ -226,7 +284,6 @@ impl LinkedListAllocator {
 
         if !next.is_null() {
             (*next).set_prev(prev);
-            (*prev).set_next(next);
         } else {
             *self.tail.get() = prev;
 
@@ -272,7 +329,7 @@ impl LinkedListAllocator {
             return Some((last, aligned_location));
         } else {
             let this = new_heap as *mut BlockHeader;
-            *this = BlockHeader::new(actual_size - size_of::<BlockHeader>(), false);
+            *this = BlockHeader::new(actual_size - BLOCK_HEADER_SIZE, false);
 
             self.insert_free_block(this);
 
@@ -284,14 +341,14 @@ impl LinkedListAllocator {
     }
 
     unsafe fn split_block(&self, this: *mut BlockHeader, aligned_block: *mut BlockHeader, layout: Layout) -> *mut u8 {
-        let total_needed = align_up(layout.size().max(MIN_BLOCK_SIZE - size_of::<BlockHeader>()), 8);
+        let total_needed = align_up(layout.size().max(MIN_BLOCK_SIZE as usize - size_of::<BlockHeader>()), 8);
         let excess = (*this).size() - total_needed;
 
         if this == aligned_block {
             if excess > MIN_BLOCK_SIZE {
                 let new_block = (*this).alloc_area_start().add(total_needed) as *mut BlockHeader;
 
-                *new_block = BlockHeader::new(excess - size_of::<BlockHeader>(), false);
+                *new_block = BlockHeader::new(excess - BLOCK_HEADER_SIZE, false);
 
                 self.insert_free_block(new_block);
 
@@ -313,7 +370,7 @@ impl LinkedListAllocator {
             if excess > MIN_BLOCK_SIZE {
                 let new_block = (*aligned_block).alloc_area_start().add(total_needed) as *mut BlockHeader;
 
-                *new_block = BlockHeader::new(excess - size_of::<BlockHeader>(), false);
+                *new_block = BlockHeader::new(excess - BLOCK_HEADER_SIZE, false);
 
                 self.insert_free_block(new_block);
 
@@ -331,7 +388,7 @@ impl LinkedListAllocator {
         let next = (*block_ptr).next();
 
         if !next.is_null() && (*next).is_free() {
-            (*block_ptr).add_size(size_of::<BlockHeader>() + (*next).size());
+            (*block_ptr).add_size(BLOCK_HEADER_SIZE + (*next).size());
 
             self.remove_free_block(next);
 
@@ -343,7 +400,7 @@ impl LinkedListAllocator {
         if !prev.is_null() && (*prev).is_free() {
             self.remove_from_list(block_ptr);
 
-            (*prev).add_size(size_of::<BlockHeader>() + (*block_ptr).size());
+            (*prev).add_size(BLOCK_HEADER_SIZE + (*block_ptr).size());
         } else {
             self.insert_free_block(block_ptr);
         }
@@ -366,7 +423,7 @@ impl LinkedListAllocator {
                 index,
                 current,
                 (*current).size(),
-                ((*current).alloc_area_start() as usize) + (*current).size(),
+                (*current).alloc_area_start() as usize + (*current).size(),
                 (*current).is_used(),
             );
             println!(
@@ -395,13 +452,13 @@ unsafe fn check_aligned_fit(
     alloc_size: usize,
     align: usize,
 ) -> Option<*mut BlockHeader> {
-    let start = (*block).alloc_area_start() as usize;
+    let start = (*block).alloc_area_start();
     let end = (*block).end_ptr() as usize;
 
-    let mut aligned = align_up(start, align);
+    let mut aligned = align_up(start as usize, align);
 
     while align_up(aligned + alloc_size, 8) <= end {
-        let header = aligned - size_of::<BlockHeader>();
+        let header = aligned - BLOCK_HEADER_SIZE;
         let padding = header - block as usize;
 
         if padding == 0 || padding >= MIN_BLOCK_SIZE {
@@ -418,13 +475,6 @@ unsafe fn check_aligned_fit(
 mod tests {
     use super::*;
     use core::alloc::Layout;
-
-    const TEST_HEAP_SIZE: usize = memory::PAGE_SIZE * 2;
-
-    #[repr(align(4096))]
-    struct AlignedHeap([u8; TEST_HEAP_SIZE]);
-
-    static mut TEST_HEAP: AlignedHeap = AlignedHeap([0; TEST_HEAP_SIZE]);
 
     static TEST_ALLOCATOR: LinkedListAllocator = LinkedListAllocator {
         head: UnsafeCell::new(null_mut()),
@@ -495,7 +545,7 @@ mod tests {
 
             assert!((*this).is_used(), "Allocated block should be marked as used");
             assert!((*this).size() >= alloc_size, "Allocated block too small");
-            assert!((*this).size() + size_of::<BlockHeader>() == MIN_BLOCK_SIZE, "Allocated block should be minimum size");
+            assert!((*this).size() + BLOCK_HEADER_SIZE == MIN_BLOCK_SIZE, "Allocated block should be minimum size");
 
             assert_heap_invariants();
         }
@@ -510,7 +560,7 @@ mod tests {
             let this = (freed as usize - size_of::<BlockHeader>()) as *const BlockHeader;
             let existing_block = (*this).next();
 
-            let layout = Layout::from_size_align(size, 8).unwrap();
+            let layout = Layout::from_size_align(size as usize, 8).unwrap();
             let ptr = TEST_ALLOCATOR.alloc(layout);
 
             assert!(!ptr.is_null(), "Exact fit allocation returned null pointer");
@@ -960,7 +1010,7 @@ mod tests {
             }
 
             if !next_ptr.is_null() {
-                assert_eq!(next_ptr as *mut BlockHeader, ((*current).size() + size_of::<BlockHeader>() + current as usize) as *mut BlockHeader, "Next block address does not match expected address based on current block size");
+                assert_eq!(next_ptr as *mut BlockHeader, ((*current).size() as usize + size_of::<BlockHeader>() + current as usize) as *mut BlockHeader, "Next block address does not match expected address based on current block size");
             }
 
             last_block_addr = current;

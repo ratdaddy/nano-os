@@ -19,7 +19,7 @@ const KERNEL_STACK_END: usize = KERNEL_STACK_START - 0x20_0000;
 pub static KERNEL_TRAP_STACK_START: usize = HIGH_HALF_PHYS_START + 0xffff_c000;
 const KERNEL_TRAP_STACK_SIZE: usize = 0x4000;
 
-const KERNEL_HEAP_START: usize = 0xffff_ffff_c000_0000;
+pub const KERNEL_HEAP_START: usize = 0xffff_ffff_c000_0000;
 static KERNEL_HEAP_END: AtomicUsize = AtomicUsize::new(KERNEL_HEAP_START + 4 * memory::PAGE_SIZE);
 
 static mut KERNEL_PAGE_MAPPER: MaybeUninit<page_mapper::PageMapper> = MaybeUninit::uninit();
