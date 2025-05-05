@@ -52,6 +52,7 @@ fn consume_array(arr: [u8; 10 * 1024]) {
     println!("Average: {}", avg);
 }
 
+#[allow(dead_code)]
 #[repr(align(128))]
 struct Align128(u8);
 
