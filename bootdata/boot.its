@@ -29,6 +29,18 @@
                 algo = "sha256";
             };
         };
+
+        ramdisk-1 {
+            description = "initramfs";
+            data = /incbin/("initramfs.cpio");
+            type = "ramdisk";
+            arch = "riscv";
+            os = "linux";
+            compression = "none";
+            hash {
+                algo = "crc32";
+            };
+        };
     };
 
     configurations {
@@ -36,6 +48,7 @@
         config-sg2002_licheervnano_sd {
             kernel = "kernel-1";
             fdt = "fdt-sg2002_licheervnano_sd";
+            ramdisk = "ramdisk-1";
         };
     };
 

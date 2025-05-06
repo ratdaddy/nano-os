@@ -69,6 +69,8 @@ DTB=0x8fe00000, size=0x16e4
     reg = 0x0000000020000000 0x0000000002000000 0x0000000022000000 0x0000000002000000
     compatible = "cfi-flash"
   chosen
+    linux,initrd-end = 0x0000000088200200
+    linux,initrd-start = 0x0000000088200000
     stdout-path = "/soc/serial@10000000"
     rng-seed = 0xcdcae6b581f23292 0x284ca7322212c0ac 0xfbecfd54e9fe1ed5 0x2e259be53ebc0566
   soc

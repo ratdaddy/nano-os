@@ -1,7 +1,8 @@
 use core::ptr;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::memory;
+
 const FDT_MAGIC: u32 = 0xd00d_feed;
 const FDT_BEGIN_NODE: u32 = 1;
 const FDT_END_NODE: u32 = 2;
@@ -33,6 +34,8 @@ pub enum CpuType {
 }
 
 static CPU_TYPE: AtomicU8 = AtomicU8::new(CpuType::Unknown as u8);
+pub static INITRD_START: AtomicUsize = AtomicUsize::new(0);
+static INITRD_END: AtomicUsize = AtomicUsize::new(0);
 
 pub unsafe fn parse_dtb(dtb: *const u8) -> DtbContext {
     assert_eq!(read_be32(dtb), FDT_MAGIC, "Invalid DTB magic");
@@ -101,16 +104,20 @@ pub unsafe fn collect_memory_map<const N: usize>(
     let mut memory: Option<memory::Region> = None;
     let mut memory_active = false;
     let mut reserved_active = false;
+    let mut chosen_active = false;
+    let mut initrd_start = None;
+    let mut initrd_end = None;
 
     traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| {
         match token {
             // Only look for these top‑level nodes at depth == 1
             DtbToken::BeginNode if depth == 1 => {
                 if let Some(name) = name_opt {
-                    if name.starts_with("memory@") {
-                        memory_active = true;
-                    } else if name == "reserved-memory" {
-                        reserved_active = true;
+                    match name {
+                        "reserved-memory" => reserved_active = true,
+                        "chosen" => chosen_active = true,
+                        _ if name.starts_with("memory@") => memory_active = true,
+                        _ => {}
                     }
                 }
             }
@@ -134,7 +141,6 @@ pub unsafe fn collect_memory_map<const N: usize>(
                     {
                         let start = read_be64(data) as usize;
                         let size = read_be64(data.add(8)) as usize;
-                        // **Align start down** (floor) and **end up** (ceil)
                         let aligned_start = memory::align_down(start);
                         let aligned_end = memory::align_up(start + size);
 
@@ -144,7 +150,28 @@ pub unsafe fn collect_memory_map<const N: usize>(
                         );
                         let _ = reserved
                             .push(memory::Region { start: aligned_start, end: aligned_end });
-                    } else if depth == 1 && prop_name == "#address-cells" {
+                    }
+                    // Chosen region: capture the initrd start/end
+                    else if chosen_active {
+                        if prop_name == "linux,initrd-start" {
+                            initrd_start = Some(read_be64(data) as usize);
+                        } else if prop_name == "linux,initrd-end" {
+                            initrd_end = Some(read_be64(data) as usize);
+                        }
+                        if initrd_start.is_some() && initrd_end.is_some() {
+                            let start = initrd_start.unwrap();
+                            let end = initrd_end.unwrap();
+                            let aligned_start = memory::align_down(start);
+                            let aligned_end = memory::align_up(end);
+                            let _ = reserved.push(memory::Region { start: aligned_start, end: aligned_end });
+                            INITRD_START.store(start, Ordering::Relaxed);
+                            INITRD_END.store(end, Ordering::Relaxed);
+                            initrd_start = None;
+                            initrd_end = None;
+                        }
+                    }
+                    // check address and size cells
+                    else if depth == 1 && prop_name == "#address-cells" {
                         let addr_cells = read_be32(data);
                         assert_eq!(addr_cells, 2, "DTB must have #address-cells = 2");
                     } else if depth == 1 && prop_name == "#size-cells" {
@@ -201,6 +228,7 @@ pub fn detect_cpu_type(dtb: *const u8) {
 
 #[allow(dead_code)]
 pub unsafe fn print_dtb(dtb: *const u8) {
+    let token_type = false;
     let ctx = parse_dtb(dtb);
 
     traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| match token {
@@ -209,7 +237,10 @@ pub unsafe fn print_dtb(dtb: *const u8) {
                 for _ in 0..depth {
                     print!("  ");
                 }
-                println!("N{}: {}", depth, name);
+                if token_type {
+                    print!("N{}: ", depth);
+                }
+                println!("{}", name);
             }
         }
         DtbToken::EndNode => {}
@@ -220,9 +251,15 @@ pub unsafe fn print_dtb(dtb: *const u8) {
                 }
                 if len == 4 {
                     let val = read_be32(data);
-                    println!("P{}: {} = 0x{:08x}", depth, name, val);
+                    if token_type {
+                        print!("P{}: ", depth);
+                    }
+                    println!("{} = 0x{:08x}", name, val);
                 } else if len % 8 == 0 {
-                    print!("P{}: {} =", depth, name);
+                    if token_type {
+                        print!("P{}: ", depth);
+                    }
+                    print!("{} =", name);
                     for i in 0..(len / 8) {
                         let val = read_be64(data.add(i * 8));
                         print!(" 0x{:016x}", val);
@@ -231,9 +268,15 @@ pub unsafe fn print_dtb(dtb: *const u8) {
                 } else if len > 0 && *data.add(len - 1) == 0 {
                     let s =
                         core::str::from_utf8_unchecked(core::slice::from_raw_parts(data, len - 1));
-                    println!("P{}: {} = \"{}\"", depth, name, s);
+                    if token_type {
+                        print!("P{}: ", depth);
+                    }
+                    println!("{} = \"{}\"", name, s);
                 } else {
-                    print!("P{}: {} =", depth, name);
+                    if token_type {
+                        print!("P{}: ", depth);
+                    }
+                    print!("{} =", name);
                     for i in 0..len {
                         print!(" {:02x}", *data.add(i));
                     }

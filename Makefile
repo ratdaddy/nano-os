@@ -4,6 +4,8 @@ KERNEL_ELF := $(BUILD_DIR)/kernel
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 BOOT_SD := $(BUILD_DIR)/boot.sd
 BOOT_ITS := $(BUILD_DIR)/boot.its
+INITRAMFS := $(BUILD_DIR)/initramfs.cpio
+INITRAMFS_DIR := bootdata/initramfs
 
 #FEATURES := --features print_dtb
 FEATURES :=
@@ -14,7 +16,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs
 
 all: $(BOOT_SD)
 
@@ -22,7 +24,7 @@ $(KERNEL_BIN): $(SOURCES)
 	cargo -Z build-std=core,alloc build --target $(TARGET) $(FEATURES)
 	$(OBJCOPY) --binary-architecture=riscv64 --strip-all -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 
-$(BOOT_SD): $(KERNEL_BIN) bootdata/boot.its
+$(BOOT_SD): $(KERNEL_BIN) bootdata/boot.its $(INITRAMFS)
 	cp bootdata/boot.its $(BUILD_DIR)
 	cp bootdata/sg2002.dtb $(BUILD_DIR)
 	mkimage -f $(BOOT_ITS) $(BOOT_SD) > /dev/null 2>&1
@@ -35,7 +37,15 @@ copy: all
 	@diskutil eject "$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//')"
 	@echo "Done."
 
-run:
+initramfs: $(INITRAMFS)
+
+$(INITRAMFS): $(shell find $(INITRAMFS_DIR) -type f)
+	@echo "Creating initramfs.cpio..."
+	mkdir -p $(BUILD_DIR)
+	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)
+	cd $(BUILD_DIR)/initramfs && find * | cpio -o --format=newc > ../initramfs.cpio
+
+run: initramfs
 	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
 test:
