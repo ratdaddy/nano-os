@@ -17,6 +17,7 @@ mod trampoline;
 mod console;
 
 mod dtb;
+mod initramfs;
 mod kernel_allocator;
 mod kernel_main;
 mod kernel_memory_map;

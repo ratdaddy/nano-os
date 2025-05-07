@@ -5,6 +5,7 @@ use core::sync::atomic::Ordering;
 
 use crate::kernel_allocator;
 use crate::dtb;
+use crate::initramfs::{self, Read};
 
 extern "C" {
     fn trap_entry();
@@ -31,7 +32,17 @@ pub fn kernel_main() {
     */
 
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
+    let initrd_len = dtb::INITRD_END.load(Ordering::Relaxed) - initrd_start;
     inspect_initramfs(initrd_start as *const u8);
+
+    let slice = unsafe { core::slice::from_raw_parts(initrd_start as *const _, initrd_len) };
+    initramfs::ifs_mount(slice);
+
+    let mut handle = initramfs::ifs_open("/etc/motd").unwrap();
+    let mut contents = alloc::string::String::new();
+    let _result = handle.read_to_string(&mut contents);
+
+    println!("Contents of /etc/motd: {}", contents);
 
     loop {
         unsafe { core::arch::asm!("wfi") }

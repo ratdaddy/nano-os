@@ -35,7 +35,7 @@ pub enum CpuType {
 
 static CPU_TYPE: AtomicU8 = AtomicU8::new(CpuType::Unknown as u8);
 pub static INITRD_START: AtomicUsize = AtomicUsize::new(0);
-static INITRD_END: AtomicUsize = AtomicUsize::new(0);
+pub static INITRD_END: AtomicUsize = AtomicUsize::new(0);
 
 pub unsafe fn parse_dtb(dtb: *const u8) -> DtbContext {
     assert_eq!(read_be32(dtb), FDT_MAGIC, "Invalid DTB magic");
