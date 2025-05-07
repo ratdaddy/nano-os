@@ -15,29 +15,15 @@ RUN apt-get update && apt-get install -y \
   && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------
-# 🧱 Step 2: Clone musl and toolchain sources (cached separately)
+# 📦 Step 2: Download and extract prebuilt musl sysroot
 # -----------------------------
-WORKDIR /build
-RUN git clone --depth=1 https://git.musl-libc.org/musl
-RUN git clone --recursive https://github.com/riscv-collab/riscv-gnu-toolchain.git
+ENV MUSL_SYSROOT=/opt/musl-riscv64
+
+RUN curl -L https://musl.cc/riscv64-linux-musl-cross.tgz | tar -xz -C /opt && \
+    mv /opt/riscv64-linux-musl-cross $MUSL_SYSROOT
 
 # -----------------------------
-# 🧱 Step 3: Build a minimal riscv GCC to build musl
-# -----------------------------
-WORKDIR /build/riscv-gnu-toolchain
-RUN ./configure --prefix=$RISCV_PREFIX --with-arch=rv64gc --with-abi=lp64d --disable-linux --enable-languages=c,c++
-RUN make newlib -j1
-
-# -----------------------------
-# 🧱 Step 4: Build musl for riscv
-# -----------------------------
-WORKDIR /build/musl
-RUN CC=riscv64-unknown-elf-gcc ./configure --target=riscv64 --prefix=$MUSL_SYSROOT && \
-    make -j1 && \
-    make install
-
-# -----------------------------
-# 🧱 Step 5: Build full riscv64-linux-musl toolchain
+# 🧱 Step 3: Build full riscv64-linux-musl toolchain
 # -----------------------------
 WORKDIR /build/riscv-gnu-toolchain
 RUN make distclean && \
@@ -53,7 +39,7 @@ RUN make distclean && \
     && make linux -j1
 
 # -----------------------------
-# 🦀 Install Rust nightly with components
+# 🦀 Step 4: Install Rust nightly with components
 # -----------------------------
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
