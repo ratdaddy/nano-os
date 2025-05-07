@@ -23,6 +23,12 @@ RUN curl -L https://musl.cc/riscv64-linux-musl-cross.tgz | tar -xz -C /opt && \
     mv /opt/riscv64-linux-musl-cross $MUSL_SYSROOT
 
 # -----------------------------
+# 📦 Step 2.5: Clone riscv-gnu-toolchain
+# -----------------------------
+WORKDIR /build
+RUN git clone --recursive https://github.com/riscv-collab/riscv-gnu-toolchain.git
+
+# -----------------------------
 # 🧱 Step 3: Build full riscv64-linux-musl toolchain
 # -----------------------------
 WORKDIR /build/riscv-gnu-toolchain
