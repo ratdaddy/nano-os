@@ -26,8 +26,7 @@ RUN curl -L https://musl.cc/riscv64-linux-musl-cross.tgz | tar -xz -C /opt && \
 # 🧱 Step 3: Build full riscv64-linux-musl toolchain
 # -----------------------------
 WORKDIR /build/riscv-gnu-toolchain
-RUN make distclean && \
-    ./configure \
+RUN ./configure \
         --prefix=$RISCV_PREFIX \
         --with-arch=rv64gc \
         --with-abi=lp64d \
