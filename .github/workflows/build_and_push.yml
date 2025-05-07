@@ -40,7 +40,7 @@ jobs:
           docker save $GHCR_IMAGE:latest | gzip > $IMAGE_NAME.tar.gz
 
       - name: Upload image artifact (optional)
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.IMAGE_NAME }}
           path: ${{ env.IMAGE_NAME }}.tar.gz
