@@ -27,12 +27,14 @@ jobs:
           username: ${{ env.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image with caching
         uses: docker/build-push-action@v5
         with:
           context: ./prog_example
           push: true
           tags: ${{ env.GHCR_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Save image as archive (optional)
         run: |
