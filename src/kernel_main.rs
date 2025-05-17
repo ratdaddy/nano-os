@@ -6,9 +6,13 @@ use core::sync::atomic::Ordering;
 use crate::kernel_allocator;
 use crate::dtb;
 use crate::initramfs::{self, Read};
+use crate::page_mapper;
+use crate::process_trampoline;
+use crate::process_main;
+use crate::process_memory_map;
 
 extern "C" {
-    fn trap_entry();
+    pub fn trap_entry();
 }
 
 pub fn kernel_main() {
@@ -43,6 +47,22 @@ pub fn kernel_main() {
     let _result = handle.read_to_string(&mut contents);
 
     println!("Contents of /etc/motd: {}", contents);
+
+    let fn_ptr = process_main::process_main;
+    println!("Process main function pointer: {:#x}", fn_ptr as usize);
+    let mut context = &mut process_trampoline::ProcessContext {
+        user_sp: process_memory_map::PROCESS_STACK_START,
+        user_pc: fn_ptr as usize,
+        user_status: 1 << 5,
+        page_map: page_mapper::PageMapper::new(),
+    };
+
+    process_memory_map::init(&mut context.page_map);
+
+    unsafe {
+        println!("entering process trampoline");
+        process_trampoline::enter_process(context);
+    }
 
     loop {
         unsafe { core::arch::asm!("wfi") }

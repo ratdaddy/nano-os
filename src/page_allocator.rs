@@ -17,7 +17,7 @@ pub struct PageAllocator {
 
 static mut PAGE_ALLOCATOR: PageAllocator = PageAllocator::new();
 
-pub fn init(dtb_ptr: *const u8, kernel_phys_end: usize) -> memory::Region {
+pub fn init(dtb_ptr: *const u8, image_phys_end: usize) -> memory::Region {
     let dtb_context = unsafe { dtb::parse_dtb(dtb_ptr) };
 
     const MAX_RESERVED_MEMORY: usize = 16;
@@ -35,7 +35,7 @@ pub fn init(dtb_ptr: *const u8, kernel_phys_end: usize) -> memory::Region {
     println!("Memory {:#x} - {:#x}", memory.start, memory.end);
 
     let _ = reserved_memory
-        .push(memory::Region { start: memory.start, end: memory::align_up(kernel_phys_end) });
+        .push(memory::Region { start: memory.start, end: memory::align_up(image_phys_end) });
 
     let _ = reserved_memory.push(memory::Region {
         start: memory::align_down(dtb_ptr as usize),

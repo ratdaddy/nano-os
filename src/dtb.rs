@@ -186,6 +186,8 @@ pub unsafe fn collect_memory_map<const N: usize>(
 
     memory
 }
+
+#[inline]
 pub fn get_cpu_type() -> CpuType {
     match CPU_TYPE.load(Ordering::Relaxed) {
         1 => CpuType::Qemu,

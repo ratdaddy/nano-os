@@ -173,18 +173,6 @@ impl PageMapper {
         let mut offset = 0;
         let size = end - virt_start;
 
-        fn alloc_next_level(parent_entry: &mut PageTableEntry) -> *mut PageTable {
-            let new_frame = page_allocator::alloc().expect("Out of memory for page table");
-            let new_table = new_frame as *mut PageTable;
-
-            unsafe {
-                zero_page_table(new_table);
-            }
-
-            parent_entry.set(new_frame, PageFlags::empty());
-            new_table
-        }
-
         while offset < size {
             let virt = virt_start + offset;
             let phys = phys_start + offset;
@@ -240,6 +228,32 @@ impl PageMapper {
             let virt_addr = virt + i * memory::PAGE_SIZE;
             self.map_range(virt_addr, phys, virt_addr + memory::PAGE_SIZE, flags, PageSize::Size4K);
         }
+    }
+
+    pub fn set_l1_page_table_for_phys(&self, phys_addr: usize, l1_table: *mut PageTable) {
+        let vpn2 = phys_addr.vpn2();
+        let vpn1 = phys_addr.vpn1();
+
+        let l2_entry = unsafe { &mut (*self.root_table).entries[vpn2] };
+        let l1_page_table = if !l2_entry.is_valid() {
+            alloc_next_level(l2_entry)
+        } else {
+            l2_entry.addr() as *mut PageTable
+        };
+
+        let l1_entry = unsafe { &mut (*l1_page_table).entries[vpn1] };
+        l1_entry.set(l1_table as usize, PageFlags::VALID);
+    }
+
+    pub fn l1_page_table_from_phys(&self, phys_addr: usize) -> *const PageTable {
+        let vpn2 = phys_addr.vpn2();
+        let vpn1 = phys_addr.vpn1();
+
+        let l2_entry = unsafe { (*self.root_table).entries[vpn2] };
+        let l1_table = l2_entry.addr() as *const PageTable;
+
+        let l1_entry = unsafe { (*l1_table).entries[vpn1] };
+        l1_entry.addr() as *const PageTable
     }
 
     pub fn dump_pte(&self, virt_addr: usize) {
@@ -311,4 +325,16 @@ impl PageMapper {
             }
         }
     }
+}
+
+fn alloc_next_level(parent_entry: &mut PageTableEntry) -> *mut PageTable {
+    let new_frame = page_allocator::alloc().expect("Out of memory for page table");
+    let new_table = new_frame as *mut PageTable;
+
+    unsafe {
+        zero_page_table(new_table);
+    }
+
+    parent_entry.set(new_frame, PageFlags::empty());
+    new_table
 }

@@ -43,6 +43,10 @@ SECTIONS {
   .rodata : {
     _rodata_start = .;
     *(.rodata .rodata.* .srodata .srodata.*)
+    _proc_tramp_lma = .;
+    QUAD(_proc_tramp_phys_start)
+    _proc_main_lma = .;
+    QUAD(LOADADDR(.process_main))
     _rodata_end = .;
   }
 
@@ -66,4 +70,31 @@ SECTIONS {
 
   _kernel_end = .;
   _kernel_phys_end = _kernel_end - 0xffffffff00000000;
+
+  . = 0xfffffffffffe0000;
+
+  _proc_tramp_phys_start = _kernel_phys_end;
+
+  .process_trampoline : AT(_kernel_phys_end) {
+    _proc_tramp_start = .;
+    *(.process_trampoline);
+  }
+
+  . = ALIGN(4K);
+
+  _proc_tramp_end = .;
+  _proc_tramp_phys_end = _proc_tramp_phys_start + (_proc_tramp_end - _proc_tramp_start);
+
+ . = 0x10000;
+
+ .process_main : AT(_proc_tramp_phys_end)  {
+    _process_main = .;
+    *(.process_main)
+ }
+
+ . = ALIGN(4K);
+
+ _process_main_end = .;
+
+  _image_phys_end = (_kernel_end - 0xffffffff00000000) + (_proc_tramp_end - _proc_tramp_start) + (_process_main_end - _process_main);
 }

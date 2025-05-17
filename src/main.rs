@@ -21,10 +21,13 @@ mod initramfs;
 mod kernel_allocator;
 mod kernel_main;
 mod kernel_memory_map;
-mod kernel_trap;
+mod trap;
 mod memory;
 mod page_allocator;
 mod page_mapper;
+mod process_main;
+mod process_memory_map;
+mod process_trampoline;
 mod test;
 
 use core::panic::PanicInfo;
@@ -34,13 +37,13 @@ use core::panic::PanicInfo;
 fn rust_main(
     hart_id: usize,
     dtb_ptr: *const u8,
-    kernel_phys_start: usize,
-    kernel_phys_end: usize,
+    image_phys_start: usize,
+    image_phys_end: usize,
 ) -> ! {
     unsafe {
         core::arch::asm!(
             "csrw stvec, {}",
-            in(reg) trap_handler as usize,
+            in(reg) boot_trap_handler as usize,
         );
     }
 
@@ -53,8 +56,8 @@ fn rust_main(
 
     println!("Hart ID: {}", hart_id);
 
-    println!("Kernel physical start: {:#x}", kernel_phys_start);
-    println!("Kernel physical end: {:#x}", kernel_phys_end);
+    println!("Image physical start: {:#x}", image_phys_start);
+    println!("Image physical end: {:#x}", image_phys_end);
 
     zero_bss();
 
@@ -71,7 +74,7 @@ fn rust_main(
 
     dtb::detect_cpu_type(dtb_ptr);
 
-    let memory = page_allocator::init(dtb_ptr, kernel_phys_end);
+    let memory = page_allocator::init(dtb_ptr, image_phys_end);
 
     kernel_memory_map::init(memory);
 
@@ -116,7 +119,7 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 #[no_mangle]
-extern "C" fn trap_handler() {
+extern "C" fn boot_trap_handler() {
     let scause: usize;
     let sepc: usize;
     let stval: usize;
@@ -151,7 +154,7 @@ fn rust_main() -> ! {
     unsafe {
         core::arch::asm!(
             "csrw stvec, {}",
-            in(reg) trap_handler as usize,
+            in(reg) boot_trap_handler as usize,
         );
     }
     test_main();

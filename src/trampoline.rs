@@ -54,7 +54,7 @@ pub extern "C" fn _start() -> ! {
             "mv a1, s1",
             // Pass along kernel phys mem start and end addresses
             "la a2, _start",
-            "la a3, _kernel_phys_end",
+            "la a3, _image_phys_end",
             // Jump to rust_main
             "la t0, rust_main",
             "jr t0",
