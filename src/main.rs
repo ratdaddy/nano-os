@@ -21,7 +21,6 @@ mod initramfs;
 mod kernel_allocator;
 mod kernel_main;
 mod kernel_memory_map;
-mod trap;
 mod memory;
 mod page_allocator;
 mod page_mapper;
@@ -29,6 +28,7 @@ mod process_main;
 mod process_memory_map;
 mod process_trampoline;
 mod test;
+mod trap;
 
 use core::panic::PanicInfo;
 

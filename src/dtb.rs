@@ -163,7 +163,8 @@ pub unsafe fn collect_memory_map<const N: usize>(
                             let end = initrd_end.unwrap();
                             let aligned_start = memory::align_down(start);
                             let aligned_end = memory::align_up(end);
-                            let _ = reserved.push(memory::Region { start: aligned_start, end: aligned_end });
+                            let _ = reserved
+                                .push(memory::Region { start: aligned_start, end: aligned_end });
                             INITRD_START.store(start, Ordering::Relaxed);
                             INITRD_END.store(end, Ordering::Relaxed);
                             initrd_start = None;

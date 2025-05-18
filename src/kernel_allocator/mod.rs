@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests;
 
-mod block_header;
 mod allocator;
+mod block_header;
 
 use allocator::LinkedListAllocator;
 
@@ -13,5 +13,3 @@ pub static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::new();
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
 }
-
-

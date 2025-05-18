@@ -1,6 +1,7 @@
-use crate::page_mapper::{ self, PageFlags };
-use crate::kernel_memory_map;
 use core::sync::atomic::Ordering;
+
+use crate::kernel_memory_map;
+use crate::page_mapper::{self, PageFlags};
 
 pub const PROCESS_STACK_START: usize = 0xffe0_0000;
 const PROCESS_STACK_STARTING_SIZE: usize = 0x4000;
@@ -42,13 +43,15 @@ pub fn init(page_map: &mut page_mapper::PageMapper) {
     page_map.allocate_and_map_pages(
         process_stack_end,
         PROCESS_STACK_STARTING_SIZE,
-        PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | PageFlags::USER,
+        PageFlags::READ
+            | PageFlags::WRITE
+            | PageFlags::ACCESSED
+            | PageFlags::DIRTY
+            | PageFlags::USER,
     );
 
     // Map the last l1 page table
-    let last_l1_pte = unsafe {
-        kernel_memory_map::LAST_L1_PTE.load(Ordering::Relaxed)
-    };
+    let last_l1_pte = unsafe { kernel_memory_map::LAST_L1_PTE.load(Ordering::Relaxed) };
 
     page_map.set_l1_page_table_for_phys(
         kernel_memory_map::TRAP_FRAME,

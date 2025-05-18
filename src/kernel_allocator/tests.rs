@@ -1,13 +1,12 @@
 use core::alloc::GlobalAlloc;
+use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ptr::null_mut;
 
 use super::allocator::LinkedListAllocator;
-use super::block_header::{TEST_HEAP, TEST_HEAP_SIZE};
-use super::allocator::{MIN_BLOCK_SIZE, MIN_ALLOC_SIZE};
-
+use super::allocator::{MIN_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use super::block_header::*;
-use core::alloc::Layout;
+use super::block_header::{TEST_HEAP, TEST_HEAP_SIZE};
 
 static TEST_ALLOCATOR: LinkedListAllocator = LinkedListAllocator {
     head: UnsafeCell::new(null_mut()),
@@ -79,7 +78,10 @@ fn test_split_minimum_block_size() {
 
         assert!((*this).is_used(), "Allocated block should be marked as used");
         assert!((*this).size() >= alloc_size, "Allocated block too small");
-        assert!((*this).size() + BLOCK_HEADER_SIZE == MIN_BLOCK_SIZE, "Allocated block should be minimum size");
+        assert!(
+            (*this).size() + BLOCK_HEADER_SIZE == MIN_BLOCK_SIZE,
+            "Allocated block should be minimum size"
+        );
 
         assert_heap_invariants();
     }
@@ -154,8 +156,7 @@ fn test_heap_growth_create_new_block() {
         let new_tail = *TEST_ALLOCATOR.tail.get();
 
         assert_ne!(
-            new_tail,
-            initial_tail,
+            new_tail, initial_tail,
             "Tail should have moved (new block should have been created)"
         );
 
@@ -175,11 +176,7 @@ fn test_free_list_after_init() {
 
         let head = *TEST_ALLOCATOR.head.get();
 
-        assert_eq!(
-            free_head,
-            head,
-            "Free head should point to initial free block"
-        );
+        assert_eq!(free_head, head, "Free head should point to initial free block");
 
         assert!((*free_head).free_next().is_null(), "Free head should have no next free block");
         assert!((*free_head).free_prev().is_null(), "Free head should have no prev free block");
@@ -205,8 +202,7 @@ fn test_free_list_after_alloc_removes_block() {
 
         while !free_current.is_null() {
             assert_ne!(
-                free_current,
-                original_free_head,
+                free_current, original_free_head,
                 "Allocated block still present in free list after allocation"
             );
             free_current = (*free_current).free_next();
@@ -231,7 +227,11 @@ fn test_coalesce_none() {
 
         let header2 = (block2 as usize - BLOCK_HEADER_SIZE) as *mut BlockHeader;
 
-        assert_eq!((*header2).size(), 128, "Freed block should retain its size after no coalescing");
+        assert_eq!(
+            (*header2).size(),
+            128,
+            "Freed block should retain its size after no coalescing"
+        );
         assert!((*header2).is_free(), "Freed block should be marked free");
 
         assert_heap_invariants();
@@ -312,11 +312,7 @@ fn test_coalesce_with_prev_and_next() {
 
         let header1 = (block1 as usize - BLOCK_HEADER_SIZE) as *mut BlockHeader;
 
-        let expected_total_size = 128
-            + BLOCK_HEADER_SIZE
-            + 128
-            + BLOCK_HEADER_SIZE
-            + 128;
+        let expected_total_size = 128 + BLOCK_HEADER_SIZE + 128 + BLOCK_HEADER_SIZE + 128;
 
         assert_eq!(
             (*header1).size(),
@@ -350,8 +346,7 @@ fn test_coalesce_all_blocks() {
 
         let header1 = (block1 as usize - BLOCK_HEADER_SIZE) as *mut BlockHeader;
 
-        assert_eq!( (*header1).size(), original_size, "All blocks should have merged into one"
-        );
+        assert_eq!((*header1).size(), original_size, "All blocks should have merged into one");
 
         assert!((*header1).is_free(), "Merged block should be free");
 
@@ -411,7 +406,11 @@ fn test_alignment_small_preceding_fragment() {
 
         assert!(!aligned_ptr.is_null(), "Allocation failed unexpectedly");
 
-        assert_eq!(aligned_ptr as usize % align, 0, "Allocated pointer should be aligned to 128 bytes");
+        assert_eq!(
+            aligned_ptr as usize % align,
+            0,
+            "Allocated pointer should be aligned to 128 bytes"
+        );
 
         assert_heap_invariants();
     }
@@ -462,15 +461,18 @@ fn test_alignment_with_heap_growth_create_new_block() {
         let new_tail = *TEST_ALLOCATOR.tail.get();
 
         assert_ne!(
-            new_tail,
-            initial_tail,
+            new_tail, initial_tail,
             "Tail should have moved (new block should have been created)"
         );
 
         assert!((*new_tail).is_free(), "New tail block should be free (after growth)");
 
         assert!(!aligned_ptr.is_null(), "Allocation failed unexpectedly");
-        assert_eq!(aligned_ptr as usize % align, 0, "Allocated pointer should be aligned to 128 bytes");
+        assert_eq!(
+            aligned_ptr as usize % align,
+            0,
+            "Allocated pointer should be aligned to 128 bytes"
+        );
 
         assert_heap_invariants();
     }
@@ -517,7 +519,10 @@ unsafe fn assert_heap_invariants() {
     loop {
         assert_eq!(current as usize % 8, 0, "Block address not properly aligned: {:p}", current);
 
-        assert!((*current).size() >= MIN_ALLOC_SIZE, "Block size must be greater than MIN_ALLOC_SIZE");
+        assert!(
+            (*current).size() >= MIN_ALLOC_SIZE,
+            "Block size must be greater than MIN_ALLOC_SIZE"
+        );
 
         assert!(current > last_block_addr, "Block addresses not strictly increasing");
 
@@ -525,8 +530,7 @@ unsafe fn assert_heap_invariants() {
         if next_ptr != *TEST_ALLOCATOR.heap_end.get() {
             let next_prev_ptr = (*next_ptr).prev();
             assert_eq!(
-                next_prev_ptr,
-                current,
+                next_prev_ptr, current,
                 "Next block's prev does not point back to current block"
             );
         }
@@ -535,14 +539,18 @@ unsafe fn assert_heap_invariants() {
         if !prev_ptr.is_null() {
             let prev_next_ptr = (*prev_ptr).next();
             assert_eq!(
-                prev_next_ptr,
-                current,
+                prev_next_ptr, current,
                 "Prev block's next does not point forward to current block"
             );
         }
 
         if !next_ptr.is_null() {
-            assert_eq!(next_ptr as *mut BlockHeader, ((*current).size() as usize + BLOCK_HEADER_SIZE + current as usize) as *mut BlockHeader, "Next block address does not match expected address based on current block size");
+            assert_eq!(
+                next_ptr as *mut BlockHeader,
+                ((*current).size() as usize + BLOCK_HEADER_SIZE + current as usize)
+                    as *mut BlockHeader,
+                "Next block address does not match expected address based on current block size"
+            );
         }
 
         last_block_addr = current;
@@ -556,27 +564,18 @@ unsafe fn assert_heap_invariants() {
 
     let tail_block = *TEST_ALLOCATOR.tail.get();
 
-    assert_eq!(
-        last_block_addr,
-        tail_block,
-        "Allocator tail does not point to last block in heap"
-    );
+    assert_eq!(last_block_addr, tail_block, "Allocator tail does not point to last block in heap");
 
     let mut free_current = *TEST_ALLOCATOR.free_head.get();
 
     while !free_current.is_null() {
-        assert!(
-            (*free_current).is_free(),
-            "Free block is marked used: {:p}",
-            free_current
-        );
+        assert!((*free_current).is_free(), "Free block is marked used: {:p}", free_current);
 
         let next_free_block = (*free_current).free_next();
         if !next_free_block.is_null() {
             let next_free_prev = (*next_free_block).free_prev();
             assert_eq!(
-                next_free_prev,
-                free_current,
+                next_free_prev, free_current,
                 "Next free block's free_prev does not point back to current free block"
             );
         }
@@ -585,8 +584,7 @@ unsafe fn assert_heap_invariants() {
         if !prev_free_block.is_null() {
             let prev_free_next = (*prev_free_block).free_next();
             assert_eq!(
-                prev_free_next,
-                free_current,
+                prev_free_next, free_current,
                 "Prev free block's free_next does not point forward to current free block"
             );
         }

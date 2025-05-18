@@ -1,12 +1,11 @@
 use core::alloc::{GlobalAlloc, Layout};
-use core::ptr::null_mut;
 use core::cell::UnsafeCell;
+use core::ptr::null_mut;
 
+use super::align_up;
+use super::block_header::{BlockHeader, BLOCK_HEADER_SIZE};
 use crate::kernel_memory_map;
 use crate::memory;
-
-use super::block_header::{BlockHeader, BLOCK_HEADER_SIZE};
-use super::align_up;
 
 pub const MIN_ALLOC_SIZE: usize = 16;
 pub const MIN_BLOCK_SIZE: usize = BLOCK_HEADER_SIZE + MIN_ALLOC_SIZE;
@@ -92,15 +91,15 @@ impl LinkedListAllocator {
     }
 
     unsafe fn insert_after(&self, this: *mut BlockHeader, new_block: *mut BlockHeader) {
-            let next = (*this).next();
+        let next = (*this).next();
 
-            if this != *self.tail.get() {
-                (*next).set_prev(new_block);
-            } else {
-                *self.tail.get() = new_block;
-            }
+        if this != *self.tail.get() {
+            (*next).set_prev(new_block);
+        } else {
+            *self.tail.get() = new_block;
+        }
 
-            (*new_block).set_prev(this);
+        (*new_block).set_prev(this);
     }
 
     unsafe fn remove_from_list(&self, this: *mut BlockHeader) {
@@ -112,7 +111,6 @@ impl LinkedListAllocator {
             (*next).set_prev(prev);
         } else {
             *self.tail.get() = prev;
-
         }
     }
 
@@ -150,7 +148,8 @@ impl LinkedListAllocator {
 
         if (*last).is_free() {
             (*last).add_size(actual_size);
-            let aligned_location = check_aligned_fit(last, size, align).expect("Failed to find aligned fit");
+            let aligned_location =
+                check_aligned_fit(last, size, align).expect("Failed to find aligned fit");
             return Some((last, aligned_location));
         } else {
             let this = new_heap as *mut BlockHeader;
@@ -160,12 +159,18 @@ impl LinkedListAllocator {
 
             self.append_to_list(this);
 
-            let aligned_location = check_aligned_fit(this, size, align).expect("Failed to find aligned fit");
+            let aligned_location =
+                check_aligned_fit(this, size, align).expect("Failed to find aligned fit");
             return Some((this, aligned_location));
         }
     }
 
-    unsafe fn split_block(&self, this: *mut BlockHeader, aligned_block: *mut BlockHeader, layout: Layout) -> *mut u8 {
+    unsafe fn split_block(
+        &self,
+        this: *mut BlockHeader,
+        aligned_block: *mut BlockHeader,
+        layout: Layout,
+    ) -> *mut u8 {
         if this == aligned_block {
             let total_needed = align_up(layout.size().max(MIN_ALLOC_SIZE), 8);
             let excess = (*this).size() - total_needed;
@@ -190,7 +195,9 @@ impl LinkedListAllocator {
             let this_size = (*this).size();
             let preceding_size = aligned_block as usize - (*this).alloc_area_start() as usize;
             let aligned_block_size = layout.size().max(MIN_BLOCK_SIZE as usize - BLOCK_HEADER_SIZE);
-            let excess = this_size - (preceding_size + BLOCK_HEADER_SIZE) - (aligned_block_size + BLOCK_HEADER_SIZE);
+            let excess = this_size
+                - (preceding_size + BLOCK_HEADER_SIZE)
+                - (aligned_block_size + BLOCK_HEADER_SIZE);
 
             (*this).set_size(preceding_size);
 
@@ -238,10 +245,7 @@ impl LinkedListAllocator {
     #[allow(dead_code)]
     pub unsafe fn dump_heap(&self) {
         print!("\n--- Heap Dump Start ---");
-        println!(" Head: {:?}, Free head: {:?}",
-            *self.head.get(),
-            *self.free_head.get(),
-        );
+        println!(" Head: {:?}, Free head: {:?}", *self.head.get(), *self.free_head.get(),);
 
         let mut current = *self.head.get();
         let mut index = 0;
@@ -255,12 +259,9 @@ impl LinkedListAllocator {
                 (*current).alloc_area_start() as usize + (*current).size(),
                 (*current).is_used(),
             );
+            println!("  Next: {:?}, Prev: {:?}", (*current).next(), (*current).prev(),);
             println!(
-                "  Next: {:?}, Prev: {:?}",
-                (*current).next(),
-                (*current).prev(),
-            );
-            println!("  Free Next: {:?}, Free Prev: {:?}",
+                "  Free Next: {:?}, Free Prev: {:?}",
                 (*current).free_next(),
                 (*current).free_prev(),
             );

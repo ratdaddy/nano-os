@@ -1,15 +1,15 @@
-use alloc::vec::Vec;
-use alloc::vec;
 use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
-use crate::kernel_allocator;
 use crate::dtb;
 use crate::initramfs::{self, Read};
+use crate::kernel_allocator;
 use crate::page_mapper;
-use crate::process_trampoline;
 use crate::process_main;
 use crate::process_memory_map;
+use crate::process_trampoline;
 
 extern "C" {
     pub fn trap_entry();
@@ -80,9 +80,12 @@ pub fn inspect_initramfs(start: *const u8) {
         println!("CPIO magic: {}", magic);
 
         // Grab more interesting fields
-        let namesize_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(start.add(94), 8));
-        let mode_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(start.add(14), 8));
-        let filesize_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(start.add(102), 8));
+        let namesize_str =
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(start.add(94), 8));
+        let mode_str =
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(start.add(14), 8));
+        let filesize_str =
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(start.add(102), 8));
 
         let namesize = usize::from_str_radix(namesize_str, 16).unwrap_or(0);
         let mode = u32::from_str_radix(mode_str, 16).unwrap_or(0);
@@ -128,7 +131,9 @@ struct Align128(u8);
 
 fn test_alloc1() {
     println!("\n*** Testing allocation ***");
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    unsafe {
+        kernel_allocator::ALLOCATOR.dump_heap();
+    }
     /*
     let _buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
     let mut v = Vec::new();
@@ -139,18 +144,26 @@ fn test_alloc1() {
     v.push(300);
     */
     let _buffer2: Box<[u8]> = vec![0u8; 109].into_boxed_slice();
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    unsafe {
+        kernel_allocator::ALLOCATOR.dump_heap();
+    }
     let _buffer3 = Box::new(Align128(255));
     //let _buffer2: Box<[u8]> = vec![0u8; 101].into_boxed_slice();
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    unsafe {
+        kernel_allocator::ALLOCATOR.dump_heap();
+    }
 }
 
 fn test_alloc2() {
     let mut v = Vec::new();
     v.push(42);
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    unsafe {
+        kernel_allocator::ALLOCATOR.dump_heap();
+    }
     let _buffer1: Box<[u8]> = vec![0u8; 16000].into_boxed_slice();
     let _buffer2: Box<[u8]> = vec![0u8; 4016].into_boxed_slice();
     let _buffer3: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
+    unsafe {
+        kernel_allocator::ALLOCATOR.dump_heap();
+    }
 }

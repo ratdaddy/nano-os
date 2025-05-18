@@ -1,10 +1,8 @@
-use alloc::vec::Vec;
-use alloc::string::String;
-use core::str::Utf8Error;
-
 use alloc::format;
-
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::mem::MaybeUninit;
+use core::str::Utf8Error;
 
 static mut FILES: MaybeUninit<Vec<FileEntry>> = MaybeUninit::uninit();
 
@@ -84,7 +82,7 @@ pub fn ifs_mount(initramfs: &'static [u8]) {
         pos = align_up(data_end, 4);
     }
 
-        unsafe {
+    unsafe {
         FILES.write(entries);
     }
 }
@@ -101,9 +99,5 @@ pub fn ifs_open(path: &str) -> Result<IfsHandle, &'static str> {
     let files = unsafe { &*FILES.as_ptr() };
     let file = files.iter().find(|f| f.path == path).ok_or("File not found")?;
 
-    Ok(IfsHandle {
-        data: file.data,
-        offset: 0,
-    })
+    Ok(IfsHandle { data: file.data, offset: 0 })
 }
-

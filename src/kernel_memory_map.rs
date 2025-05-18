@@ -46,10 +46,7 @@ pub fn init(memory: memory::Region) {
     switch_to_kernel_map();
 
     unsafe {
-        kernel_allocator::ALLOCATOR.init(
-            KERNEL_HEAP_START,
-            KERNEL_HEAP_SIZE,
-        );
+        kernel_allocator::ALLOCATOR.init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
     }
 }
 
@@ -194,7 +191,8 @@ fn map_kernel_stack() {
 fn map_and_initialize_kernel_heap() {
     println!(
         "Mapping kernel heap segment: virt: {:#x} - {:#x}",
-        KERNEL_HEAP_START, KERNEL_HEAP_END.load(Ordering::SeqCst)
+        KERNEL_HEAP_START,
+        KERNEL_HEAP_END.load(Ordering::SeqCst)
     );
 
     with_page_mapper(|mapper| {
@@ -273,16 +271,14 @@ pub fn switch_to_kernel_map() {
 
         lichee_clear_cache();
 
-        core::arch::asm!(
-            "sfence.vma zero, zero",
-            options(nostack)
-        );
+        core::arch::asm!("sfence.vma zero, zero", options(nostack));
     }
 
     let trap_frame = TRAP_FRAME as *mut trap::TrapFrame;
     unsafe {
         (*trap_frame).kernel_satp = satp_value;
-        (*trap_frame).is_lichee_rvnano = (dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano) as usize;
+        (*trap_frame).is_lichee_rvnano =
+            (dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano) as usize;
         println!("is_lichee_rvnano: {}", (*trap_frame).is_lichee_rvnano);
     }
 
@@ -345,10 +341,7 @@ pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
     let old_end = KERNEL_HEAP_END.load(Ordering::SeqCst);
     let new_end = old_end.checked_add(size)?;
 
-    println!(
-        "Growing kernel heap: virt: {:#x} - {:#x}",
-        old_end, new_end
-    );
+    println!("Growing kernel heap: virt: {:#x} - {:#x}", old_end, new_end);
 
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(

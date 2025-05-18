@@ -1,6 +1,6 @@
+use crate::kernel_main;
 use crate::kernel_memory_map::TRAP_FRAME;
 use crate::page_mapper;
-use crate::kernel_main;
 
 #[repr(C)]
 pub struct ProcessContext {

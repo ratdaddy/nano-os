@@ -5,7 +5,6 @@ core::arch::global_asm!(
     ".global trap_entry",
     "trap_entry:",
     "csrrw sp, sscratch, sp",
-
     //Save caller-saved registers
     "sd ra,  0(sp)",
     "sd gp, 16(sp)",
@@ -39,23 +38,17 @@ core::arch::global_asm!(
     "sd t4, 224(sp)",
     "sd t5, 232(sp)",
     "sd t6, 240(sp)",
-
     "ld t0, 280(sp)",
     "csrw satp, t0",
-
     "ld t0, 288(sp)",
     "beqz t0, 1f",
-
     ".long 0x0020000b",
     ".long 0x0190000b",
-
- "1: sfence.vma zero, zero",
+    "1: sfence.vma zero, zero",
     "ld sp, KERNEL_STACK_START",
-
     "csrr a0, scause",
     "csrr a1, stval",
     "call trap_handler",
-
     /*
     // Restore registers
     "ld a0, 0(sp)",
@@ -130,11 +123,11 @@ pub struct TrapFrame {
     pub t3: usize,
     pub t4: usize,
     pub t5: usize,
-    pub t6: usize, // 240
-    pub sepc: usize, // 248
-    pub sstatus: usize, // 256
-    pub stval: usize, // 264
-    pub scause: usize, // 272
-    pub kernel_satp: usize, // 280
+    pub t6: usize,               // 240
+    pub sepc: usize,             // 248
+    pub sstatus: usize,          // 256
+    pub stval: usize,            // 264
+    pub scause: usize,           // 272
+    pub kernel_satp: usize,      // 280
     pub is_lichee_rvnano: usize, // 288
 }

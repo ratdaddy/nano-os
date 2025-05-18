@@ -1,9 +1,9 @@
 use core::ptr::null_mut;
 
-#[cfg(test)]
-use crate::memory;
 #[cfg(not(test))]
 use crate::kernel_memory_map;
+#[cfg(test)]
+use crate::memory;
 
 pub const BLOCK_HEADER_SIZE: usize = size_of::<BlockHeader>();
 
@@ -31,9 +31,7 @@ impl BlockHeader {
 
     #[inline]
     pub fn alloc_area_start(&self) -> *mut u8 {
-        unsafe {
-            (self as *const _ as *mut u8).add(BLOCK_HEADER_SIZE)
-        }
+        unsafe { (self as *const _ as *mut u8).add(BLOCK_HEADER_SIZE) }
     }
 
     #[inline]
@@ -164,4 +162,3 @@ fn heap_start() -> usize {
 fn heap_start() -> usize {
     kernel_memory_map::KERNEL_HEAP_START
 }
-
