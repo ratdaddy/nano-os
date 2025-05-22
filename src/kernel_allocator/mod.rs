@@ -6,6 +6,7 @@ mod block_header;
 
 use allocator::LinkedListAllocator;
 
+#[cfg(not(test))]
 #[global_allocator]
 pub static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::new();
 

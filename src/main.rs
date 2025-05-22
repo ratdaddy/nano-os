@@ -18,6 +18,7 @@ mod console;
 
 mod dtb;
 mod initramfs;
+mod io;
 mod kernel_allocator;
 mod kernel_main;
 mod kernel_memory_map;
@@ -27,6 +28,7 @@ mod page_mapper;
 mod process_main;
 mod process_memory_map;
 mod process_trampoline;
+mod read_elf;
 mod test;
 mod trap;
 

@@ -1,39 +1,27 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV RISCV_PREFIX=/opt/riscv
+ENV RUSTUP_HOME=/opt/rustup
+ENV CARGO_HOME=/opt/cargo
+ENV PATH="$CARGO_HOME/bin:$PATH"
+ENV MUSL_TOOLCHAIN_DIR=/opt/musl-toolchain
 
-# Install dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    git \
-    curl \
-    ca-certificates \
-    texinfo \
-    libtool \
-    autoconf \
-    gawk \
-    bison \
-    flex \
-    python3 \
-    libexpat-dev \
-    libgmp-dev \
-    libmpc-dev \
-    libmpfr-dev \
-    libz-dev \
-    libisl-dev \
-    ninja-build \
-    cmake \
-    pkg-config \
+    curl build-essential git ca-certificates \
+    gcc g++ file xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone the riscv-gnu-toolchain repo with submodules
-RUN git clone --recursive https://github.com/riscv-collab/riscv-gnu-toolchain.git /build/riscv-gnu-toolchain
+# Download and install musl cross toolchain
+RUN curl -L https://musl.cc/riscv64-linux-musl-cross.tgz | tar -xz -C /opt && \
+    mv /opt/riscv64-linux-musl-cross $MUSL_TOOLCHAIN_DIR
 
-# Build the musl toolchain
-WORKDIR /build/riscv-gnu-toolchain
-RUN ./configure --prefix=$RISCV_PREFIX --with-arch=rv64gc --with-abi=lp64d --enable-multilib --with-system-libc=musl
-RUN make linux -j$(nproc)
+# Install Rust + nightly + rust-src
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly && \
+    rustup component add rust-src
 
-# Add to PATH
-ENV PATH="$RISCV_PREFIX/bin:$PATH"
+# Preinstall the musl target
+RUN rustup target add riscv64gc-unknown-linux-musl
+
+# Install important things
+RUN apt update -y && apt install -y vim

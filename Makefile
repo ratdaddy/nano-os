@@ -6,6 +6,7 @@ BOOT_SD := $(BUILD_DIR)/boot.sd
 BOOT_ITS := $(BUILD_DIR)/boot.its
 INITRAMFS := $(BUILD_DIR)/initramfs.cpio
 INITRAMFS_DIR := bootdata/initramfs
+INIT_ELF := prog_example/target/riscv64gc-unknown-linux-musl/release/prog_example
 
 #FEATURES := --features print_dtb
 FEATURES :=
@@ -16,7 +17,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs $(INIT_ELF)
 
 all: $(BOOT_SD)
 
@@ -39,11 +40,15 @@ copy: all
 
 initramfs: $(INITRAMFS)
 
-$(INITRAMFS): $(shell find $(INITRAMFS_DIR) -type f)
+$(INITRAMFS): $(shell find $(INITRAMFS_DIR)) $(INIT_ELF)
 	@echo "Creating initramfs.cpio..."
 	mkdir -p $(BUILD_DIR)
 	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)
+	cp $(INIT_ELF) $(BUILD_DIR)/initramfs
 	cd $(BUILD_DIR)/initramfs && find * | cpio -o --format=newc > ../initramfs.cpio
+
+$(INIT_ELF):
+	make -C prog_example
 
 run: initramfs
 	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
@@ -57,7 +62,7 @@ lint:
 format:
 	cargo fmt
 
-qemu-debug:
+qemu-debug: initramfs
 	cargo -Z build-std=core,alloc run -- -S -gdb tcp::1234
 
 gdb:

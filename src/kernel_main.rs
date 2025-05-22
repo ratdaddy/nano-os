@@ -4,12 +4,14 @@ use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
-use crate::initramfs::{self, Read};
+use crate::initramfs;
+use crate::io::Read;
 use crate::kernel_allocator;
 use crate::page_mapper;
 use crate::process_main;
 use crate::process_memory_map;
 use crate::process_trampoline;
+use crate::read_elf;
 
 extern "C" {
     pub fn trap_entry();
@@ -48,9 +50,26 @@ pub fn kernel_main() {
 
     println!("Contents of /etc/motd: {}", contents);
 
+    let mut handle = initramfs::ifs_open("/prog_example").unwrap();
+    let header = read_elf::read_elf64_header(&mut handle).unwrap();
+    println!("Reading ELF for /prog_example");
+    println!("Entry point:     {:#x}", header.e_entry);
+    println!("PH offset:       {:#x}", header.e_phoff);
+    println!("PH entry size:   {}", header.e_phentsize);
+    println!("PH count:        {}", header.e_phnum);
+
+    let program_headers = read_elf::read_program_headers(&mut handle, &header).unwrap();
+
+    for ph in &program_headers {
+        println!("Program header: type: {:#x} offset: {:#x} virt addr:{:#x} file size: {:#x} mem size: {:#x}",
+            ph.p_type, ph.p_offset, ph.p_vaddr, ph.p_filesz, ph.p_memsz);
+    }
+
+    println!();
+
     let fn_ptr = process_main::process_main;
     println!("Process main function pointer: {:#x}", fn_ptr as usize);
-    let mut context = &mut process_trampoline::ProcessContext {
+    let context = &mut process_trampoline::ProcessContext {
         user_sp: process_memory_map::PROCESS_STACK_START,
         user_pc: fn_ptr as usize,
         user_status: 1 << 5,
@@ -123,47 +142,4 @@ fn test_stack_allocation() {
 fn consume_array(arr: [u8; 10 * 1024]) {
     let avg = arr.iter().map(|&b| b as u32).sum::<u32>() / arr.len() as u32;
     println!("Average: {}", avg);
-}
-
-#[allow(dead_code)]
-#[repr(align(128))]
-struct Align128(u8);
-
-fn test_alloc1() {
-    println!("\n*** Testing allocation ***");
-    unsafe {
-        kernel_allocator::ALLOCATOR.dump_heap();
-    }
-    /*
-    let _buffer1: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
-    let mut v = Vec::new();
-    v.push(42);
-    v.push(100);
-    v.push(200);
-    v.push(300);
-    v.push(300);
-    */
-    let _buffer2: Box<[u8]> = vec![0u8; 109].into_boxed_slice();
-    unsafe {
-        kernel_allocator::ALLOCATOR.dump_heap();
-    }
-    let _buffer3 = Box::new(Align128(255));
-    //let _buffer2: Box<[u8]> = vec![0u8; 101].into_boxed_slice();
-    unsafe {
-        kernel_allocator::ALLOCATOR.dump_heap();
-    }
-}
-
-fn test_alloc2() {
-    let mut v = Vec::new();
-    v.push(42);
-    unsafe {
-        kernel_allocator::ALLOCATOR.dump_heap();
-    }
-    let _buffer1: Box<[u8]> = vec![0u8; 16000].into_boxed_slice();
-    let _buffer2: Box<[u8]> = vec![0u8; 4016].into_boxed_slice();
-    let _buffer3: Box<[u8]> = vec![0u8; 128].into_boxed_slice();
-    unsafe {
-        kernel_allocator::ALLOCATOR.dump_heap();
-    }
 }

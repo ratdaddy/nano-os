@@ -45,6 +45,7 @@ pub fn init(memory: memory::Region) {
 
     switch_to_kernel_map();
 
+    #[cfg(not(test))]
     unsafe {
         kernel_allocator::ALLOCATOR.init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
     }

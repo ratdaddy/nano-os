@@ -2,7 +2,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use core::str::Utf8Error;
+
+use crate::io;
 
 static mut FILES: MaybeUninit<Vec<FileEntry>> = MaybeUninit::uninit();
 
@@ -16,36 +17,36 @@ pub struct IfsHandle {
     offset: usize,
 }
 
-pub trait Read {
-    type Error;
-
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error>;
-
-    fn read_to_string(&mut self, out: &mut alloc::string::String) -> Result<(), Self::Error>
-    where
-        Self::Error: From<core::str::Utf8Error>,
-    {
-        let mut buf = [0u8; 256];
-        loop {
-            let len = self.read(&mut buf)?;
-            if len == 0 {
-                break;
-            }
-            out.push_str(core::str::from_utf8(&buf[..len])?);
-        }
-        Ok(())
-    }
-}
-
-impl Read for IfsHandle {
-    type Error = Utf8Error;
-
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+impl io::Read for IfsHandle {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
         let remaining = &self.data[self.offset..];
         let len = remaining.len().min(buf.len());
         buf[..len].copy_from_slice(&remaining[..len]);
         self.offset += len;
         Ok(len)
+    }
+}
+
+impl io::Seek for IfsHandle {
+    fn seek(&mut self, pos: io::SeekFrom) -> Result<(), io::Error> {
+        match pos {
+            io::SeekFrom::Start(offset) => {
+                if offset > self.data.len() {
+                    return Err(io::Error::UnexpectedEof);
+                }
+                self.offset = offset;
+            }
+            io::SeekFrom::Current(offset) => {
+                let new_offset = self.offset
+                    .checked_add_signed(offset)
+                    .ok_or_else(|| io::Error::InvalidInput)?;
+                if new_offset > self.data.len() {
+                    return Err(io::Error::UnexpectedEof);
+                }
+                self.offset = new_offset;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -100,4 +101,100 @@ pub fn ifs_open(path: &str) -> Result<IfsHandle, &'static str> {
     let file = files.iter().find(|f| f.path == path).ok_or("File not found")?;
 
     Ok(IfsHandle { data: file.data, offset: 0 })
+}
+
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+    use alloc::vec::Vec;
+    use alloc::boxed::Box;
+    use super::*;
+    use crate::io::*;
+
+    fn pad4(len: usize) -> usize {
+        (len + 3) & !3
+    }
+
+    fn make_test_image(name: &str, data: &[u8]) -> &'static [u8] {
+        //init_test_alloc();
+        let mut buf = Vec::new();
+        let name_cstr = format!("{}\0", name);
+        let namesize = name_cstr.len();
+        let filesize = data.len();
+
+        // Write minimal CPIO "newc" header (110 bytes total)
+        buf.extend_from_slice(b"070701"); // c_magic
+        buf.extend_from_slice(&[b'0'; 110 - 6]); // fill rest of header with '0's
+        buf[54..62].copy_from_slice(format!("{:08X}", filesize).as_bytes()); // c_filesize
+        buf[94..102].copy_from_slice(format!("{:08X}", namesize).as_bytes()); // c_namesize
+
+        buf.extend_from_slice(name_cstr.as_bytes());
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+
+        buf.extend_from_slice(data);
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+
+        // Append "TRAILER!!!" entry
+        buf.extend_from_slice(b"070701");
+        buf.extend_from_slice(&[b'0'; 110 - 6]);
+        let buf_len = buf.len();
+        buf[94 + buf_len - 110..102 + buf_len - 110]
+            .copy_from_slice(b"0000000B");
+        buf.extend_from_slice(b"TRAILER!!!\0");
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+
+        Box::leak(buf.into_boxed_slice())
+    }
+
+    #[test_case]
+    fn test_seek_and_read() {
+        println!("Testing seek and read...");
+
+        let data = b"hello world";
+        let image = make_test_image("test.txt", data);
+        ifs_mount(image);
+
+        let mut handle = ifs_open("/test.txt").unwrap();
+
+        let mut buf = [0u8; 5];
+        assert_eq!(handle.read(&mut buf).unwrap(), 5);
+        assert_eq!(&buf, b"hello");
+
+        handle.seek(io::SeekFrom::Start(6)).unwrap();
+        assert_eq!(handle.read(&mut buf).unwrap(), 5);
+        assert_eq!(&buf, b"world");
+    }
+
+    #[test_case]
+    fn test_seek_beyond_end() {
+        println!("Testing seek beyond end...");
+
+        let data = b"short";
+        let image = make_test_image("tiny.txt", data);
+        ifs_mount(image);
+
+        let mut handle = ifs_open("/tiny.txt").unwrap();
+        let result = handle.seek(io::SeekFrom::Start(1000));
+        assert!(matches!(result, Err(io::Error::UnexpectedEof)));
+    }
+
+    #[test_case]
+    fn test_seek_negative() {
+        println!("Testing seek negative...");
+
+        let data = b"12345678";
+        let image = make_test_image("back.txt", data);
+        ifs_mount(image);
+
+        let mut handle = ifs_open("/back.txt").unwrap();
+        let result = handle.seek(io::SeekFrom::Current(-10));
+        assert!(matches!(result, Err(io::Error::InvalidInput)));
+    }
 }
