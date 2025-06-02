@@ -16,6 +16,7 @@ mod trampoline;
 #[macro_use]
 mod console;
 
+mod cpu;
 mod dtb;
 mod initramfs;
 mod io;
@@ -25,7 +26,7 @@ mod kernel_memory_map;
 mod memory;
 mod page_allocator;
 mod page_mapper;
-mod process_main;
+mod process;
 mod process_memory_map;
 mod process_trampoline;
 mod read_elf;

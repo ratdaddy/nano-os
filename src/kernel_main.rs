@@ -1,17 +1,14 @@
-use alloc::boxed::Box;
-use alloc::vec;
-use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
 use crate::initramfs;
 use crate::io::Read;
-use crate::kernel_allocator;
-use crate::page_mapper;
-use crate::process_main;
+use crate::kernel_memory_map;
+use crate::process;
 use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::read_elf;
+use crate::trap;
 
 extern "C" {
     pub fn trap_entry();
@@ -31,10 +28,6 @@ pub fn kernel_main() {
 
     /*
     test_stack_allocation();
-
-    test_alloc1();
-    test_alloc2();
-    unsafe { kernel_allocator::ALLOCATOR.dump_heap(); }
     */
 
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
@@ -61,30 +54,40 @@ pub fn kernel_main() {
     let program_headers = read_elf::read_program_headers(&mut handle, &header).unwrap();
 
     for ph in &program_headers {
-        println!("Program header: type: {:#x} offset: {:#x} virt addr:{:#x} file size: {:#x} mem size: {:#x}",
-            ph.p_type, ph.p_offset, ph.p_vaddr, ph.p_filesz, ph.p_memsz);
+        println!("Program header: type: {:#x} offset: {:#x} virt addr:{:#x}-{:#x} file size: {:#x} mem size: {:#x}",
+            ph.p_type, ph.p_offset, ph.p_vaddr, ph.p_vaddr + ph.p_memsz, ph.p_filesz, ph.p_memsz);
     }
 
     println!();
 
-    let fn_ptr = process_main::process_main;
-    println!("Process main function pointer: {:#x}", fn_ptr as usize);
-    let context = &mut process_trampoline::ProcessContext {
-        user_sp: process_memory_map::PROCESS_STACK_START,
-        user_pc: fn_ptr as usize,
-        user_status: 1 << 5,
-        page_map: page_mapper::PageMapper::new(),
-    };
+    let mut handle = initramfs::ifs_open("/prog_example").unwrap();
 
-    process_memory_map::init(&mut context.page_map);
+    println!();
+
+    let context = &mut process::Context::new();
+
+    let trap_frame = kernel_memory_map::TRAP_FRAME as *mut trap::TrapFrame;
+    unsafe {
+        (*trap_frame).registers = context.registers;
+        (*trap_frame).process_satp = context.satp;
+    }
+    process_memory_map::init_from_elf(&mut handle, context);
+
+    println!("Process context initialized:");
+    println!("  User SP: {:#x}", context.registers.sp);
+    println!("  User PC: {:#x}", context.registers.pc);
 
     unsafe {
         println!("entering process trampoline");
         process_trampoline::enter_process(context);
     }
 
-    loop {
-        unsafe { core::arch::asm!("wfi") }
+    #[allow(unreachable_code)]
+    {
+        println!("entering kernel wait loop");
+        loop {
+            unsafe { core::arch::asm!("wfi") }
+        }
     }
 }
 
@@ -123,6 +126,7 @@ pub fn inspect_initramfs(start: *const u8) {
     }
 }
 
+#[allow(dead_code)]
 fn test_stack_allocation() {
     let data = [42u8; 10 * 1024];
 
@@ -139,6 +143,7 @@ fn test_stack_allocation() {
     println!("Sum: {}", sum);
 }
 
+#[allow(dead_code)]
 fn consume_array(arr: [u8; 10 * 1024]) {
     let avg = arr.iter().map(|&b| b as u32).sum::<u32>() / arr.len() as u32;
     println!("Average: {}", avg);

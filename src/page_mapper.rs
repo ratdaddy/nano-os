@@ -104,6 +104,10 @@ impl PageTableEntry {
         PageFlags { bits: self.0 & 0x3ff }
     }
 
+    pub fn set_user_flag(&mut self) {
+        self.0 |= PageFlags::USER.bits();
+    }
+
     pub fn raw(&self) -> usize {
         self.0
     }
@@ -153,6 +157,10 @@ impl PageMapper {
         }
 
         Self { root_table: root_ptr }
+    }
+
+    pub fn satp(&self) -> usize {
+        (8 << 60) | self.root_table as usize >> 12
     }
 
     pub fn map_range(

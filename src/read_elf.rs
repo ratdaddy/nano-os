@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use core::mem::size_of;
 
 use crate::io;
@@ -33,6 +35,20 @@ pub struct Elf64ProgramHeader {
     pub p_memsz: u64,
     pub p_align: u64,
 }
+
+pub const PT_NULL:        u32 = 0;          // Unused entry
+pub const PT_LOAD:        u32 = 1;          // Loadable segment
+pub const PT_DYNAMIC:     u32 = 2;          // Dynamic linking information
+pub const PT_INTERP:      u32 = 3;          // Path to interpreter
+pub const PT_NOTE:        u32 = 4;          // Auxiliary information
+pub const PT_SHLIB:       u32 = 5;          // Reserved, unspecified
+pub const PT_PHDR:        u32 = 6;          // Program header table itself
+pub const PT_TLS:         u32 = 7;          // Thread-local storage template
+
+// GNU extensions (typically used in statically linked binaries)
+pub const PT_GNU_EH_FRAME: u32 = 0x6474e550; // Exception handling info
+pub const PT_GNU_STACK:    u32 = 0x6474e551; // Stack flags (e.g., executable)
+pub const PT_GNU_RELRO:    u32 = 0x6474e552; // Read-only after relocation
 
 pub fn read_elf64_header<R: io::Read>(reader: &mut R) -> Result<Elf64Header, io::Error> {
     let mut buf = [0u8; size_of::<Elf64Header>()];

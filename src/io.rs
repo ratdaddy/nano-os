@@ -2,10 +2,10 @@
 pub enum Error {
     UnexpectedEof,
     InvalidUtf8,
-    IoFailure,
     InvalidInput,
 }
 
+#[allow(dead_code)]
 pub enum SeekFrom {
     Start(usize),
     Current(isize),

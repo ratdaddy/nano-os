@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use page_mapper::PageFlags;
 
 use crate::dtb;
+#[cfg(not(test))]
 use crate::kernel_allocator;
 use crate::memory;
 use crate::page_mapper;
@@ -253,13 +254,30 @@ fn map_last_l1_pte() {
     }
 }
 
+pub fn allocate_and_map_zeropage_range(start: usize, size: usize, flags: PageFlags) {
+    assert!(start < page_mapper::PageSize::Size2M.size(), "start address not in zero page");
+    assert!(start + size < page_mapper::PageSize::Size2M.size(), "end address not in zero page");
+
+    println!("Allocating and mapping zeropage range: virt: {:#x} - {:#x}", start, start + size);
+
+    with_page_mapper(|mapper| {
+        mapper.allocate_and_map_pages(
+            start,
+            size,
+            flags,
+        );
+    });
+
+    lichee_clear_cache();
+
+    unsafe {
+        core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
+    }
+}
+
 #[inline(always)]
 pub fn switch_to_kernel_map() {
-    let root_table = root_table();
-    println!("Switching to kernel map with root table: {:#x}", root_table as usize);
-
-    let ppn = root_table as usize >> 12;
-    let satp_value = (8 << 60) | ppn;
+    let satp_value = kernel_page_mapper_ref().satp();
 
     println!("Switching to memory map with SATP value: {:#x}", satp_value);
 
@@ -312,15 +330,7 @@ pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
         );
     });
 
-    if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
-        unsafe {
-            core::arch::asm!(
-                ".long 0x0020000b",
-                ".long 0x0190000b",
-                options(nostack, preserves_flags),
-            );
-        }
-    }
+    lichee_clear_cache();
 
     unsafe {
         core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
@@ -352,15 +362,7 @@ pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
         );
     });
 
-    if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
-        unsafe {
-            core::arch::asm!(
-                ".long 0x0020000b",
-                ".long 0x0190000b",
-                options(nostack, preserves_flags),
-            );
-        }
-    }
+    lichee_clear_cache();
 
     unsafe {
         core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
@@ -395,7 +397,7 @@ fn kernel_page_mapper_ref() -> &'static page_mapper::PageMapper {
     unsafe { KERNEL_PAGE_MAPPER.assume_init_ref() }
 }
 
-fn root_table() -> *const page_mapper::PageTable {
+pub fn root_table() -> *const page_mapper::PageTable {
     kernel_page_mapper_ref().root_table
 }
 
