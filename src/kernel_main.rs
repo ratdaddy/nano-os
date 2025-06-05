@@ -9,6 +9,7 @@ use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::read_elf;
 use crate::trap;
+use alloc::boxed::Box;
 
 extern "C" {
     pub fn trap_entry();
@@ -64,7 +65,7 @@ pub fn kernel_main() {
 
     println!();
 
-    let context = &mut process::Context::new();
+    let context = Box::leak(Box::new(process::Context::new()));
 
     let trap_frame = kernel_memory_map::TRAP_FRAME as *mut trap::TrapFrame;
     unsafe {
