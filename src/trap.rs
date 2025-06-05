@@ -1,5 +1,6 @@
 use crate::kernel_memory_map;
 use crate::cpu;
+use crate::syscall;
 
 core::arch::global_asm!(
     ".section .process_trampoline",
@@ -39,6 +40,15 @@ core::arch::global_asm!(
     "sd t4, 224(sp)",
     "sd t5, 232(sp)",
     "sd t6, 240(sp)",
+    "csrr t0, sepc",
+    "sd t0, 248(sp)",
+    "sd t0, 256(sp)",
+    "csrr t0, sstatus",
+    "sd t0, 264(sp)",
+    "csrr t0, stval",
+    "sd t0, 272(sp)",
+    "csrr t0, scause",
+    "sd t0, 280(sp)",
     "ld t0, 288(sp)",
     "csrw satp, t0",
     "ld t0, 304(sp)",
@@ -47,8 +57,6 @@ core::arch::global_asm!(
     ".long 0x0190000b",
     "1: sfence.vma zero, zero",
     "ld sp, KERNEL_STACK_START",
-    "csrr a0, scause",
-    "csrr a1, stval",
 
     // Handle trap
     "call trap_handler",
@@ -110,18 +118,19 @@ core::arch::global_asm!(
 
 #[no_mangle]
 #[link_section = ".process_trampoline"]
-extern "C" fn trap_handler(scause: usize, stval: usize) -> usize {
-    let sepc: usize;
-    unsafe {
-        core::arch::asm!("csrr {0}, sepc", out(reg) sepc);
-    }
+extern "C" fn trap_handler() -> usize {
+    let tf: &mut TrapFrame = unsafe { &mut *(kernel_memory_map::TRAP_FRAME as *mut TrapFrame) };
+    let sepc = tf.sepc;
+    let scause = tf.scause;
+    let stval = tf.stval;
 
-    println!("Trap handler called: scause: {:#x}, stval: {:#x}, sepc: {:#x}", scause, stval, sepc);
+    println!(
+        "Trap handler called: scause: {:#x}, stval: {:#x}, sepc: {:#x}",
+        scause, stval, sepc
+    );
     const USER_ECALL: usize = 8;
     const LOAD_PAGE_FAULT: usize = 13;
     const STORE_PAGE_FAULT: usize = 15;
-
-    let tf: &mut TrapFrame = unsafe { &mut *(kernel_memory_map::TRAP_FRAME as *mut TrapFrame) };
 
     match scause & 0xff {
         LOAD_PAGE_FAULT | STORE_PAGE_FAULT => {
@@ -129,36 +138,7 @@ extern "C" fn trap_handler(scause: usize, stval: usize) -> usize {
                 panic!("Unhandled page fault at address {:#x} (scause: {})", stval, scause);
             }
         }
-        USER_ECALL => {
-            let syscall_number = tf.registers.a7;
-            println!("User ecall: syscall number: {}", syscall_number);
-            match syscall_number {
-                73 | 134 | 132 | 135 => { // ppoll, rt_sigaction, sigaltstack, rt_sigprocmask
-                    tf.registers.a0 = 0;
-                }
-                96 => { // set_tid_address
-                    tf.registers.a0 = 1;
-                }
-                222 => { // mmap
-                    tf.registers.a0 = usize::MAX - 37 + 1;
-                }
-                214 => { // brk
-                    println!("brk syscall with addr {:#x}", tf.registers.a0);
-                    tf.registers.a0 = -12i64 as usize;
-                }
-                64 => { // write
-                    println!("write syscall with fd {}, buf {:#x}, count {}", tf.registers.a0, tf.registers.a1, tf.registers.a2);
-                    tf.registers.a0 = tf.registers.a2;
-                }
-                _ => {
-                    println!("Unhandled syscall");
-                    loop {
-                        unsafe { core::arch::asm!("wfi") }
-                    }
-                }
-            }
-            tf.registers.pc = sepc + 4;
-        }
+        USER_ECALL => syscall::handle(tf),
         _ => {
             panic!("Unhandled trap: scause: {:#x}, stval: {:#x}", scause, stval);
         }

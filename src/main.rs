@@ -32,6 +32,7 @@ mod process_trampoline;
 mod read_elf;
 mod test;
 mod trap;
+mod syscall;
 
 use core::panic::PanicInfo;
 
