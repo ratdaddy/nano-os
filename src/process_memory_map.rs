@@ -14,15 +14,20 @@ pub const PROCESS_STACK_START: usize = 0xffe0_0000;
 const PROCESS_STACK_STARTING_SIZE: usize = 0x4000;
 
 pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut process::Context) {
-    let page_map = &mut context.page_map;
+    let header = read_elf::read_elf64_header(elf_handle).unwrap();
 
-    context.registers.pc = load_elf(elf_handle).expect("Failed to load ELF file");
+    let base_vaddr = load_elf(elf_handle, &header, context).expect("Failed to load ELF file");
+
+    context.registers.pc += header.e_entry as usize;
+
+    let page_map = &mut context.page_map;
 
     unsafe {
         let zeropage_l1_entry = (*kernel_memory_map::root_table()).entries[0];
         let zeropage_l1_page_table = zeropage_l1_entry.addr() as *mut page_mapper::PageTable;
         switch_pages_to_user(&mut *zeropage_l1_page_table);
         (*page_map.root_table).entries[0].set(zeropage_l1_page_table as usize, PageFlags::VALID);
+        // TODO: unset kernel zeropage table entry
     }
 
     // Map first page of process stack
@@ -35,6 +40,37 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     let first_stack_page = page_allocator::alloc().expect("Failed to allocate process first stack page");
 
     let mut sp = first_stack_page + memory::PAGE_SIZE;
+
+    const AT_NULL: u64   = 0;
+    const AT_PHDR: u64   = 3;
+    const AT_PHENT: u64  = 4;
+    const AT_PHNUM: u64  = 5;
+    const AT_PAGESZ: u64 = 6;
+    const AT_BASE: u64   = 7;
+    const AT_SECURE: u64 = 23;
+
+    // Insert auxiliary vector
+    let phdr_addr = header.e_phoff + base_vaddr as u64;
+    let phnum = header.e_phnum;
+    let phent = header.e_phentsize;
+    let pagesz = memory::PAGE_SIZE as u64;
+
+    unsafe {
+        let mut push_aux = |key: u64, value: u64| {
+            sp -= 8;
+            ptr::write(sp as *mut u64, value);
+            sp -= 8;
+            ptr::write(sp as *mut u64, key);
+        };
+
+        push_aux(AT_NULL, 0);
+        push_aux(AT_SECURE, 0);
+        push_aux(AT_BASE, 0);
+        push_aux(AT_PAGESZ, pagesz);
+        push_aux(AT_PHENT, phent.into());
+        push_aux(AT_PHNUM, phnum.into());
+        push_aux(AT_PHDR, phdr_addr);
+    }
 
     unsafe {
         // envp NULL
@@ -78,8 +114,8 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     );
 
     page_map.allocate_and_map_pages(
-        process_stack_end,
-        PROCESS_STACK_STARTING_SIZE,
+        remaining_process_stack_end,
+        PROCESS_STACK_STARTING_SIZE - memory::PAGE_SIZE,
         PageFlags::READ
             | PageFlags::WRITE
             | PageFlags::ACCESSED
@@ -96,10 +132,8 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     );
 }
 
-fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R) -> Result<usize, &'static str> {
-    let header = read_elf::read_elf64_header(elf_handle).unwrap();
-
-    let entry_point = header.e_entry as usize;
+fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R, header: &read_elf::Elf64Header, context: &mut process::Context) -> Result<usize, &'static str> {
+    let mut base_vaddr = usize::MAX;
 
     let program_headers = read_elf::read_program_headers(elf_handle, &header).unwrap();
 
@@ -108,15 +142,20 @@ fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R) -> Result<usize, &'stati
             let offset = ph.p_offset as usize;
             let virt_addr = ph.p_vaddr as usize;
             let phys_addr = ph.p_paddr as usize;
-            let size = ph.p_memsz as usize;
+            let mem_size = ph.p_memsz as usize;
+            let file_size = ph.p_filesz as usize;
+
+            if offset == 0 {
+                base_vaddr = virt_addr;
+            }
 
             let virt_page_addr_start = memory::align_down(virt_addr);
-            let virt_page_addr_end = memory::align_up(virt_addr + size);
+            let virt_page_addr_end = memory::align_up(virt_addr + mem_size);
 
             println!(
                 "Mapping ELF segment: virt: {:#x} - {:#x} to phys: {:#x}",
                 virt_addr,
-                virt_addr + size,
+                virt_addr + mem_size,
                 phys_addr
             );
 
@@ -129,13 +168,18 @@ fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R) -> Result<usize, &'stati
             elf_handle.seek(io::SeekFrom::Start(offset))
                 .map_err(|_| "Failed to seek to program header offset")?;
 
-            let buffer = unsafe { slice::from_raw_parts_mut(virt_addr as *mut u8, size) };
+            let buffer = unsafe { slice::from_raw_parts_mut(virt_addr as *mut u8, file_size) };
             elf_handle.read_exact(buffer)
                 .map_err(|_| "Failed to read ELF segment data")?;
+
+            println!("Zeroing out {:#x} remaining bytes in ELF segment: virt: {:#x}", mem_size - file_size, virt_addr + file_size);
+            unsafe {
+                core::ptr::write_bytes((virt_addr + file_size) as *mut u8, 0, mem_size - file_size);
+            }
         }
     }
 
-    Ok(entry_point)
+    Ok(base_vaddr)
 }
 
 fn switch_pages_to_user(zeropage_l1_entry: &mut page_mapper::PageTable) {

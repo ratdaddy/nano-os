@@ -133,8 +133,22 @@ extern "C" fn trap_handler(scause: usize, stval: usize) -> usize {
             let syscall_number = tf.registers.a7;
             println!("User ecall: syscall number: {}", syscall_number);
             match syscall_number {
-                222 => {
+                73 | 134 | 132 | 135 => { // ppoll, rt_sigaction, sigaltstack, rt_sigprocmask
+                    tf.registers.a0 = 0;
+                }
+                96 => { // set_tid_address
+                    tf.registers.a0 = 1;
+                }
+                222 => { // mmap
                     tf.registers.a0 = usize::MAX - 37 + 1;
+                }
+                214 => { // brk
+                    println!("brk syscall with addr {:#x}", tf.registers.a0);
+                    tf.registers.a0 = -12i64 as usize;
+                }
+                64 => { // write
+                    println!("write syscall with fd {}, buf {:#x}, count {}", tf.registers.a0, tf.registers.a1, tf.registers.a2);
+                    tf.registers.a0 = tf.registers.a2;
                 }
                 _ => {
                     println!("Unhandled syscall");
