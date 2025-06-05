@@ -16,9 +16,12 @@ const PROCESS_STACK_STARTING_SIZE: usize = 0x4000;
 pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut process::Context) {
     let header = read_elf::read_elf64_header(elf_handle).unwrap();
 
-    let base_vaddr = load_elf(elf_handle, &header, context).expect("Failed to load ELF file");
+    let (base_vaddr, heap_start) =
+        load_elf(elf_handle, &header, context).expect("Failed to load ELF file");
 
     context.registers.pc += header.e_entry as usize;
+    context.heap_begin = heap_start;
+    context.heap_end = heap_start;
 
     let page_map = &mut context.page_map;
 
@@ -132,8 +135,13 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     );
 }
 
-fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R, header: &read_elf::Elf64Header, context: &mut process::Context) -> Result<usize, &'static str> {
+fn load_elf<R: io::Read + io::Seek>(
+    elf_handle: &mut R,
+    header: &read_elf::Elf64Header,
+    context: &mut process::Context,
+) -> Result<(usize, usize), &'static str> {
     let mut base_vaddr = usize::MAX;
+    let mut heap_start = 0usize;
 
     let program_headers = read_elf::read_program_headers(elf_handle, &header).unwrap();
 
@@ -151,6 +159,9 @@ fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R, header: &read_elf::Elf64
 
             let virt_page_addr_start = memory::align_down(virt_addr);
             let virt_page_addr_end = memory::align_up(virt_addr + mem_size);
+            if virt_page_addr_end > heap_start {
+                heap_start = virt_page_addr_end;
+            }
 
             println!(
                 "Mapping ELF segment: virt: {:#x} - {:#x} to phys: {:#x}",
@@ -179,7 +190,7 @@ fn load_elf<R: io::Read + io::Seek>(elf_handle: &mut R, header: &read_elf::Elf64
         }
     }
 
-    Ok(base_vaddr)
+    Ok((base_vaddr, heap_start))
 }
 
 fn switch_pages_to_user(zeropage_l1_entry: &mut page_mapper::PageTable) {
