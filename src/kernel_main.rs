@@ -9,7 +9,6 @@ use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::read_elf;
 use crate::trap;
-use alloc::boxed::Box;
 
 extern "C" {
     pub fn trap_entry();
@@ -17,6 +16,8 @@ extern "C" {
 
 pub fn kernel_main() {
     println!("In kernel_main");
+
+    process::init();
 
     // Could reclaim pages used in original page map and early boot stack here
 
@@ -65,7 +66,7 @@ pub fn kernel_main() {
 
     println!();
 
-    let context = Box::leak(Box::new(process::Context::new()));
+    let context = process::create();
 
     let trap_frame = kernel_memory_map::TRAP_FRAME as *mut trap::TrapFrame;
     unsafe {

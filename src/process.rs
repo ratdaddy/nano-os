@@ -1,5 +1,7 @@
 use crate::cpu;
 use crate::page_mapper;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 #[repr(C)]
 pub struct Context {
@@ -34,3 +36,21 @@ impl Context {
 }
 
 static mut CURRENT_CONTEXT: *mut Context = core::ptr::null_mut();
+static mut PROCESS_TABLE: Option<Vec<&'static mut Context>> = None;
+
+pub fn init() {
+    unsafe {
+        PROCESS_TABLE = Some(Vec::new());
+    }
+}
+
+pub fn create() -> &'static mut Context {
+    let context = Box::leak(Box::new(Context::new()));
+    unsafe {
+        if PROCESS_TABLE.is_none() {
+            PROCESS_TABLE = Some(Vec::new());
+        }
+        PROCESS_TABLE.as_mut().unwrap().push(context);
+    }
+    context
+}
