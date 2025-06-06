@@ -2,7 +2,7 @@ use crate::trap::TrapFrame;
 
 pub fn write(tf: &mut TrapFrame) {
     println!(
-        "write syscall with fd {}, buf {:#x}, count {}",
+        "[write] fd: {}, buf: {:#x}, count: {}",
         tf.registers.a0,
         tf.registers.a1,
         tf.registers.a2
