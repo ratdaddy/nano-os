@@ -4,7 +4,8 @@ use crate::process;
 
 #[no_mangle]
 #[link_section = ".process_trampoline"]
-pub unsafe fn enter_process(context: &process::Context) -> ! {
+pub unsafe fn enter_process(context: &mut process::Context) -> ! {
+    process::Context::set_current(context);
     println!("Switching to memory map with SATP value: {:#x}", context.satp);
     println!("User stack pointer: {:#x}", context.registers.sp);
     println!("User program counter: {:#x}", context.registers.pc);
