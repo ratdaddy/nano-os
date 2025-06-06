@@ -36,7 +36,7 @@ impl Context {
 }
 
 static mut CURRENT_CONTEXT: *mut Context = core::ptr::null_mut();
-static mut PROCESS_TABLE: Option<Vec<&'static mut Context>> = None;
+static mut PROCESS_TABLE: Option<Vec<*mut Context>> = None;
 
 pub fn init() {
     unsafe {
@@ -45,12 +45,13 @@ pub fn init() {
 }
 
 pub fn create() -> &'static mut Context {
-    let context = Box::leak(Box::new(Context::new()));
+    let boxed = Box::new(Context::new());
+    let ptr: *mut Context = Box::leak(boxed);
     unsafe {
         if PROCESS_TABLE.is_none() {
             PROCESS_TABLE = Some(Vec::new());
         }
-        PROCESS_TABLE.as_mut().unwrap().push(context);
+        PROCESS_TABLE.as_mut().unwrap().push(ptr);
     }
-    context
+    unsafe { &mut *ptr }
 }
