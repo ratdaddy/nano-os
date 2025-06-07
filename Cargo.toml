@@ -2,9 +2,11 @@
 name = "nano-os"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 heapless = "0.8.0"
+cpu_types = { path = "cpu_types" }
 
 [profile.dev]
 lto = true
@@ -24,3 +26,7 @@ path = "src/main.rs"
 [features]
 print_dtb = []
 page_allocator_debug = []
+
+[build-dependencies]
+memoffset = "0.9"
+cpu_types = { path = "cpu_types" }

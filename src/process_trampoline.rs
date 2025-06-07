@@ -1,6 +1,7 @@
 use crate::kernel_main;
 use crate::kernel_memory_map::TRAP_FRAME;
 use crate::process;
+use crate::trap::TF_IS_LICHEE_RVNANO;
 
 #[no_mangle]
 #[link_section = ".process_trampoline"]
@@ -16,7 +17,7 @@ pub unsafe fn enter_process(context: &mut process::Context) -> ! {
         "csrw sscratch, t0",       // Write t0 into sscratch
         "csrw stvec, {trap_entry}",
         "csrw satp, {satp_value}",
-        "ld t0, 304(t0)",
+        "ld t0, {offset}(t0)",
         "beqz t0, 1f",
         ".long 0x0020000b",
         ".long 0x0190000b",
@@ -31,6 +32,7 @@ pub unsafe fn enter_process(context: &mut process::Context) -> ! {
         user_pc = in(reg) context.registers.pc,
         user_sp = in(reg) context.registers.sp,
         trap_frame = sym TRAP_FRAME,
+        offset = const TF_IS_LICHEE_RVNANO,
 
         options(nostack)
     );

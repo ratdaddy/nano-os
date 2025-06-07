@@ -1,11 +1,11 @@
-use crate::cpu;
 use crate::page_mapper;
+use cpu_types::Registers;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 #[repr(C)]
 pub struct Context {
-    pub registers: cpu::Registers,
+    pub registers: Registers,
     pub satp: usize,
     pub page_map: page_mapper::PageMapper,
     pub heap_begin: usize,
@@ -15,7 +15,7 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Self {
-        let registers = cpu::Registers::new();
+        let registers = Registers::new();
         let page_map = page_mapper::PageMapper::new();
         let satp = page_map.satp();
         Context {

@@ -16,7 +16,6 @@ mod trampoline;
 #[macro_use]
 mod console;
 
-mod cpu;
 mod dtb;
 mod initramfs;
 mod io;

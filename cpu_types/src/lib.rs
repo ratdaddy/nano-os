@@ -1,3 +1,5 @@
+#![no_std]
+
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
 pub struct Registers {
@@ -32,11 +34,24 @@ pub struct Registers {
     pub t4: usize,
     pub t5: usize,
     pub t6: usize,
-    pub pc: usize, // 248
+    pub pc: usize,
 }
 
 impl Registers {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct TrapFrame {
+    pub registers: Registers,
+    pub sepc: usize,
+    pub sstatus: usize,
+    pub stval: usize,
+    pub scause: usize,
+    pub kernel_satp: usize,
+    pub process_satp: usize,
+    pub is_lichee_rvnano: usize,
 }
