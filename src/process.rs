@@ -1,5 +1,6 @@
 use crate::cpu;
 use crate::page_mapper;
+use crate::process_memory_map;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -24,7 +25,7 @@ impl Context {
             page_map,
             heap_begin: 0,
             heap_end: 0,
-            mmap_next: crate::process_memory_map::PROCESS_MMAP_START,
+            mmap_next: process_memory_map::PROCESS_MMAP_START,
         }
     }
 

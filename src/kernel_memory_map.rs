@@ -36,6 +36,36 @@ pub fn init(memory: memory::Region) {
 
     identity_map_memory(memory);
 
+    println!("Mapping MMIO at {:#x} - {:#x}", 0x1000_0000, 0x1000_0000 + memory::PAGE_SIZE);
+
+    with_page_mapper(|mapper| {
+        mapper.map_range(
+            0x1000_0000,
+            0x1000_0000,
+            0x1000_0000 + memory::PAGE_SIZE,
+            PageFlags::READ
+                | PageFlags::WRITE
+                | PageFlags::ACCESSED
+                | PageFlags::DIRTY,
+            page_mapper::PageSize::Size4K,
+        );
+    });
+
+    println!("Mapping MMIO at {:#x} - {:#x}", 0x414_0000, 0x414_0000 + memory::PAGE_SIZE);
+
+    with_page_mapper(|mapper| {
+        mapper.map_range(
+            0x414_0000,
+            0x414_0000,
+            0x414_0000 + memory::PAGE_SIZE,
+            PageFlags::READ
+                | PageFlags::WRITE
+                | PageFlags::ACCESSED
+                | PageFlags::DIRTY,
+            page_mapper::PageSize::Size4K,
+        );
+    });
+
     map_kernel_segments();
 
     map_kernel_stack();

@@ -33,6 +33,7 @@ mod read_elf;
 mod test;
 mod trap;
 mod syscall;
+mod uart;
 
 use core::panic::PanicInfo;
 

@@ -9,6 +9,7 @@ use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::read_elf;
 use crate::trap;
+use crate::uart;
 
 extern "C" {
     pub fn trap_entry();
@@ -28,6 +29,7 @@ pub fn kernel_main() {
         );
     }
 
+    uart_demo();
     /*
     test_stack_allocation();
     */
@@ -91,6 +93,30 @@ pub fn kernel_main() {
             unsafe { core::arch::asm!("wfi") }
         }
     }
+}
+
+// For QEMU `virt` machine with ns16550a UART
+const QEMU_UART: uart::UartConfig = uart::UartConfig {
+    base: 0x1000_0000,
+    reg_shift: 0,
+    reg_io_width: 1,
+};
+
+// For NanoKVM's dw-apb-uart at serial@04140000
+const NANO_UART: uart::UartConfig = uart::UartConfig {
+    base: 0x0414_0000,
+    reg_shift: 2,
+    reg_io_width: 4,
+};
+
+pub fn uart_demo() {
+    let uart = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        uart::Uart::new(NANO_UART)
+    } else {
+        uart::Uart::new(QEMU_UART)
+    };
+
+    uart.write_str("Direct write to uart\r\n");
 }
 
 pub fn inspect_initramfs(start: *const u8) {
