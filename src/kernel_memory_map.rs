@@ -8,7 +8,6 @@ use crate::dtb;
 use crate::kernel_allocator;
 use crate::memory;
 use crate::page_mapper;
-use crate::trap;
 
 const HIGH_HALF_PHYS_START: usize = 0xffff_ffff_0000_0000;
 
@@ -20,7 +19,7 @@ static mut CURRENT_KERNEL_STACK_END: usize = 0;
 const KERNEL_STACK_END: usize = KERNEL_STACK_START - 0x20_0000;
 
 #[no_mangle]
-pub static TRAP_FRAME: usize = HIGH_HALF_PHYS_START + 0xffe0_0000;
+pub static TRAMPOLINE_TRAP_FRAME: usize = HIGH_HALF_PHYS_START + 0xffe0_0000;
 const TRAP_FRAME_SIZE: usize = 0x1000;
 
 pub static mut LAST_L1_PTE: AtomicUsize = AtomicUsize::new(0);
@@ -263,21 +262,23 @@ fn map_last_l1_pte() {
         );
     });
 
-    // Map the high half kernel trap frame segment
+
+    // Map the trampoline trap frame segment
     println!(
-        "Mapping kernel trap trap segment: virt: {:#x} - {:#x}",
-        TRAP_FRAME,
-        TRAP_FRAME + TRAP_FRAME_SIZE,
+        "Mapping trampoline trap frame segment: virt: {:#x} - {:#x}",
+        TRAMPOLINE_TRAP_FRAME,
+        TRAMPOLINE_TRAP_FRAME + TRAP_FRAME_SIZE,
     );
 
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
-            TRAP_FRAME,
+            TRAMPOLINE_TRAP_FRAME,
             TRAP_FRAME_SIZE,
             PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
         );
     });
-    let last_l1_pte = kernel_page_mapper_ref().l1_page_table_from_phys(TRAP_FRAME);
+
+    let last_l1_pte = kernel_page_mapper_ref().l1_page_table_from_phys(TRAMPOLINE_TRAP_FRAME);
     println!("mapped last l1 pte, pte is: {:#x}", last_l1_pte as usize);
     unsafe {
         LAST_L1_PTE.store(last_l1_pte as usize, Ordering::SeqCst);
@@ -323,12 +324,11 @@ pub fn switch_to_kernel_map() {
         core::arch::asm!("sfence.vma zero, zero", options(nostack));
     }
 
-    let trap_frame = TRAP_FRAME as *mut trap::TrapFrame;
+    let tramp_trap_frame = TRAMPOLINE_TRAP_FRAME as *mut types::TrampolineTrapFrame;
     unsafe {
-        (*trap_frame).kernel_satp = satp_value;
-        (*trap_frame).is_lichee_rvnano =
+        (*tramp_trap_frame).kernel_satp = satp_value;
+        (*tramp_trap_frame).is_lichee_rvnano =
             (dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano) as usize;
-        println!("is_lichee_rvnano: {}", (*trap_frame).is_lichee_rvnano);
     }
 
     println!("Switched to kernel map");

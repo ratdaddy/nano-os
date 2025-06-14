@@ -3,12 +3,10 @@ use core::sync::atomic::Ordering;
 use crate::dtb;
 use crate::initramfs;
 use crate::io::Read;
-use crate::kernel_memory_map;
 use crate::process;
 use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::read_elf;
-use crate::trap;
 use crate::uart;
 
 extern "C" {
@@ -70,19 +68,12 @@ pub fn kernel_main() {
 
     let context = process::create();
 
-    let trap_frame = kernel_memory_map::TRAP_FRAME as *mut trap::TrapFrame;
-    unsafe {
-        (*trap_frame).registers = context.registers;
-        (*trap_frame).process_satp = context.satp;
-    }
     process_memory_map::init_from_elf(&mut handle, context);
 
-    println!("Process context initialized:");
-    println!("  User SP: {:#x}", context.registers.sp);
-    println!("  User PC: {:#x}", context.registers.pc);
+    println!("Process context initialized");
 
     unsafe {
-        println!("entering process trampoline");
+        println!("Entering process trampoline");
         process_trampoline::enter_process(context);
     }
 

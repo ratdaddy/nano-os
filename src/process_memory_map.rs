@@ -20,8 +20,8 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     let (base_vaddr, heap_start) =
         load_elf(elf_handle, &header).expect("Failed to load ELF file");
 
-    context.registers.pc += header.e_entry as usize;
-    println!("setting heap address to {:#x} in context at {:#x}", heap_start, context as *const _ as usize);
+    context.trap_frame.pc = header.e_entry as usize;
+    println!("Setting heap address to {:#x} in context at {:#x}", heap_start, context as *const _ as usize);
     context.heap_begin = heap_start;
     context.heap_end = heap_start;
 
@@ -89,15 +89,15 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
         // dummy argv[0] pointer (could be pointer to some string, here just zero)
         sp -= mem::size_of::<u64>();
         ptr::write(sp as *mut u64, 0);
-        context.registers.a1 = 0;
+        context.trap_frame.registers.a1 = 0;
 
         // argc = 1
         sp -= mem::size_of::<u64>();
         ptr::write(sp as *mut u64, 1);
-        context.registers.a0 = 1;
+        context.trap_frame.registers.a0 = 1;
     }
 
-    context.registers.sp = PROCESS_STACK_START - (first_stack_page + memory::PAGE_SIZE - sp);
+    context.trap_frame.registers.sp = PROCESS_STACK_START - (first_stack_page + memory::PAGE_SIZE - sp);
 
     page_map.map_range(
         process_stack_end,
@@ -132,7 +132,7 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     let last_l1_pte = unsafe { kernel_memory_map::LAST_L1_PTE.load(Ordering::Relaxed) };
 
     page_map.set_l1_page_table_for_phys(
-        kernel_memory_map::TRAP_FRAME,
+        kernel_memory_map::TRAMPOLINE_TRAP_FRAME,
         last_l1_pte as *mut page_mapper::PageTable,
     );
 }
@@ -161,7 +161,6 @@ fn load_elf<R: io::Read + io::Seek>(
             let virt_page_addr_start = memory::align_down(virt_addr);
             let virt_page_addr_end = memory::align_up(virt_addr + mem_size);
             if virt_page_addr_end > heap_start {
-                println!("Updating heap start from {:#x} to {:#x}", heap_start, virt_page_addr_end);
                 heap_start = virt_page_addr_end;
             }
 

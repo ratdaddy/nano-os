@@ -1,6 +1,18 @@
+#![no_std]
+
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
-pub struct Registers {
+pub struct TrampolineTrapFrame {
+    pub user_sp: usize,
+    pub t0: usize,
+    pub kernel_satp: usize,
+    pub is_lichee_rvnano: usize,
+    pub kernel_sp: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct GpRegisters {
     pub ra: usize,
     pub sp: usize,
     pub gp: usize,
@@ -32,11 +44,17 @@ pub struct Registers {
     pub t4: usize,
     pub t5: usize,
     pub t6: usize,
-    pub pc: usize, // 248
 }
 
-impl Registers {
-    pub fn new() -> Self {
-        Self::default()
-    }
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ProcessTrapFrame
+{
+    pub registers: GpRegisters,
+    pub pc: usize,
+    pub sepc: usize,
+    pub sstatus: usize,
+    pub stval: usize,
+    pub scause: usize,
+    pub satp: usize,
 }

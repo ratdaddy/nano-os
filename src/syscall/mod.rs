@@ -9,15 +9,13 @@ mod memory;
 mod process;
 mod signal;
 
-use crate::trap::TrapFrame;
-
 /// Handle a syscall coming from user mode.
 ///
 /// The trap frame contains the saved registers from the trapped
 /// process.  All syscall handlers must update the
 /// return value in `a0` and advance the program counter past the
 /// `ecall` instruction.
-pub fn handle(tf: &mut TrapFrame) {
+pub fn handle(tf: &mut types::ProcessTrapFrame) {
     let syscall_number = tf.registers.a7;
     println!("User ecall: syscall number: {}", syscall_number);
     match syscall_number {
@@ -36,5 +34,5 @@ pub fn handle(tf: &mut TrapFrame) {
     }
 
     // Advance past the trapping instruction.
-    tf.registers.pc = tf.sepc + 4;
+    tf.pc = tf.sepc + 4;
 }

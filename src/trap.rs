@@ -1,125 +1,143 @@
 use crate::kernel_memory_map;
-use crate::cpu;
 use crate::syscall;
 
 core::arch::global_asm!(
     ".section .process_trampoline",
     ".global trap_entry",
     "trap_entry:",
+    // Swap sp with trampoline trap frame pointer
     "csrrw sp, sscratch, sp",
-    //Save caller-saved registers
-    "sd ra,  0(sp)",
-    "sd gp, 16(sp)",
-    "sd tp, 24(sp)",
-    "sd t0, 32(sp)",
+    // Save t0
+    "sd t0, TTF_T0(sp)",
+    // Save sp
     "csrr t0, sscratch",
-    "sd t0, 8(sp)",
-    "sd t1, 40(sp)",
-    "sd t2, 48(sp)",
-    "sd s0, 56(sp)",
-    "sd s1, 64(sp)",
-    "sd a0, 72(sp)",
-    "sd a1, 80(sp)",
-    "sd a2, 88(sp)",
-    "sd a3, 96(sp)",
-    "sd a4, 104(sp)",
-    "sd a5, 112(sp)",
-    "sd a6, 120(sp)",
-    "sd a7, 128(sp)",
-    "sd s2, 136(sp)",
-    "sd s3, 144(sp)",
-    "sd s4, 152(sp)",
-    "sd s5, 160(sp)",
-    "sd s6, 168(sp)",
-    "sd s7, 176(sp)",
-    "sd s8, 184(sp)",
-    "sd s9, 192(sp)",
-    "sd s10, 200(sp)",
-    "sd s11, 208(sp)",
-    "sd t3, 216(sp)",
-    "sd t4, 224(sp)",
-    "sd t5, 232(sp)",
-    "sd t6, 240(sp)",
-    "csrr t0, sepc",
-    "sd t0, 248(sp)",
-    "sd t0, 256(sp)",
-    "csrr t0, sstatus",
-    "sd t0, 264(sp)",
-    "csrr t0, stval",
-    "sd t0, 272(sp)",
-    "csrr t0, scause",
-    "sd t0, 280(sp)",
-    "ld t0, 288(sp)",
+    "sd t0, TTF_USER_SP(sp)",
+    // Put trampoline trap frame pointer back in sscratch
+    "csrw sscratch, sp",
+    // Set kernel mmap
+    "ld t0, TTF_KERNEL_SATP(sp)",
     "csrw satp, t0",
-    "ld t0, 304(sp)",
+    // Clear caches
+    "ld t0, TTF_IS_LICHEE_RVNANO(sp)",
     "beqz t0, 1f",
     ".long 0x0020000b",
     ".long 0x0190000b",
     "1: sfence.vma zero, zero",
-    "ld sp, KERNEL_STACK_START",
+    // Set kernel stack pointer but save trampoline trap frame in t0
+    "mv t0, sp",
+    "ld sp, TTF_KERNEL_SP(sp)",
+    // save process sp and t0 on process trap frame
+    "sd t1, PTF_T1(sp)",
+    "ld t1, TTF_USER_SP(t0)",
+    "sd t1, PTF_SP(sp)",
+    "ld t1, TTF_T0(t0)",
+    "sd t1, PTF_T0(sp)",
+    // Save general purpose registers
+    "sd ra, PTF_RA(sp)",
+    "sd gp, PTF_GP(sp)",
+    "sd tp, PTF_TP(sp)",
+    "sd t2, PTF_T2(sp)",
+    "sd s0, PTF_S0(sp)",
+    "sd s1, PTF_S1(sp)",
+    "sd a0, PTF_A0(sp)",
+    "sd a1, PTF_A1(sp)",
+    "sd a2, PTF_A2(sp)",
+    "sd a3, PTF_A3(sp)",
+    "sd a4, PTF_A4(sp)",
+    "sd a5, PTF_A5(sp)",
+    "sd a6, PTF_A6(sp)",
+    "sd a7, PTF_A7(sp)",
+    "sd s2, PTF_S2(sp)",
+    "sd s3, PTF_S3(sp)",
+    "sd s4, PTF_S4(sp)",
+    "sd s5, PTF_S5(sp)",
+    "sd s6, PTF_S6(sp)",
+    "sd s7, PTF_S7(sp)",
+    "sd s8, PTF_S8(sp)",
+    "sd s9, PTF_S9(sp)",
+    "sd s10, PTF_S10(sp)",
+    "sd s11, PTF_S11(sp)",
+    "sd t3, PTF_T3(sp)",
+    "sd t4, PTF_T4(sp)",
+    "sd t5, PTF_T5(sp)",
+    "sd t6, PTF_T6(sp)",
+    // Save sepc
+    "csrr t0, sepc",
+    "sd t0, PTF_SEPC(sp)",
+    // Save scause
+    "csrr t0, scause",
+    "sd t0, PTF_SCAUSE(sp)",
+    // save stval
+    "csrr t0, stval",
+    "sd t0, PTF_STVAL(sp)",
+    // Save sstatus
+    "csrr t0, sstatus",
+    "sd t0, PTF_SSTATUS(sp)",
+    // set process trap frame as argument to trap handler
+    "mv a0, sp",
 
     // Handle trap
     "call trap_handler",
 
+    // set sp to process trap frame
+    "mv sp, a0",
     // Restore registers
-    "mv t0, a0",
-
-    "ld ra,0(t0)",
-    "ld sp,8(t0)",
-    "ld gp,16(t0)",
-    "ld tp,24(t0)",
-    // skip t0 & t1 for now
-    "ld t2,48(t0)",
-    "ld s0,56(t0)",
-    "ld s1,64(t0)",
-    "ld a0,72(t0)",
-    "ld a1,80(t0)",
-    "ld a2,88(t0)",
-    "ld a3,96(t0)",
-    "ld a4,104(t0)",
-    "ld a5,112(t0)",
-    "ld a6,120(t0)",
-    "ld a7,128(t0)",
-    "ld s2,136(t0)",
-    "ld s3,144(t0)",
-    "ld s4,152(t0)",
-    "ld s5,160(t0)",
-    "ld s6,168(t0)",
-    "ld s7,176(t0)",
-    "ld s8,184(t0)",
-    "ld s9,192(t0)",
-    "ld s10,200(t0)",
-    "ld s11,208(t0)",
-    "ld t3,216(t0)",
-    "ld t4,224(t0)",
-    "ld t5,232(t0)",
-    "ld t6,240(t0)",
-
-    "ld t1,248(t0)",
-    "csrw sepc,t1",
-    "ld t1,264(t0)",
-    "csrw sstatus,t1",
-
-    "csrw sscratch,t0",
-
-    "ld t1, 296(t0)",
-    "csrw satp, t1",
-    "ld t1, 304(t0)",
-    "beqz t1, 1f",
+    "ld ra, PTF_RA(sp)",
+    "ld gp, PTF_GP(sp)",
+    "ld tp, PTF_TP(sp)",
+    "ld t1, PTF_T1(sp)",
+    "ld t2, PTF_T2(sp)",
+    "ld s0, PTF_S0(sp)",
+    "ld s1, PTF_S1(sp)",
+    "ld a0, PTF_A0(sp)",
+    "ld a1, PTF_A1(sp)",
+    "ld a2, PTF_A2(sp)",
+    "ld a3, PTF_A3(sp)",
+    "ld a4, PTF_A4(sp)",
+    "ld a5, PTF_A5(sp)",
+    "ld a6, PTF_A6(sp)",
+    "ld a7, PTF_A7(sp)",
+    "ld s2, PTF_S2(sp)",
+    "ld s3, PTF_S3(sp)",
+    "ld s4, PTF_S4(sp)",
+    "ld s5, PTF_S5(sp)",
+    "ld s6, PTF_S6(sp)",
+    "ld s7, PTF_S7(sp)",
+    "ld s8, PTF_S8(sp)",
+    "ld s9, PTF_S9(sp)",
+    "ld s10, PTF_S10(sp)",
+    "ld s11, PTF_S11(sp)",
+    "ld t3, PTF_T3(sp)",
+    "ld t4, PTF_T4(sp)",
+    "ld t5, PTF_T5(sp)",
+    "ld t6, PTF_T6(sp)",
+    // set trap return address and status
+    "ld t0, PTF_PC(sp)",
+    "csrw sepc, t0",
+    "ld t0, PTF_SSTATUS(sp)",
+    "csrw sstatus, t0",
+    // change back to process mmap
+    "ld t0, PTF_SATP(sp)",
+    "csrw satp, t0",
+    // load trampoline stack frame back into sp
+    "csrr sp, sscratch",
+    // clear cache
+    "ld t0, TTF_IS_LICHEE_RVNANO(sp)",
+    "beqz t0, 1f",
     ".long 0x0020000b",
     ".long 0x0190000b",
     "1: sfence.vma zero, zero",
+    // Restore sp, t0
+    "ld t0, TTF_T0(sp)",
+    "ld sp, TTF_USER_SP(sp)",
 
-    "ld t1,40(t0)",
-    "ld t0,32(t0)",
-
+    // return from trap
     "sret",
 );
 
 #[no_mangle]
 #[link_section = ".process_trampoline"]
-extern "C" fn trap_handler() -> usize {
-    let tf: &mut TrapFrame = unsafe { &mut *(kernel_memory_map::TRAP_FRAME as *mut TrapFrame) };
+extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
     let sepc = tf.sepc;
     let scause = tf.scause;
     let stval = tf.stval;
@@ -144,17 +162,5 @@ extern "C" fn trap_handler() -> usize {
         }
     }
 
-    tf as *mut TrapFrame as usize
-}
-
-#[repr(C)]
-pub struct TrapFrame {
-    pub registers: cpu::Registers,
-    pub sepc: usize,             // 256
-    pub sstatus: usize,          // 264
-    pub stval: usize,            // 272
-    pub scause: usize,           // 280
-    pub kernel_satp: usize,      // 288
-    pub process_satp: usize,     // 296
-    pub is_lichee_rvnano: usize, // 304
+    tf as *const _ as usize
 }

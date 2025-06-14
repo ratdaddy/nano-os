@@ -1,6 +1,4 @@
-use crate::trap::TrapFrame;
-
-pub fn write(tf: &mut TrapFrame) {
+pub fn write(tf: &mut types::ProcessTrapFrame) {
     println!(
         "[write] fd: {}, buf: {:#x}, count: {}",
         tf.registers.a0,

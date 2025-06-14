@@ -1,31 +1,39 @@
-use crate::cpu;
 use crate::page_mapper;
 use crate::process_memory_map;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::mem;
+use core::ptr::addr_of_mut;
 
 #[repr(C)]
 pub struct Context {
-    pub registers: cpu::Registers,
-    pub satp: usize,
     pub page_map: page_mapper::PageMapper,
+    pub satp: usize,
     pub heap_begin: usize,
     pub heap_end: usize,
     pub mmap_next: usize,
+    pub trap_frame: &'static mut types::ProcessTrapFrame,
+    pub kernel_stack: [u8; 8192],
 }
 
 impl Context {
-    pub fn new() -> Self {
-        let registers = cpu::Registers::new();
-        let page_map = page_mapper::PageMapper::new();
-        let satp = page_map.satp();
-        Context {
-            registers,
-            satp,
-            page_map,
-            heap_begin: 0,
-            heap_end: 0,
-            mmap_next: process_memory_map::PROCESS_MMAP_START,
+    pub fn new() -> Box<Self> {
+        let mut boxed: Box<mem::MaybeUninit<Self>> = Box::new_uninit();
+        let ptr = boxed.as_mut_ptr() as *mut Self;
+
+        unsafe {
+            let stack = addr_of_mut!((*ptr).kernel_stack);
+            let stack_top = (*stack).as_ptr().add(8192) as usize;
+            let tf_ptr = (stack_top - mem::size_of::<types::ProcessTrapFrame>()) as *mut types::ProcessTrapFrame;
+            (*ptr).trap_frame = &mut *(tf_ptr as *mut _);
+
+            (*ptr).page_map = page_mapper::PageMapper::new();
+            (*ptr).satp = (*ptr).page_map.satp();
+            (*ptr).heap_begin = 0;
+            (*ptr).heap_end = 0;
+            (*ptr).mmap_next = process_memory_map::PROCESS_MMAP_START;
+
+            boxed.assume_init()
         }
     }
 
@@ -39,7 +47,7 @@ impl Context {
 }
 
 static mut CURRENT_CONTEXT: *mut Context = core::ptr::null_mut();
-static mut PROCESS_TABLE: Option<Vec<*mut Context>> = None;
+static mut PROCESS_TABLE: Option<Vec<Box<Context>>> = None;
 
 pub fn init() {
     unsafe {
@@ -48,13 +56,18 @@ pub fn init() {
 }
 
 pub fn create() -> &'static mut Context {
-    let boxed = Box::new(Context::new());
-    let ptr: *mut Context = Box::leak(boxed);
+    let boxed = Context::new();
+
     unsafe {
         if PROCESS_TABLE.is_none() {
             PROCESS_TABLE = Some(Vec::new());
         }
-        PROCESS_TABLE.as_mut().unwrap().push(ptr);
+
+        let table = PROCESS_TABLE.as_mut().unwrap();
+        table.push(boxed);
+
+        let last_ref: &mut Context = table.last_mut().unwrap();
+
+        &mut *(last_ref as *mut Context)
     }
-    unsafe { &mut *ptr }
 }
