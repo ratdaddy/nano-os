@@ -16,6 +16,7 @@ mod trampoline;
 #[macro_use]
 mod console;
 
+mod amo;
 mod asm_offsets;
 mod dtb;
 mod initramfs;
@@ -26,6 +27,7 @@ mod kernel_memory_map;
 mod memory;
 mod page_allocator;
 mod page_mapper;
+mod plic;
 mod process;
 mod process_memory_map;
 mod process_trampoline;
@@ -64,6 +66,21 @@ fn rust_main(
     println!("Image physical start: {:#x}", image_phys_start);
     println!("Image physical end: {:#x}", image_phys_end);
 
+    /*
+    print_pmp_state();
+    unsafe {
+        let mut value = 1;
+        let amo_swap_addr = 0x80010000 as *mut u32;
+        core::arch::asm!(
+            "amoswap.w.aq {val}, {val}, ({addr})",
+            val = inout(reg) value,
+            addr = in(reg) image_phys_end,
+            options(nostack, preserves_flags)
+        );
+        println!("AMO Swap Result: {:#x}", value);
+    }
+    */
+
     zero_bss();
 
     let dtb_context = unsafe { dtb::parse_dtb(dtb_ptr) };
@@ -90,6 +107,62 @@ fn rust_main(
     kernel_main::kernel_main();
 
     panic!("Kernel main returned unexpectedly");
+}
+
+fn print_pmp_state() {
+    println!("PMP Configuration:");
+    for i in 0..1 {
+        let cfg = read_csr_pmpcfg(i);
+        println!("pmpcfg{}: {:#x}", i, cfg);
+    }
+    /*
+
+    println!("PMP Addresses:");
+    for i in 0..16 {
+        let addr = read_csr_pmpaddr(i);
+        println!("pmpaddr{}: {:#x}", i, addr);
+    }
+    */
+}
+
+fn read_csr_pmpcfg(n: usize) -> usize {
+    let val: usize;
+    unsafe {
+        match n {
+            0 => core::arch::asm!("csrr {0}, 0x100", out(reg) val),
+            1 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            2 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            3 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            _ => return 0,
+        }
+    }
+    val
+}
+
+fn read_csr_pmpaddr(n: usize) -> usize {
+    let val: usize;
+    unsafe {
+        match n {
+            0 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            1 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            2 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            3 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            4 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            5 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            6 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            7 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            8 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            9 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            10 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            11 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            12 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            13 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            14 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            15 => core::arch::asm!("csrr {0}, 0x3A0", out(reg) val),
+            _ => return 0,
+        }
+    }
+    val
 }
 
 fn zero_bss() {

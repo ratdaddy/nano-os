@@ -1,5 +1,11 @@
+use crate::amo;
+//use crate::kernel_main;
 use crate::kernel_memory_map;
 use crate::syscall;
+
+extern "C" {
+    pub fn trap_entry();
+}
 
 core::arch::global_asm!(
     ".section .process_trampoline",
@@ -146,21 +152,50 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
         "Trap handler called: scause: {:#x}, stval: {:#x}, sepc: {:#x}",
         scause, stval, sepc
     );
+    const AMO_FAULT: usize = 7;
     const USER_ECALL: usize = 8;
     const LOAD_PAGE_FAULT: usize = 13;
     const STORE_PAGE_FAULT: usize = 15;
+    const SUPERVISOR_EXTERNAL_INTERRUPT: usize = 0x8000000000000009;
 
-    match scause & 0xff {
+    // NanaRV experimentation? May not be needed for QEMU?
+    /*
+    unsafe {
+        core::arch::asm!(
+            "csrw stvec, {}",
+            in(reg) kernel_main::kernel_trap_handler as usize,
+        );
+    }
+    */
+
+    //match scause & 0xff {
+    match scause {
+        AMO_FAULT => {
+            amo::handle_amo_fault(tf);
+        }
         LOAD_PAGE_FAULT | STORE_PAGE_FAULT => {
             if !kernel_memory_map::grow_stack_on_page_fault(stval) {
                 panic!("Unhandled page fault at address {:#x} (scause: {})", stval, scause);
             }
         }
         USER_ECALL => syscall::handle(tf),
+        SUPERVISOR_EXTERNAL_INTERRUPT => {
+            panic!("Interrupt occurred");
+        }
         _ => {
             panic!("Unhandled trap: scause: {:#x}, stval: {:#x}", scause, stval);
         }
     }
+
+    // NanoRV experimentation? May not be needed for QEMU?
+    /*
+    unsafe {
+        core::arch::asm!(
+            "csrw stvec, {}",
+            in(reg) trap_entry as usize,
+        );
+    }
+    */
 
     tf as *const _ as usize
 }

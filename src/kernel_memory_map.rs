@@ -65,6 +65,36 @@ pub fn init(memory: memory::Region) {
         );
     });
 
+    println!("Mapping QEMU PLIC at {:#x} - {:#x}", 0x0c00_0000, 0x0c00_0000 + 0x0060_0000);
+
+    with_page_mapper(|mapper| {
+        mapper.map_range(
+            0x0c00_0000,
+            0x0c00_0000,
+            0x0c00_0000 + 0x0060_0000,
+            PageFlags::READ
+                | PageFlags::WRITE
+                | PageFlags::ACCESSED
+                | PageFlags::DIRTY,
+            page_mapper::PageSize::Size4K,
+        );
+    });
+
+    println!("Mapping NanoRV PLIC at {:#x} - {:#x}", 0x7000_0000, 0x7000_0000 + 0x0060_0000);
+
+    with_page_mapper(|mapper| {
+        mapper.map_range(
+            0x7000_0000,
+            0x7000_0000,
+            0x7000_0000 + 0x0060_0000,
+            PageFlags::READ
+                | PageFlags::WRITE
+                | PageFlags::ACCESSED
+                | PageFlags::DIRTY,
+            page_mapper::PageSize::Size4K,
+        );
+    });
+
     map_kernel_segments();
 
     map_kernel_stack();
@@ -285,11 +315,8 @@ fn map_last_l1_pte() {
     }
 }
 
-pub fn allocate_and_map_zeropage_range(start: usize, size: usize, flags: PageFlags) {
-    assert!(start < page_mapper::PageSize::Size2M.size(), "start address not in zero page");
-    assert!(start + size < page_mapper::PageSize::Size2M.size(), "end address not in zero page");
-
-    println!("Allocating and mapping zeropage range: virt: {:#x} - {:#x}", start, start + size);
+pub fn allocate_and_map_process_load_area_range(start: usize, size: usize, flags: PageFlags) {
+    println!("Allocating and mapping process load range: virt: {:#x} - {:#x}", start, start + size);
 
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
@@ -404,7 +431,7 @@ pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
 }
 
 #[inline]
-fn lichee_clear_cache() {
+pub fn lichee_clear_cache() {
     if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
         unsafe {
             core::arch::asm!(

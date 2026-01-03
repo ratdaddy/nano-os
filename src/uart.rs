@@ -9,6 +9,20 @@ pub struct Uart {
     config: UartConfig,
 }
 
+// For QEMU `virt` machine with ns16550a UART
+pub const QEMU_UART: UartConfig = UartConfig {
+    base: 0x1000_0000,
+    reg_shift: 0,
+    reg_io_width: 1,
+};
+
+// For NanoKVM's dw-apb-uart at serial@04140000
+pub const NANO_UART: UartConfig = UartConfig {
+    base: 0x0414_0000,
+    reg_shift: 2,
+    reg_io_width: 4,
+};
+
 impl Uart {
     pub const fn new(config: UartConfig) -> Self {
         Self { config }
@@ -43,6 +57,16 @@ impl Uart {
         }
     }
 
+    pub fn enable_tx_interrupt(&self) {
+        const IER_OFFSET: usize = 1;
+        const IER_THRE: u8 = 1 << 1;
+
+        unsafe {
+            let current = self.read_reg(IER_OFFSET);
+            self.write_reg(IER_OFFSET, current | IER_THRE);
+        }
+    }
+
     unsafe fn read_reg(&self, offset: usize) -> u8 {
         if self.config.reg_io_width == 4 {
             self.reg_addr_32(offset).read_volatile() as u8
@@ -56,6 +80,15 @@ impl Uart {
             self.reg_addr_32(offset).write_volatile(val as u32);
         } else {
             self.reg_addr(offset).write_volatile(val);
+        }
+    }
+
+    pub fn print_iir(&self) {
+        const IIR_OFFSET: usize = 2;
+
+        unsafe {
+            let iir = self.read_reg(IIR_OFFSET);
+            println!("IIR: {:#04x}\n", iir);
         }
     }
 }

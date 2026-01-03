@@ -12,6 +12,19 @@ pub struct TrampolineTrapFrame {
 
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
+pub struct ProcessTrapFrame
+{
+    pub registers: GpRegisters,
+    pub pc: usize,
+    pub sepc: usize,
+    pub sstatus: usize,
+    pub stval: usize,
+    pub scause: usize,
+    pub satp: usize,
+}
+
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
 pub struct GpRegisters {
     pub ra: usize,
     pub sp: usize,
@@ -46,15 +59,27 @@ pub struct GpRegisters {
     pub t6: usize,
 }
 
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
-pub struct ProcessTrapFrame
-{
-    pub registers: GpRegisters,
-    pub pc: usize,
-    pub sepc: usize,
-    pub sstatus: usize,
-    pub stval: usize,
-    pub scause: usize,
-    pub satp: usize,
+impl GpRegisters {
+    pub fn get(&self, index: usize) -> usize {
+        match index {
+            0 => 0, // x0 is always zero
+            1..=31 => unsafe {
+                let base = self as *const Self as *const usize;
+                *base.add(index - 1)
+            },
+            _ => panic!("Invalid register index: {}", index),
+        }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> &mut usize {
+        match index {
+            0 => panic!("Cannot write to x0 (zero register)"),
+            1..=31 => unsafe {
+                let base = self as *mut Self as *mut usize;
+                &mut *base.add(index - 1)
+            },
+            _ => panic!("Invalid register index: {}", index),
+        }
+    }
 }
+

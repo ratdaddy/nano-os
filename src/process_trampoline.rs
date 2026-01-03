@@ -1,6 +1,7 @@
-use crate::kernel_main;
 use crate::kernel_memory_map::TRAMPOLINE_TRAP_FRAME;
+use crate::plic;
 use crate::process;
+use crate::trap;
 
 #[no_mangle]
 #[link_section = ".process_trampoline"]
@@ -14,6 +15,11 @@ pub unsafe fn enter_process(context: &mut process::Context) -> ! {
     (*tramp_trap_frame).kernel_sp = context.trap_frame as *mut _ as usize;
     context.trap_frame.satp = context.satp;
 
+    println!("Enabling interrupts");
+    unsafe {
+        plic::init();
+    }
+
     println!("Entering user process with trap frame at: {:#x}", &context.trap_frame as *const _ as usize);
 
     core::arch::asm!(
@@ -21,6 +27,16 @@ pub unsafe fn enter_process(context: &mut process::Context) -> ! {
         "la t0, {trap_frame}",
         "ld t0, 0(t0)",
         "csrw sscratch, t0",
+        // Enable interrupts
+        "li t1, 0x202",
+        "csrw sie, t1",
+        // Set sstatus
+        "csrr t1, sstatus",
+        "li t2, (1 << 5)",          // SPIE
+        "or t1, t1, t2",
+        "li t2, ~(1 << 8)",         // Clear SPP (bit 8)
+        "and t1, t1, t2",
+        "csrw sstatus, t1",
         // set up the trap handler and user mmap
         "csrw stvec, {trap_entry}",
         "csrw satp, {satp_value}",
@@ -34,7 +50,7 @@ pub unsafe fn enter_process(context: &mut process::Context) -> ! {
         "mv sp, {user_sp}",
         "sret",
 
-        trap_entry = in(reg) kernel_main::trap_entry as usize,
+        trap_entry = in(reg) trap::trap_entry as usize,
         satp_value = in(reg) context.satp,
         user_pc = in(reg) context.trap_frame.pc,
         user_sp = in(reg) context.trap_frame.registers.sp,

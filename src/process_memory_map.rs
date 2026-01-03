@@ -10,6 +10,8 @@ use crate::page_mapper::{self, PageFlags};
 use crate::process;
 use crate::read_elf;
 
+pub const PROCESS_LOAD_AREA: usize = 0xffff_ffc0_0000_0000;
+pub const PROCESS_LOAD_AREA_ENTRY: usize = 0x100;
 pub const PROCESS_STACK_START: usize = 0xffe0_0000;
 const PROCESS_STACK_STARTING_SIZE: usize = 0x4000;
 pub const PROCESS_MMAP_START: usize = 0x1_0000_0000;
@@ -28,11 +30,11 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     let page_map = &mut context.page_map;
 
     unsafe {
-        let zeropage_l1_entry = (*kernel_memory_map::root_table()).entries[0];
-        let zeropage_l1_page_table = zeropage_l1_entry.addr() as *mut page_mapper::PageTable;
-        switch_pages_to_user(&mut *zeropage_l1_page_table);
-        (*page_map.root_table).entries[0].set(zeropage_l1_page_table as usize, PageFlags::VALID);
-        // TODO: unset kernel zeropage table entry
+        let process_load_area_entry = (*kernel_memory_map::root_table()).entries[PROCESS_LOAD_AREA_ENTRY];
+        let process_load_area_page_table = process_load_area_entry.addr() as *mut page_mapper::PageTable;
+        switch_pages_to_user(&mut *process_load_area_page_table);
+        (*page_map.root_table).entries[0].set(process_load_area_page_table as usize, PageFlags::VALID);
+        // TODO: unset kernel process load area table entry
     }
 
     // Map first page of process stack
@@ -158,35 +160,39 @@ fn load_elf<R: io::Read + io::Seek>(
                 base_vaddr = virt_addr;
             }
 
-            let virt_page_addr_start = memory::align_down(virt_addr);
-            let virt_page_addr_end = memory::align_up(virt_addr + mem_size);
-            if virt_page_addr_end > heap_start {
-                heap_start = virt_page_addr_end;
+            let virt_addr_start = virt_addr + PROCESS_LOAD_AREA;
+            let virt_addr_end = memory::align_up(virt_addr + mem_size);
+
+            let virt_addr_load_start = memory::align_down(virt_addr_start);
+            let virt_addr_load_end = virt_addr_end + PROCESS_LOAD_AREA;
+            if virt_addr_end > heap_start {
+                heap_start = virt_addr_end;
             }
 
             println!(
                 "Mapping ELF segment: virt: {:#x} - {:#x} to phys: {:#x}",
-                virt_addr,
-                virt_addr + mem_size,
+                virt_addr_load_start,
+                virt_addr_load_end,
                 phys_addr
             );
 
-            kernel_memory_map::allocate_and_map_zeropage_range(
-                virt_page_addr_start,
-                virt_page_addr_end - virt_page_addr_start,
+            kernel_memory_map::allocate_and_map_process_load_area_range(
+                virt_addr_load_start,
+                virt_addr_load_end - virt_addr_load_start,
                 PageFlags::READ | PageFlags::WRITE | PageFlags::EXECUTE | PageFlags::ACCESSED | PageFlags::DIRTY,
             );
 
             elf_handle.seek(io::SeekFrom::Start(offset))
                 .map_err(|_| "Failed to seek to program header offset")?;
 
-            let buffer = unsafe { slice::from_raw_parts_mut(virt_addr as *mut u8, file_size) };
+            println!("Loading from {:#x}", virt_addr_start);
+            let buffer = unsafe { slice::from_raw_parts_mut(virt_addr_start as *mut u8, file_size) };
             elf_handle.read_exact(buffer)
                 .map_err(|_| "Failed to read ELF segment data")?;
 
-            println!("Zeroing out {:#x} remaining bytes in ELF segment: virt: {:#x}", mem_size - file_size, virt_addr + file_size);
+            println!("Zeroing out {:#x} remaining bytes in ELF segment: virt: {:#x}", mem_size - file_size, virt_addr_start + file_size);
             unsafe {
-                core::ptr::write_bytes((virt_addr + file_size) as *mut u8, 0, mem_size - file_size);
+                core::ptr::write_bytes((virt_addr_start + file_size) as *mut u8, 0, mem_size - file_size);
             }
         }
     }
@@ -194,8 +200,8 @@ fn load_elf<R: io::Read + io::Seek>(
     Ok((base_vaddr, heap_start))
 }
 
-fn switch_pages_to_user(zeropage_l1_entry: &mut page_mapper::PageTable) {
-    for l1_entry in zeropage_l1_entry.entries.iter_mut() {
+fn switch_pages_to_user(process_load_area_entry: &mut page_mapper::PageTable) {
+    for l1_entry in process_load_area_entry.entries.iter_mut() {
         if l1_entry.is_valid() {
             let l2_table = l1_entry.addr() as *mut page_mapper::PageTable;
             unsafe {

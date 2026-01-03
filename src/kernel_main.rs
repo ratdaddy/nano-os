@@ -9,9 +9,11 @@ use crate::process_trampoline;
 use crate::read_elf;
 use crate::uart;
 
+/*
 extern "C" {
     pub fn trap_entry();
 }
+*/
 
 pub fn kernel_main() {
     println!("In kernel_main");
@@ -23,11 +25,12 @@ pub fn kernel_main() {
     unsafe {
         core::arch::asm!(
             "csrw stvec, {}",
-            in(reg) trap_entry as usize,
+            in(reg) kernel_trap_entry as usize,
         );
     }
 
     uart_demo();
+
     /*
     test_stack_allocation();
     */
@@ -86,25 +89,12 @@ pub fn kernel_main() {
     }
 }
 
-// For QEMU `virt` machine with ns16550a UART
-const QEMU_UART: uart::UartConfig = uart::UartConfig {
-    base: 0x1000_0000,
-    reg_shift: 0,
-    reg_io_width: 1,
-};
-
-// For NanoKVM's dw-apb-uart at serial@04140000
-const NANO_UART: uart::UartConfig = uart::UartConfig {
-    base: 0x0414_0000,
-    reg_shift: 2,
-    reg_io_width: 4,
-};
 
 pub fn uart_demo() {
     let uart = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
-        uart::Uart::new(NANO_UART)
+        uart::Uart::new(uart::NANO_UART)
     } else {
-        uart::Uart::new(QEMU_UART)
+        uart::Uart::new(uart::QEMU_UART)
     };
 
     uart.write_str("Direct write to uart\r\n");
@@ -166,4 +156,53 @@ fn test_stack_allocation() {
 fn consume_array(arr: [u8; 10 * 1024]) {
     let avg = arr.iter().map(|&b| b as u32).sum::<u32>() / arr.len() as u32;
     println!("Average: {}", avg);
+}
+
+#[repr(align(16))]
+struct AlignedStack([u8; 4096]);
+
+#[no_mangle]
+static mut KERNEL_STACK: AlignedStack = AlignedStack([0; 4096]);
+
+extern "C" {
+    pub fn kernel_trap_entry();
+}
+
+core::arch::global_asm!(
+    ".section .text.trap_entry",
+    ".globl kernel_trap_handler",
+    ".type trap_entry_panic, @function",
+    "kernel_trap_entry:",
+    "la sp, KERNEL_STACK + 4096",
+    "call kernel_trap_handler",
+);
+
+#[no_mangle]
+pub extern "C" fn kernel_trap_handler() {
+    let scause: usize;
+    let sepc: usize;
+    let stval: usize;
+
+    unsafe {
+        core::arch::asm!(
+            "csrr {0}, scause",
+            "csrr {1}, sepc",
+            "csrr {2}, stval",
+            out(reg) scause,
+            out(reg) sepc,
+            out(reg) stval,
+        );
+    }
+
+    println!("*** KERNEL TRAP ***");
+    println!("scause = {:#x}", scause);
+    println!("sepc   = {:#x}", sepc);
+    println!("stval  = {:#x}", stval);
+
+    // Halt the system
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

@@ -96,6 +96,12 @@ impl PageTableEntry {
         self.0 & PageFlags::VALID.bits() != 0
     }
 
+    pub fn is_leaf(&self) -> bool {
+        let flags = self.flags().bits();
+        flags & (PageFlags::READ.bits() | PageFlags::WRITE.bits() | PageFlags::EXECUTE.bits()) != 0
+    }
+
+
     pub fn addr(&self) -> usize {
         (self.0 >> 10) << 12
     }
@@ -262,6 +268,41 @@ impl PageMapper {
 
         let l1_entry = unsafe { (*l1_table).entries[vpn1] };
         l1_entry.addr() as *const PageTable
+    }
+
+    pub fn virt_to_phys(&self, virt_addr: usize) -> Option<usize> {
+        let vpn2 = virt_addr.vpn2();
+        let vpn1 = virt_addr.vpn1();
+        let vpn0 = virt_addr.vpn0();
+        let table = self.root_table;
+
+        unsafe {
+            let l2 = &mut *table;
+            let entry2 = &l2.entries[vpn2];
+            if !entry2.is_valid() {
+                return None;
+            }
+            if entry2.is_leaf() {
+                return Some((entry2.addr() & !0x3fff) | (virt_addr & 0x3fff));
+            }
+
+            let l1 = &mut *(entry2.addr() as *mut PageTable);
+            let entry1 = &l1.entries[vpn1];
+            if !entry1.is_valid() {
+                return None;
+            }
+            if entry1.is_leaf() {
+                return Some((entry1.addr() & !0x1fffff) | (virt_addr & 0x1fffff));
+            }
+
+            let l0 = &mut *(entry1.addr() as *mut PageTable);
+            let entry0 = &l0.entries[vpn0];
+            if !entry0.is_valid() {
+                return None;
+            }
+
+            Some((entry0.addr() & !0xfff) | (virt_addr & 0xfff)) // 4KiB page
+        }
     }
 
     pub fn dump_pte(&self, virt_addr: usize) {
