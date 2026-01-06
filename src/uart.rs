@@ -67,6 +67,31 @@ impl Uart {
         }
     }
 
+    pub fn enable_rx_interrupt(&self) {
+        const IER_OFFSET: usize = 1;
+        const IER_RDA: u8 = 1 << 0;  // Received Data Available interrupt
+
+        unsafe {
+            let current = self.read_reg(IER_OFFSET);
+            self.write_reg(IER_OFFSET, current | IER_RDA);
+        }
+    }
+
+    pub fn read_byte(&self) -> Option<u8> {
+        const LSR_OFFSET: usize = 5;
+        const RBR_OFFSET: usize = 0;
+        const LSR_DR: u8 = 1 << 0;  // Data Ready bit
+
+        unsafe {
+            // Check if data is available
+            if self.read_reg(LSR_OFFSET) & LSR_DR != 0 {
+                Some(self.read_reg(RBR_OFFSET))
+            } else {
+                None
+            }
+        }
+    }
+
     unsafe fn read_reg(&self, offset: usize) -> u8 {
         if self.config.reg_io_width == 4 {
             self.reg_addr_32(offset).read_volatile() as u8

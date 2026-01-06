@@ -65,33 +65,35 @@ pub fn init(memory: memory::Region) {
         );
     });
 
-    println!("Mapping QEMU PLIC at {:#x} - {:#x}", 0x0c00_0000, 0x0c00_0000 + 0x0060_0000);
+    println!("Mapping QEMU PLIC at {:#x} - {:#x}", 0x0000_0000usize, 0x4000_0000usize);
 
     with_page_mapper(|mapper| {
         mapper.map_range(
-            0x0c00_0000,
-            0x0c00_0000,
-            0x0c00_0000 + 0x0060_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x4000_0000,  // Map low 1GB to include QEMU PLIC at 0x0c000000
             PageFlags::READ
                 | PageFlags::WRITE
+                | PageFlags::EXECUTE  // Execute permission like working spike
                 | PageFlags::ACCESSED
                 | PageFlags::DIRTY,
-            page_mapper::PageSize::Size4K,
+            page_mapper::PageSize::Size1G,  // Gigapage like working spike
         );
     });
 
-    println!("Mapping NanoRV PLIC at {:#x} - {:#x}", 0x7000_0000, 0x7000_0000 + 0x0060_0000);
+    println!("Mapping NanoRV PLIC region at {:#x} - {:#x}", 0x4000_0000usize, 0x8000_0000usize);
 
     with_page_mapper(|mapper| {
         mapper.map_range(
-            0x7000_0000,
-            0x7000_0000,
-            0x7000_0000 + 0x0060_0000,
+            0x4000_0000,
+            0x4000_0000,
+            0x8000_0000,  // Full 1GB region to include PLIC at 0x70000000
             PageFlags::READ
                 | PageFlags::WRITE
+                | PageFlags::EXECUTE  // Execute permission like working spike
                 | PageFlags::ACCESSED
                 | PageFlags::DIRTY,
-            page_mapper::PageSize::Size4K,
+            page_mapper::PageSize::Size1G,  // Gigapage like working spike
         );
     });
 

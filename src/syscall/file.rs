@@ -1,5 +1,6 @@
 use crate::uart;
 use crate::plic;
+use crate::dtb;
 
 pub fn write(tf: &mut types::ProcessTrapFrame) {
     println!(
@@ -9,16 +10,23 @@ pub fn write(tf: &mut types::ProcessTrapFrame) {
         tf.registers.a2
     );
 
-    let uart = uart::Uart::new(uart::QEMU_UART);
-    // test to use NANO_UART
-    //let uart = uart::Uart::new(uart::NANO_UART);
-    uart.enable_tx_interrupt();
+    // Dynamically select UART based on CPU type
+    let uart_config = match dtb::get_cpu_type() {
+        dtb::CpuType::Qemu => uart::QEMU_UART,
+        dtb::CpuType::LicheeRVNano => uart::NANO_UART,
+        _ => {
+            println!("WARNING: Unknown CPU type, defaulting to QEMU UART");
+            uart::QEMU_UART
+        }
+    };
+
+    println!("Using UART at base {:#x}", uart_config.base);
+    let uart = uart::Uart::new(uart_config);
+    uart.enable_rx_interrupt();
     unsafe {
         plic::init();
     }
-    //uart.print_iir();
     uart.write_byte('*' as u8);
-    //uart.print_iir();
 
     // Pretend all bytes were written successfully.
     tf.registers.a0 = tf.registers.a2;
