@@ -32,7 +32,9 @@ pub fn mmap(tf: &mut types::ProcessTrapFrame) {
     let virt_addr = ctx.mmap_next;
     println!("mmap at {:#x}, size: {:#x}", virt_addr, size);
 
-    ctx.page_map.allocate_and_map_pages(
+    // MAP_ANONYMOUS requires zeroed memory (POSIX requirement)
+    // Use zeroed variant to zero pages via physical address (identity-mapped in kernel)
+    ctx.page_map.allocate_and_map_pages_zeroed(
         virt_addr,
         size,
         PageFlags::READ
@@ -54,7 +56,8 @@ pub fn brk(tf: &mut types::ProcessTrapFrame) {
     if size != 0 {
         let size = memory::align_up(size) - ctx.heap_end;
 
-        ctx.page_map.allocate_and_map_pages(
+        // Zero newly allocated heap memory (via physical address in kernel map)
+        ctx.page_map.allocate_and_map_pages_zeroed(
             ctx.heap_end,
             size,
             PageFlags::READ

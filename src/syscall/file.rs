@@ -22,7 +22,7 @@ pub fn write(tf: &mut types::ProcessTrapFrame) {
 
     println!("Using UART at base {:#x}", uart_config.base);
     let uart = uart::Uart::new(uart_config);
-    uart.enable_rx_interrupt();
+    uart.enable_tx_interrupt();
     unsafe {
         plic::init();
     }

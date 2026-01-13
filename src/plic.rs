@@ -28,12 +28,14 @@ pub unsafe fn init() {
 
     // Enable UART interrupt for S-mode hart 0
     let enable_base = plic_enable + 0x80 * 1; // hart 0, S-mode context 1
+    let word_index = (uart_irq_id / 32) as usize;
     let irq_bit = 1 << (uart_irq_id % 32);
-    (enable_base as *mut u32).write_volatile(irq_bit);
+    let enable_word = enable_base + word_index * 4;
+    (enable_word as *mut u32).write_volatile(irq_bit);
 
     // Read back the enable register to verify write
-    let readback = (enable_base as *mut u32).read_volatile();
-    println!("PLIC enable write: {:#x}, readback: {:#x}", irq_bit, readback);
+    let readback = (enable_word as *mut u32).read_volatile();
+    println!("PLIC enable[{}] write: {:#x}, readback: {:#x}", word_index, irq_bit, readback);
 
     // Set priority threshold to 0 to allow all
     ((plic_context + 0x000) as *mut u32).write_volatile(0);

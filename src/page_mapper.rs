@@ -56,6 +56,11 @@ impl PageFlags {
     pub const ACCESSED: Self = Self { bits: 1 << 6 };
     pub const DIRTY: Self = Self { bits: 1 << 7 };
 
+    // T-Head C906 memory attribute extension flags (bits 60-63)
+    // Only used on NanoRV hardware where MXSTATUS.MAEE=1
+    // For identity-mapped low memory regions (MMIO/hardware)
+    pub const THEAD_SO: Self = Self { bits: 1usize << 63 };  // Strong Order
+
     pub const fn empty() -> Self {
         Self { bits: 0 }
     }
@@ -88,7 +93,17 @@ impl PageTableEntry {
 
     pub fn set(&mut self, phys_addr: usize, flags: PageFlags) {
         let ppn = phys_to_ppn(phys_addr);
-        let page_flags = flags | PageFlags::VALID;
+        let mut page_flags = flags | PageFlags::VALID;
+
+        // T-Head flags (bits 60-63) must ONLY be set on leaf PTEs
+        // Non-leaf PTEs (page table pointers) must NOT have these bits set
+        // as they would corrupt the PPN field
+        let is_leaf = flags.intersects(PageFlags::READ | PageFlags::WRITE | PageFlags::EXECUTE);
+        if !is_leaf {
+            // Clear any T-Head flags from non-leaf PTEs
+            page_flags = PageFlags { bits: page_flags.bits() & 0x0FFF_FFFF_FFFF_FFFF };
+        }
+
         self.0 = (ppn << 10) | page_flags.bits();
     }
 
@@ -235,10 +250,26 @@ impl PageMapper {
     }
 
     pub fn allocate_and_map_pages(&self, virt: usize, size: usize, flags: PageFlags) {
+        self.allocate_and_map_pages_impl(virt, size, flags, false);
+    }
+
+    pub fn allocate_and_map_pages_zeroed(&self, virt: usize, size: usize, flags: PageFlags) {
+        self.allocate_and_map_pages_impl(virt, size, flags, true);
+    }
+
+    fn allocate_and_map_pages_impl(&self, virt: usize, size: usize, flags: PageFlags, zero: bool) {
         let page_count = size / memory::PAGE_SIZE;
 
         for i in 0..page_count {
             let phys = page_allocator::alloc().expect("Out of memory for page");
+
+            // Zero via physical address (identity-mapped in kernel) if requested
+            if zero {
+                unsafe {
+                    core::ptr::write_bytes(phys as *mut u8, 0, memory::PAGE_SIZE);
+                }
+            }
+
             let virt_addr = virt + i * memory::PAGE_SIZE;
             self.map_range(virt_addr, phys, virt_addr + memory::PAGE_SIZE, flags, PageSize::Size4K);
         }

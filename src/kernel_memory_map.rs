@@ -35,67 +35,81 @@ pub fn init(memory: memory::Region) {
 
     identity_map_memory(memory);
 
-    println!("Mapping MMIO at {:#x} - {:#x}", 0x1000_0000, 0x1000_0000 + memory::PAGE_SIZE);
+    // Map hardware-specific MMIO regions based on CPU type
+    match dtb::get_cpu_type() {
+        dtb::CpuType::Qemu => {
+            println!("Mapping QEMU UART at {:#x} - {:#x}", 0x1000_0000, 0x1000_0000 + memory::PAGE_SIZE);
 
-    with_page_mapper(|mapper| {
-        mapper.map_range(
-            0x1000_0000,
-            0x1000_0000,
-            0x1000_0000 + memory::PAGE_SIZE,
-            PageFlags::READ
-                | PageFlags::WRITE
-                | PageFlags::ACCESSED
-                | PageFlags::DIRTY,
-            page_mapper::PageSize::Size4K,
-        );
-    });
+            with_page_mapper(|mapper| {
+                mapper.map_range(
+                    0x1000_0000,
+                    0x1000_0000,
+                    0x1000_0000 + memory::PAGE_SIZE,
+                    PageFlags::READ
+                        | PageFlags::WRITE
+                        | PageFlags::ACCESSED
+                        | PageFlags::DIRTY,
+                    page_mapper::PageSize::Size4K,
+                );
+            });
 
-    println!("Mapping MMIO at {:#x} - {:#x}", 0x414_0000, 0x414_0000 + memory::PAGE_SIZE);
+            println!("Mapping QEMU PLIC at {:#x} - {:#x}", 0x0c00_0000usize, 0x0c40_0000usize);
 
-    with_page_mapper(|mapper| {
-        mapper.map_range(
-            0x414_0000,
-            0x414_0000,
-            0x414_0000 + memory::PAGE_SIZE,
-            PageFlags::READ
-                | PageFlags::WRITE
-                | PageFlags::ACCESSED
-                | PageFlags::DIRTY,
-            page_mapper::PageSize::Size4K,
-        );
-    });
+            with_page_mapper(|mapper| {
+                mapper.map_range(
+                    0x0c00_0000,
+                    0x0c00_0000,
+                    0x0c40_0000,  // Map 4MB for QEMU PLIC
+                    PageFlags::READ
+                        | PageFlags::WRITE
+                        | PageFlags::ACCESSED
+                        | PageFlags::DIRTY,
+                    page_mapper::PageSize::Size4K,
+                );
+            });
+        }
 
-    println!("Mapping QEMU PLIC at {:#x} - {:#x}", 0x0000_0000usize, 0x4000_0000usize);
+        dtb::CpuType::LicheeRVNano => {
+            // T-Head C906 requires Strong Order flag for MMIO when MAEE=1
+            let thead_flags = PageFlags::THEAD_SO;
 
-    with_page_mapper(|mapper| {
-        mapper.map_range(
-            0x0000_0000,
-            0x0000_0000,
-            0x4000_0000,  // Map low 1GB to include QEMU PLIC at 0x0c000000
-            PageFlags::READ
-                | PageFlags::WRITE
-                | PageFlags::EXECUTE  // Execute permission like working spike
-                | PageFlags::ACCESSED
-                | PageFlags::DIRTY,
-            page_mapper::PageSize::Size1G,  // Gigapage like working spike
-        );
-    });
+            println!("Mapping NanoRV UART at {:#x} - {:#x}", 0x0414_0000, 0x0414_0000 + memory::PAGE_SIZE);
 
-    println!("Mapping NanoRV PLIC region at {:#x} - {:#x}", 0x4000_0000usize, 0x8000_0000usize);
+            with_page_mapper(|mapper| {
+                mapper.map_range(
+                    0x0414_0000,
+                    0x0414_0000,
+                    0x0414_0000 + memory::PAGE_SIZE,
+                    PageFlags::READ
+                        | PageFlags::WRITE
+                        | PageFlags::ACCESSED
+                        | PageFlags::DIRTY
+                        | thead_flags,
+                    page_mapper::PageSize::Size4K,
+                );
+            });
 
-    with_page_mapper(|mapper| {
-        mapper.map_range(
-            0x4000_0000,
-            0x4000_0000,
-            0x8000_0000,  // Full 1GB region to include PLIC at 0x70000000
-            PageFlags::READ
-                | PageFlags::WRITE
-                | PageFlags::EXECUTE  // Execute permission like working spike
-                | PageFlags::ACCESSED
-                | PageFlags::DIRTY,
-            page_mapper::PageSize::Size1G,  // Gigapage like working spike
-        );
-    });
+            println!("Mapping NanoRV PLIC at {:#x} - {:#x}", 0x7000_0000usize, 0x7040_0000usize);
+
+            with_page_mapper(|mapper| {
+                mapper.map_range(
+                    0x7000_0000,
+                    0x7000_0000,
+                    0x7040_0000,  // Map 4MB for NanoRV PLIC
+                    PageFlags::READ
+                        | PageFlags::WRITE
+                        | PageFlags::ACCESSED
+                        | PageFlags::DIRTY
+                        | thead_flags,
+                    page_mapper::PageSize::Size4K,
+                );
+            });
+        }
+
+        _ => {
+            println!("WARNING: Unknown CPU type, no MMIO mapped");
+        }
+    }
 
     map_kernel_segments();
 
