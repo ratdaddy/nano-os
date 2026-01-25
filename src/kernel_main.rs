@@ -8,13 +8,8 @@ use crate::process;
 use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::read_elf;
+use crate::thread;
 use crate::uart;
-
-/*
-extern "C" {
-    pub fn trap_entry();
-}
-*/
 
 pub fn kernel_main() {
     println!("In kernel_main");
@@ -30,11 +25,11 @@ pub fn kernel_main() {
         );
     }
 
-    //uart_demo();
+    // test_threading();
 
-    /*
-    test_stack_allocation();
-    */
+    // uart_demo();
+
+    // test_stack_allocation();
 
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
     let initrd_len = dtb::INITRD_END.load(Ordering::Relaxed) - initrd_start;
@@ -90,6 +85,40 @@ pub fn kernel_main() {
     }
 }
 
+/// Entry point for test threads - demonstrates yield and exit
+fn test_thread_entry() {
+    let me = thread::Thread::current();
+    let my_id = me.id;
+
+    println!("Thread {} starting", my_id);
+    unsafe { thread::yield_now(); }
+
+    println!("Thread {} resumed after yield", my_id);
+
+    thread::exit();
+}
+
+/// Test kernel threading - creates threads and starts the scheduler
+/// Note: This function never returns (start_scheduler is divergent)
+#[allow(dead_code)]
+fn test_threading() -> ! {
+    println!("Creating test threads...");
+
+    let thread1 = thread::Thread::new(test_thread_entry);
+    let id1 = thread1.id;
+    println!("Thread {} created: sp={:#x}, ra={:#x}",
+             id1, thread1.context.sp, thread1.context.ra);
+    thread::add(thread1);
+
+    let thread2 = thread::Thread::new(test_thread_entry);
+    let id2 = thread2.id;
+    println!("Thread {} created: sp={:#x}, ra={:#x}",
+             id2, thread2.context.sp, thread2.context.ra);
+    thread::add(thread2);
+
+    println!("Starting scheduler...");
+    thread::start_scheduler()
+}
 
 pub fn uart_demo() {
     let uart = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
@@ -128,12 +157,6 @@ pub fn uart_demo() {
     } else {
         0x0c00_0000usize
     };
-    let uart_base = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
-        0x0414_0000usize
-    } else {
-        0x1000_0000usize
-    };
-    let is_nano = dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano;
 
     unsafe {
         // IRQ 44 is in pending register word 1 (offset 0x1004), bit 12
@@ -170,38 +193,8 @@ pub fn uart_demo() {
         }
 
         println!("Waiting for interrupt (press any key)...");
-        let mut count = 0;
         loop {
-            unsafe {
-                core::arch::asm!("wfi");
-            }
-            /*
-                // Read PLIC pending registers (IRQ 44 is in word 1, bit 12)
-                let plic_pending0 = ((plic_base + 0x1000) as *const u32).read_volatile();
-                let plic_pending1 = ((plic_base + 0x1004) as *const u32).read_volatile();
-
-                // Read UART LSR (Line Status Register) - offset 5
-                let lsr_offset = if is_nano { 5 << 2 } else { 5 };
-                let uart_lsr = ((uart_base + lsr_offset) as *const u32).read_volatile();
-
-                // Read UART IIR (Interrupt Identification Register) - offset 2
-                let iir_offset = if is_nano { 2 << 2 } else { 2 };
-                let uart_iir = ((uart_base + iir_offset) as *const u32).read_volatile();
-
-                // Read SIP (Supervisor Interrupt Pending)
-                let sip: usize;
-                core::arch::asm!("csrr {}, sip", out(reg) sip);
-
-                // Print every 10000000 iterations or if something changed
-                if count % 10000000 == 0 ||
-                   plic_pending0 != plic_pending0_initial ||
-                   plic_pending1 != plic_pending1_initial ||
-                   (uart_lsr & 1) != 0 {
-                    println!("PLIC_pend[0]={:#x} [1]={:#x} UART_LSR={:#x} IIR={:#x} SIP={:#x}",
-                             plic_pending0, plic_pending1, uart_lsr, uart_iir, sip);
-                }
-            count += 1;
-            */
+            core::arch::asm!("wfi");
         }
     }
 }

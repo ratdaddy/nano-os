@@ -23,11 +23,12 @@ core::arch::global_asm!(
     // Set kernel mmap
     "ld t0, TTF_KERNEL_SATP(sp)",
     "csrw satp, t0",
-    // Clear caches
+    // T-Head C906: flush caches for SATP switch (user -> kernel)
+    // See notes/thead-c906-memory-guide.md for cache instruction details
     "ld t0, TTF_IS_LICHEE_RVNANO(sp)",
     "beqz t0, 1f",
-    ".long 0x0020000b",
-    ".long 0x0190000b",
+    ".long 0x0030000b",   // th.dcache.ciall - clean and invalidate D-cache
+    ".long 0x0100000b",   // th.icache.iall  - invalidate I-cache
     "1: sfence.vma zero, zero",
     // Set kernel stack pointer but save trampoline trap frame in t0
     "mv t0, sp",
@@ -127,11 +128,12 @@ core::arch::global_asm!(
     "csrw satp, t0",
     // load trampoline stack frame back into sp
     "csrr sp, sscratch",
-    // clear cache
+    // T-Head C906: flush caches for SATP switch (kernel -> user)
+    // See notes/thead-c906-memory-guide.md for cache instruction details
     "ld t0, TTF_IS_LICHEE_RVNANO(sp)",
     "beqz t0, 1f",
-    ".long 0x0020000b",
-    ".long 0x0190000b",
+    ".long 0x0030000b",   // th.dcache.ciall - clean and invalidate D-cache
+    ".long 0x0100000b",   // th.icache.iall  - invalidate I-cache
     "1: sfence.vma zero, zero",
     // Restore sp, t0
     "ld t0, TTF_T0(sp)",
@@ -158,16 +160,6 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
     const STORE_PAGE_FAULT: usize = 15;
     const SUPERVISOR_EXTERNAL_INTERRUPT: usize = 0x8000000000000009;
 
-    // NanaRV experimentation? May not be needed for QEMU?
-    /*
-    unsafe {
-        core::arch::asm!(
-            "csrw stvec, {}",
-            in(reg) kernel_main::kernel_trap_handler as usize,
-        );
-    }
-    */
-
     //match scause & 0xff {
     match scause {
         AMO_FAULT => {
@@ -186,16 +178,6 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
             panic!("Unhandled trap: scause: {:#x}, stval: {:#x}", scause, stval);
         }
     }
-
-    // NanoRV experimentation? May not be needed for QEMU?
-    /*
-    unsafe {
-        core::arch::asm!(
-            "csrw stvec, {}",
-            in(reg) trap_entry as usize,
-        );
-    }
-    */
 
     tf as *const _ as usize
 }

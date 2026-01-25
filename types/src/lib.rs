@@ -83,3 +83,25 @@ impl GpRegisters {
     }
 }
 
+/// Kernel thread context - registers saved/restored during context switch
+/// Only callee-saved registers need to be saved (sp, ra, s0-s11)
+/// Stored contiguously for efficient access (registers aren't physically contiguous)
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct ThreadContext {
+    pub sp: usize,
+    pub ra: usize,
+    pub s0: usize,
+    pub s1: usize,
+    pub s2: usize,
+    pub s3: usize,
+    pub s4: usize,
+    pub s5: usize,
+    pub s6: usize,
+    pub s7: usize,
+    pub s8: usize,
+    pub s9: usize,
+    pub s10: usize,
+    pub s11: usize,
+}
+

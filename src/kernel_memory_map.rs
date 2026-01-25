@@ -209,12 +209,19 @@ fn map_kernel_segments() {
         data_start, data_end, phys_data_start
     );
 
+    // T-Head C906 requires memory type flags for normal memory (for AMO instructions)
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
+
     with_page_mapper(|mapper| {
         mapper.map_range(
             data_start,
             phys_data_start,
             data_end,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
             page_mapper::PageSize::Size4K,
         );
     });
@@ -234,12 +241,19 @@ fn map_kernel_segments() {
         bss_start, bss_end, phys_bss_start
     );
 
+    // T-Head C906 requires memory type flags for normal memory (for AMO instructions)
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
+
     with_page_mapper(|mapper| {
         mapper.map_range(
             bss_start,
             phys_bss_start,
             bss_end,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
             page_mapper::PageSize::Size4K,
         );
     });
@@ -252,11 +266,18 @@ fn map_kernel_stack() {
         kernel_stack_end, KERNEL_STACK_START
     );
 
+    // T-Head C906 requires memory type flags for normal memory
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
+
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
             kernel_stack_end,
             KERNEL_STACK_STARTING_SIZE,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
         );
     });
 
@@ -272,11 +293,18 @@ fn map_and_initialize_kernel_heap() {
         KERNEL_HEAP_END.load(Ordering::SeqCst)
     );
 
+    // T-Head C906 requires memory type flags for normal memory
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
+
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
             KERNEL_HEAP_START,
             KERNEL_HEAP_SIZE,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
         );
     });
 }
@@ -316,11 +344,18 @@ fn map_last_l1_pte() {
         TRAMPOLINE_TRAP_FRAME + TRAP_FRAME_SIZE,
     );
 
+    // T-Head C906 requires memory type flags for normal memory
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
+
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
             TRAMPOLINE_TRAP_FRAME,
             TRAP_FRAME_SIZE,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
         );
     });
 
@@ -342,7 +377,7 @@ pub fn allocate_and_map_process_load_area_range(start: usize, size: usize, flags
         );
     });
 
-    lichee_clear_cache();
+    thead_flush_dcache();
 
     unsafe {
         core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
@@ -362,7 +397,7 @@ pub fn switch_to_kernel_map() {
             options(nostack)
         );
 
-        lichee_clear_cache();
+        thead_flush_dcache();
 
         core::arch::asm!("sfence.vma zero, zero", options(nostack));
     }
@@ -395,15 +430,22 @@ pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
 
     println!("Growing kernel stack: virt: {:#x} - {:#x}", grow_end, current_stack_end,);
 
+    // T-Head C906 requires memory type flags for normal memory
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
+
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
             grow_end,
             current_stack_end - grow_end,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
         );
     });
 
-    lichee_clear_cache();
+    thead_flush_dcache();
 
     unsafe {
         core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
@@ -419,23 +461,29 @@ pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
 }
 
 pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
-    println!("Growing kernel heap by: {:#x}", size);
+    println!("Growing kernel heap: {:#x}", size);
     let size = memory::align_up(size);
 
     let old_end = KERNEL_HEAP_END.load(Ordering::SeqCst);
     let new_end = old_end.checked_add(size)?;
 
-    println!("Growing kernel heap: virt: {:#x} - {:#x}", old_end, new_end);
+    // T-Head C906 requires memory type flags for normal memory
+    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
+        PageFlags::THEAD_MEMORY
+    } else {
+        PageFlags::empty()
+    };
 
     with_page_mapper(|mapper| {
         mapper.allocate_and_map_pages(
             old_end,
             size,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY,
+            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
         );
     });
 
-    lichee_clear_cache();
+    // Go back to using the function call approach
+    thead_flush_dcache();
 
     unsafe {
         core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
@@ -446,13 +494,18 @@ pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
     Some((old_end, size))
 }
 
+/// Flush T-Head C906 D-cache after page table modifications (same address space).
+///
+/// Use this after growing heap/stack within the same page table.
+/// Cleans and invalidates D-cache so new PTEs are visible.
+///
+/// See notes/thead-c906-memory-guide.md for full cache instruction documentation.
 #[inline]
-pub fn lichee_clear_cache() {
+pub fn thead_flush_dcache() {
     if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
         unsafe {
             core::arch::asm!(
-                ".long 0x0020000b",
-                ".long 0x0190000b",
+                ".long 0x0030000b",   // th.dcache.ciall - clean and invalidate all D-cache
                 options(nostack, preserves_flags),
             );
         }

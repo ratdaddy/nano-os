@@ -56,10 +56,16 @@ impl PageFlags {
     pub const ACCESSED: Self = Self { bits: 1 << 6 };
     pub const DIRTY: Self = Self { bits: 1 << 7 };
 
-    // T-Head C906 memory attribute extension flags (bits 60-63)
+    // T-Head C906 memory attribute extension flags (bits 59-63)
     // Only used on NanoRV hardware where MXSTATUS.MAEE=1
-    // For identity-mapped low memory regions (MMIO/hardware)
-    pub const THEAD_SO: Self = Self { bits: 1usize << 63 };  // Strong Order
+    // These form a 5-bit memory type field, not individual flags
+    //pub const THEAD_MEMORY: Self = Self { bits: 0x0Fusize << 59 };  // Normal, Cacheable, Bufferable (0b01111)
+    pub const THEAD_MEMORY: Self = Self { bits: 0x0Fusize << 59 };  // Normal, Cacheable, Bufferable (0b01111)
+    pub const THEAD_SO: Self = Self { bits: 1usize << 63 };         // Strongly Ordered (0b10000) for MMIO
+
+    // Legacy flag aliases (deprecated, kept for compatibility)
+    pub const THEAD_C: Self = Self { bits: 1usize << 62 };
+    pub const THEAD_B: Self = Self { bits: 1usize << 61 };
 
     pub const fn empty() -> Self {
         Self { bits: 0 }

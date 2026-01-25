@@ -6,6 +6,7 @@ build = "build.rs"
 
 [dependencies]
 heapless = "0.8.0"
+spin = "0.9"
 types = { path = "types" }
 
 [profile.dev]

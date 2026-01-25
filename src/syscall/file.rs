@@ -26,7 +26,8 @@ pub fn write(tf: &mut types::ProcessTrapFrame) {
     unsafe {
         plic::init();
     }
-    uart.write_byte('*' as u8);
+    // uart.write_byte('*' as u8);
+    print!("%");
 
     // Pretend all bytes were written successfully.
     tf.registers.a0 = tf.registers.a2;

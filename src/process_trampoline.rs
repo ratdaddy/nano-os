@@ -40,10 +40,12 @@ pub unsafe fn enter_process(context: &mut process::Context) -> ! {
         // set up the trap handler and user mmap
         "csrw stvec, {trap_entry}",
         "csrw satp, {satp_value}",
+        // T-Head C906: flush caches for SATP switch (kernel -> user)
+        // See notes/thead-c906-memory-guide.md for cache instruction details
         "ld t0, TTF_IS_LICHEE_RVNANO(t0)",
         "beqz t0, 1f",
-        ".long 0x0020000b",
-        ".long 0x0190000b",
+        ".long 0x0030000b",   // th.dcache.ciall - clean and invalidate D-cache
+        ".long 0x0100000b",   // th.icache.iall  - invalidate I-cache
      "1: sfence.vma zero, zero",
         "csrw sepc, {user_pc}",        // user entry point
         //"csrw sstatus, {?}",     // user-mode status (e.g., SPIE = 1, SPP = 0)

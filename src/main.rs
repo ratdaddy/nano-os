@@ -33,6 +33,7 @@ mod process_memory_map;
 mod process_trampoline;
 mod read_elf;
 mod test;
+mod thread;
 mod trap;
 mod syscall;
 mod uart;

@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use types::{TrampolineTrapFrame, ProcessTrapFrame, GpRegisters};
+use types::{TrampolineTrapFrame, ProcessTrapFrame, GpRegisters, ThreadContext};
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -16,6 +16,8 @@ fn main() {
     generate_trampoline_trap_frame_offsets(&mut asm);
 
     generate_process_trap_frame_offsets(&mut asm);
+
+    generate_thread_context_offsets(&mut asm);
 }
 
 fn generate_trampoline_trap_frame_offsets(asm: &mut File) {
@@ -84,4 +86,27 @@ fn generate_process_trap_frame_offsets(asm: &mut File) {
     def_ptf_reg!(t4);
     def_ptf_reg!(t5);
     def_ptf_reg!(t6);
+}
+
+fn generate_thread_context_offsets(asm: &mut File) {
+    macro_rules! def_tc {
+        ($name:expr) => {
+            writeln!(asm, ".equ TC_{}, {}", stringify!($name).to_uppercase(), offset_of!(ThreadContext, $name)).unwrap();
+        };
+    }
+
+    def_tc!(sp);
+    def_tc!(ra);
+    def_tc!(s0);
+    def_tc!(s1);
+    def_tc!(s2);
+    def_tc!(s3);
+    def_tc!(s4);
+    def_tc!(s5);
+    def_tc!(s6);
+    def_tc!(s7);
+    def_tc!(s8);
+    def_tc!(s9);
+    def_tc!(s10);
+    def_tc!(s11);
 }
