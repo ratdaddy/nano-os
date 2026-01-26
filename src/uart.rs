@@ -77,6 +77,7 @@ impl Uart {
         }
     }
 
+    #[allow(dead_code)]
     pub fn read_byte(&self) -> Option<u8> {
         const LSR_OFFSET: usize = 5;
         const RBR_OFFSET: usize = 0;
@@ -105,15 +106,6 @@ impl Uart {
             self.reg_addr_32(offset).write_volatile(val as u32);
         } else {
             self.reg_addr(offset).write_volatile(val);
-        }
-    }
-
-    pub fn print_iir(&self) {
-        const IIR_OFFSET: usize = 2;
-
-        unsafe {
-            let iir = self.read_reg(IIR_OFFSET);
-            println!("IIR: {:#04x}\n", iir);
         }
     }
 }

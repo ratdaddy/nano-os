@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -15,9 +17,6 @@ const HIGH_HALF_PHYS_START: usize = 0xffff_ffff_0000_0000;
 pub static KERNEL_STACK_START: usize = HIGH_HALF_PHYS_START + 0xffe0_0000;
 
 const KERNEL_STACK_STARTING_SIZE: usize = 0x4000;
-static mut CURRENT_KERNEL_STACK_END: usize = 0;
-const KERNEL_STACK_END: usize = KERNEL_STACK_START - 0x20_0000;
-
 #[no_mangle]
 pub static TRAMPOLINE_TRAP_FRAME: usize = HIGH_HALF_PHYS_START + 0xffe0_0000;
 const TRAP_FRAME_SIZE: usize = 0x1000;
@@ -281,9 +280,6 @@ fn map_kernel_stack() {
         );
     });
 
-    unsafe {
-        CURRENT_KERNEL_STACK_END = kernel_stack_end;
-    }
 }
 
 fn map_and_initialize_kernel_heap() {
@@ -410,54 +406,6 @@ pub fn switch_to_kernel_map() {
     }
 
     println!("Switched to kernel map");
-}
-
-pub fn grow_stack_on_page_fault(fault_address: usize) -> bool {
-    const STACK_GROWTH_CHUNK: usize = 0x4000;
-
-    if !(KERNEL_STACK_END..=KERNEL_STACK_START).contains(&fault_address) {
-        return false;
-    }
-
-    let aligned_fault_address = memory::align_down(fault_address);
-    let current_stack_end = unsafe { CURRENT_KERNEL_STACK_END };
-
-    if aligned_fault_address < current_stack_end - STACK_GROWTH_CHUNK {
-        return false;
-    }
-
-    let grow_end = (aligned_fault_address - STACK_GROWTH_CHUNK).max(KERNEL_STACK_END);
-
-    println!("Growing kernel stack: virt: {:#x} - {:#x}", grow_end, current_stack_end,);
-
-    // T-Head C906 requires memory type flags for normal memory
-    let thead_mem_flags = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
-        PageFlags::THEAD_MEMORY
-    } else {
-        PageFlags::empty()
-    };
-
-    with_page_mapper(|mapper| {
-        mapper.allocate_and_map_pages(
-            grow_end,
-            current_stack_end - grow_end,
-            PageFlags::READ | PageFlags::WRITE | PageFlags::ACCESSED | PageFlags::DIRTY | thead_mem_flags,
-        );
-    });
-
-    thead_flush_dcache();
-
-    unsafe {
-        core::arch::asm!("sfence.vma zero, zero", options(nostack, preserves_flags),);
-    }
-
-    unsafe {
-        CURRENT_KERNEL_STACK_END = grow_end;
-    }
-
-    println!("Kernel stack grown to: {:#x}", grow_end);
-
-    true
 }
 
 pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {

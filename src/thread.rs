@@ -58,7 +58,7 @@ impl ThreadManager {
     }
 
     /// Add a thread to the table
-    fn add_thread(&mut self, mut thread: Box<Thread>) -> usize {
+    fn add_thread(&mut self, thread: Box<Thread>) -> usize {
         let thread_id = thread.id;
         self.thread_table.insert(thread_id, thread);
         thread_id
@@ -133,16 +133,6 @@ impl Thread {
             CURRENT_THREAD = thread;
         }
     }
-
-    /// Restore this thread's context and jump to it (never returns)
-    pub fn restore_context(&self) -> ! {
-        // Set self as current before jumping
-        Self::set_current(self as *const Thread as *mut Thread);
-
-        unsafe {
-            restore_context_asm(&self.context as *const ThreadContext);
-        }
-    }
 }
 
 /// Public API for thread management
@@ -153,20 +143,6 @@ pub fn add(thread: Box<Thread>) -> usize {
     let thread_id = manager.add_thread(thread);
     manager.enqueue_ready(thread_id);
     thread_id
-}
-
-/// Get a thread by ID (locks the thread manager)
-pub fn get<F, R>(thread_id: usize, f: F) -> Option<R>
-where
-    F: FnOnce(&mut Thread) -> R,
-{
-    let mut manager = THREAD_MANAGER.lock();
-    manager.get_thread(thread_id).map(|thread| f(thread.as_mut()))
-}
-
-/// Remove a thread from the system
-pub fn remove(thread_id: usize) -> Option<Box<Thread>> {
-    THREAD_MANAGER.lock().remove_thread(thread_id)
 }
 
 /// Helper: saves context assuming ra is already saved in t1
@@ -205,27 +181,6 @@ unsafe extern "C" fn save_context_with_ra_in_t1() {
     )
 }
 
-/// Save the current thread's context
-/// This is called before switching to another thread or blocking
-#[naked]
-pub unsafe extern "C" fn save_context() {
-    core::arch::naked_asm!(
-        // Save original ra to t1
-        "mv t1, ra",
-
-        // Call helper to save context (clobbers ra, but we have it in t1)
-        "call {helper}",
-
-        // Restore ra from t1 so we return to the correct place
-        "mv ra, t1",
-
-        // Return to caller with context saved
-        "ret",
-
-        helper = sym save_context_with_ra_in_t1,
-    )
-}
-
 // Assembly function to restore context and jump to thread
 // Takes a0 = pointer to ThreadContext
 // Loads sp, ra, s0-s11 and executes ret (jumps to ra)
@@ -255,6 +210,7 @@ unsafe fn restore_context_asm(context: *const ThreadContext) -> ! {
 /// Saves current thread's context and schedules the next ready thread
 /// Must preserve ALL callee-saved registers (s0-s11, sp, ra)
 #[naked]
+#[allow(dead_code)]
 pub unsafe extern "C" fn yield_now() {
     core::arch::naked_asm!(
         // Save original ra to t1
@@ -273,6 +229,7 @@ pub unsafe extern "C" fn yield_now() {
 }
 
 /// Implementation of yield after context is saved
+#[allow(dead_code)]
 fn yield_impl() -> ! {
     let current = Thread::current();
     let current_id = current.id;

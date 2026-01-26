@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;

@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use core::{ mem, ptr };
 use core::slice;
 use core::sync::atomic::Ordering;

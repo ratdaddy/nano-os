@@ -2,7 +2,6 @@ use core::sync::atomic::Ordering;
 
 use crate::dtb;
 use crate::initramfs;
-use crate::io::Read;
 use crate::process;
 use crate::process_memory_map;
 use crate::process_trampoline;
@@ -16,12 +15,6 @@ pub fn run_init_process() -> ! {
 
     let slice = unsafe { core::slice::from_raw_parts(initrd_start as *const _, initrd_len) };
     initramfs::ifs_mount(slice);
-
-    let mut handle = initramfs::ifs_open("/etc/motd").unwrap();
-    let mut contents = alloc::string::String::new();
-    let _result = handle.read_to_string(&mut contents);
-
-    println!("Contents of /etc/motd: {}", contents);
 
     let mut handle = initramfs::ifs_open("/prog_example").unwrap();
     let header = read_elf::read_elf64_header(&mut handle).unwrap();

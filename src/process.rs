@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use crate::page_mapper;
 use crate::process_memory_map;
 use alloc::boxed::Box;

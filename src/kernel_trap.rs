@@ -1,4 +1,5 @@
 #[repr(align(16))]
+#[allow(dead_code)]
 struct AlignedStack([u8; 4096]);
 
 #[no_mangle]

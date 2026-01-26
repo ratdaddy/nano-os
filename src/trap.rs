@@ -1,6 +1,4 @@
 use crate::amo;
-//use crate::kernel_main;
-use crate::kernel_memory_map;
 use crate::syscall;
 
 extern "C" {
@@ -166,9 +164,7 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
             amo::handle_amo_fault(tf);
         }
         LOAD_PAGE_FAULT | STORE_PAGE_FAULT => {
-            if !kernel_memory_map::grow_stack_on_page_fault(stval) {
-                panic!("Unhandled page fault at address {:#x} (scause: {})", stval, scause);
-            }
+            panic!("Page fault at address {:#x} (scause: {})", stval, scause);
         }
         USER_ECALL => syscall::handle(tf),
         SUPERVISOR_EXTERNAL_INTERRUPT => {
