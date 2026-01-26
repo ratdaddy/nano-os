@@ -14,6 +14,12 @@ pub enum ThreadState {
     Blocked,
 }
 
+/// Message passed between kernel threads
+pub struct Message {
+    pub sender: usize,
+    pub data: usize,
+}
+
 const STACK_SIZE: usize = 8 * 1024; // 8 KB stack
 
 /// Kernel thread structure
@@ -26,6 +32,9 @@ pub struct Thread {
 
     // Stack is allocated separately on heap to avoid stack overflow during construction
     pub stack: Vec<u8>,
+
+    // Message inbox for inter-thread communication
+    pub inbox: VecDeque<Message>,
 }
 
 /// Thread manager - holds all threading state
@@ -97,6 +106,7 @@ impl Thread {
             state: ThreadState::Ready,
             context: ThreadContext::default(),
             stack,
+            inbox: VecDeque::new(),
         });
 
         // Calculate sp based on the stable location of the Vec's buffer
@@ -333,4 +343,62 @@ pub fn exit() -> ! {
 
     // Schedule next thread (current is no longer valid after this point)
     schedule()
+}
+
+/// Block the current thread (saves context and calls scheduler)
+/// Unlike yield_now, does NOT enqueue the thread — it stays Blocked
+/// until another thread calls send_message to wake it.
+#[naked]
+unsafe extern "C" fn block_now() {
+    core::arch::naked_asm!(
+        "mv t1, ra",
+        "call {save_helper}",
+        "call {block_impl}",
+        save_helper = sym save_context_with_ra_in_t1,
+        block_impl = sym block_impl,
+    )
+}
+
+/// Implementation of block after context is saved
+fn block_impl() -> ! {
+    let current = Thread::current();
+    let current_id = current.id;
+
+    println!("[block] Thread {} blocked, waiting for message", current_id);
+
+    current.state = ThreadState::Blocked;
+    // Don't enqueue — send_message will wake us when a message arrives
+
+    schedule()
+}
+
+/// Send a message to a target thread
+/// If the target is Blocked, it is woken up and added to the ready queue
+pub fn send_message(target_id: usize, msg: Message) {
+    let mut manager = THREAD_MANAGER.lock();
+    if let Some(target) = manager.get_thread(target_id) {
+        println!("[send] Delivering message from {} to thread {}",
+                 msg.sender, target_id);
+        target.inbox.push_back(msg);
+        if target.state == ThreadState::Blocked {
+            println!("[send] Waking blocked thread {}", target_id);
+            target.state = ThreadState::Ready;
+            manager.enqueue_ready(target_id);
+        }
+    }
+}
+
+/// Receive a message from the current thread's inbox
+/// Blocks if the inbox is empty, yielding to the scheduler until a message arrives
+pub fn receive_message() -> Message {
+    loop {
+        let current = Thread::current();
+        if let Some(msg) = current.inbox.pop_front() {
+            println!("[recv] Thread {} received message from thread {}",
+                     current.id, msg.sender);
+            return msg;
+        }
+        // No message — block until sender wakes us
+        unsafe { block_now(); }
+    }
 }
