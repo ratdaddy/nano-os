@@ -16,10 +16,14 @@ mod trampoline;
 #[macro_use]
 mod console;
 
+#[macro_use]
+mod kthread;
+
 mod amo;
 mod asm_offsets;
 mod demos;
 mod dtb;
+mod file_ops;
 mod initramfs;
 mod io;
 mod kernel_allocator;
@@ -29,7 +33,7 @@ mod kernel_trap;
 mod memory;
 mod page_allocator;
 mod page_mapper;
-mod plic;
+mod drivers;
 mod process;
 mod process_init;
 mod process_memory_map;
@@ -39,7 +43,6 @@ mod test;
 mod thread;
 mod trap;
 mod syscall;
-mod uart;
 
 use core::panic::PanicInfo;
 

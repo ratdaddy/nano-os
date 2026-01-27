@@ -1,5 +1,5 @@
 use crate::kernel_memory_map::TRAMPOLINE_TRAP_FRAME;
-use crate::plic;
+use crate::drivers::plic;
 use crate::process;
 use crate::trap;
 

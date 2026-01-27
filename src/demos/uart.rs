@@ -1,6 +1,6 @@
 use crate::dtb;
-use crate::plic;
-use crate::uart;
+use crate::drivers::plic;
+use crate::drivers::uart;
 
 #[allow(dead_code)]
 pub fn uart_demo() {

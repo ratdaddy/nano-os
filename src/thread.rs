@@ -234,13 +234,9 @@ fn yield_impl() -> ! {
     let current = Thread::current();
     let current_id = current.id;
 
-    println!("[yield] Thread {} context saved, RA={:#x}", current_id, current.context.ra);
-
     // Mark current thread as ready and add back to queue
     current.state = ThreadState::Ready;
     THREAD_MANAGER.lock().enqueue_ready(current_id);
-
-    println!("[yield] Thread {} calling schedule", current_id);
 
     // Schedule next thread (never returns, but thread resumes here when rescheduled)
     schedule()
@@ -254,9 +250,6 @@ fn schedule() -> ! {
     if let Some(next_id) = manager.dequeue_ready() {
         let next_thread = manager.get_thread(next_id).expect("Thread in ready queue not found");
         next_thread.state = ThreadState::Running;
-
-        println!("[schedule] Switching to thread {}, RA={:#x}, SP={:#x}",
-                 next_id, next_thread.context.ra, next_thread.context.sp);
 
         // Get raw pointer before dropping lock
         let next_ptr = next_thread.as_mut() as *mut Thread;
@@ -319,9 +312,6 @@ unsafe extern "C" fn block_now() {
 /// Implementation of block after context is saved
 fn block_impl() -> ! {
     let current = Thread::current();
-    let current_id = current.id;
-
-    println!("[block] Thread {} blocked, waiting for message", current_id);
 
     current.state = ThreadState::Blocked;
     // Don't enqueue — send_message will wake us when a message arrives
@@ -334,11 +324,8 @@ fn block_impl() -> ! {
 pub fn send_message(target_id: usize, msg: Message) {
     let mut manager = THREAD_MANAGER.lock();
     if let Some(target) = manager.get_thread(target_id) {
-        println!("[send] Delivering message from {} to thread {}",
-                 msg.sender, target_id);
         target.inbox.push_back(msg);
         if target.state == ThreadState::Blocked {
-            println!("[send] Waking blocked thread {}", target_id);
             target.state = ThreadState::Ready;
             manager.enqueue_ready(target_id);
         }
@@ -351,8 +338,6 @@ pub fn receive_message() -> Message {
     loop {
         let current = Thread::current();
         if let Some(msg) = current.inbox.pop_front() {
-            println!("[recv] Thread {} received message from thread {}",
-                     current.id, msg.sender);
             return msg;
         }
         // No message — block until sender wakes us

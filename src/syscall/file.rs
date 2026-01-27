@@ -1,5 +1,5 @@
-use crate::uart;
-use crate::plic;
+use crate::drivers::uart;
+use crate::drivers::plic;
 use crate::dtb;
 
 pub fn write(tf: &mut types::ProcessTrapFrame) {

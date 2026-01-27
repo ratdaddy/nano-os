@@ -9,16 +9,16 @@ fn thread_a_entry() {
     let my_id = thread::Thread::current().id;
     let peer_id = THREAD_B_ID.load(Ordering::Relaxed);
 
-    println!("[Thread A ({})] Starting", my_id);
+    kprintln!("[Thread A ({})] Starting", my_id);
 
-    println!("[Thread A ({})] Sending message (data=42) to Thread B ({})", my_id, peer_id);
+    kprintln!("[Thread A ({})] Sending message (data=42) to Thread B ({})", my_id, peer_id);
     thread::send_message(peer_id, thread::Message { sender: my_id, data: 42 });
-    println!("[Thread A ({})] Message sent, waiting for reply...", my_id);
+    kprintln!("[Thread A ({})] Message sent, waiting for reply...", my_id);
 
     let reply = thread::receive_message();
-    println!("[Thread A ({})] Received reply from Thread {} with data: {}", my_id, reply.sender, reply.data);
+    kprintln!("[Thread A ({})] Received reply from Thread {} with data: {}", my_id, reply.sender, reply.data);
 
-    println!("[Thread A ({})] Done, exiting", my_id);
+    kprintln!("[Thread A ({})] Done, exiting", my_id);
     thread::exit();
 }
 
@@ -27,23 +27,22 @@ fn thread_b_entry() {
     let my_id = thread::Thread::current().id;
     let peer_id = THREAD_A_ID.load(Ordering::Relaxed);
 
-    println!("[Thread B ({})] Starting", my_id);
+    kprintln!("[Thread B ({})] Starting", my_id);
 
-    println!("[Thread B ({})] Waiting for message...", my_id);
+    kprintln!("[Thread B ({})] Waiting for message...", my_id);
     let msg = thread::receive_message();
-    println!("[Thread B ({})] Received message from Thread {} with data: {}", my_id, msg.sender, msg.data);
+    kprintln!("[Thread B ({})] Received message from Thread {} with data: {}", my_id, msg.sender, msg.data);
 
-    println!("[Thread B ({})] Sending reply (data=99) to Thread A ({})", my_id, peer_id);
+    kprintln!("[Thread B ({})] Sending reply (data=99) to Thread A ({})", my_id, peer_id);
     thread::send_message(peer_id, thread::Message { sender: my_id, data: 99 });
-    println!("[Thread B ({})] Reply sent, exiting", my_id);
+    kprintln!("[Thread B ({})] Reply sent, exiting", my_id);
 
     thread::exit();
 }
 
 /// Message passing demo - creates two threads that exchange messages
 /// Note: This function never returns (start_scheduler is divergent)
-#[allow(dead_code)]
-pub fn test_threading() -> ! {
+pub fn test_message_passing() -> ! {
     println!("=== Message Passing Demo ===");
 
     let thread_a = thread::Thread::new(thread_a_entry);

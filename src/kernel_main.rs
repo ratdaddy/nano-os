@@ -1,5 +1,6 @@
 use crate::console;
 use crate::kernel_trap;
+use crate::kthread;
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");
@@ -10,6 +11,8 @@ pub fn kernel_main() -> ! {
             in(reg) kernel_trap::kernel_trap_entry as usize,
         );
     }
+
+    kthread::uart_writer::init();
 
     loop {
         println!();
@@ -25,7 +28,7 @@ pub fn kernel_main() -> ! {
         println!();
 
         match ch {
-            b'1' => crate::demos::threading::test_threading(),
+            b'1' => crate::demos::threading::test_message_passing(),
             b'2' => crate::demos::uart::uart_demo(),
             b'3' => crate::demos::initramfs_inspect::inspect_initramfs(),
             b'4' => crate::process_init::run_init_process(),
