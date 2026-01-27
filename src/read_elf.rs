@@ -2,7 +2,7 @@
 
 use core::mem::size_of;
 
-use crate::io;
+use crate::file_ops::{self, FileOps};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -50,7 +50,7 @@ pub const PT_GNU_EH_FRAME: u32 = 0x6474e550; // Exception handling info
 pub const PT_GNU_STACK:    u32 = 0x6474e551; // Stack flags (e.g., executable)
 pub const PT_GNU_RELRO:    u32 = 0x6474e552; // Read-only after relocation
 
-pub fn read_elf64_header<R: io::Read>(reader: &mut R) -> Result<Elf64Header, io::Error> {
+pub fn read_elf64_header<R: FileOps>(reader: &mut R) -> Result<Elf64Header, file_ops::Error> {
     let mut buf = [0u8; size_of::<Elf64Header>()];
     reader.read_exact(&mut buf)?;
 
@@ -58,11 +58,8 @@ pub fn read_elf64_header<R: io::Read>(reader: &mut R) -> Result<Elf64Header, io:
     Ok(header)
 }
 
-pub fn read_program_headers<R>(reader: &mut R, header: &Elf64Header) -> Result<alloc::vec::Vec<Elf64ProgramHeader>, io::Error>
-where
-    R: io::Read + io::Seek,
-{
-    reader.seek(io::SeekFrom::Start(header.e_phoff as usize))?;
+pub fn read_program_headers<R: FileOps>(reader: &mut R, header: &Elf64Header) -> Result<alloc::vec::Vec<Elf64ProgramHeader>, file_ops::Error> {
+    reader.seek(file_ops::SeekFrom::Start(header.e_phoff as usize))?;
 
     let mut result = alloc::vec::Vec::with_capacity(header.e_phnum as usize);
 
@@ -74,7 +71,7 @@ where
     Ok(result)
 }
 
-pub fn read_program_header<R: io::Read>(reader: &mut R) -> Result<Elf64ProgramHeader, io::Error> {
+pub fn read_program_header<R: FileOps>(reader: &mut R) -> Result<Elf64ProgramHeader, file_ops::Error> {
     let mut buf = [0u8; core::mem::size_of::<Elf64ProgramHeader>()];
     reader.read_exact(&mut buf)?;
     let phdr = unsafe { core::ptr::read(buf.as_ptr() as *const Elf64ProgramHeader) };

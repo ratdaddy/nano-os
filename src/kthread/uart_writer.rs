@@ -27,8 +27,8 @@ fn send_write(buf: &[u8]) {
 
 pub struct UartFileOps;
 
-impl file_ops::FileOps for UartFileOps {
-    fn write(&self, buf: &[u8]) -> Result<usize, crate::io::Error> {
+impl FileOps for UartFileOps {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, file_ops::Error> {
         let len = buf.len();
         send_write(buf);
         Ok(len)
@@ -57,7 +57,7 @@ impl core::fmt::Write for KPrintWriter {
 impl Drop for KPrintWriter {
     fn drop(&mut self) {
         if !self.buf.is_empty() {
-            let uart = UartFileOps;
+            let mut uart = UartFileOps;
             let _ = uart.write(self.buf.as_bytes());
         }
     }

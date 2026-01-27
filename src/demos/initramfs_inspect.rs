@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 
 use crate::dtb;
 use crate::initramfs;
-use crate::io::Read;
+use crate::file_ops::FileOps;
 
 pub fn inspect_initramfs() {
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);

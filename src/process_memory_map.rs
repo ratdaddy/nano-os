@@ -4,7 +4,7 @@ use core::{ mem, ptr };
 use core::slice;
 use core::sync::atomic::Ordering;
 
-use crate::io;
+use crate::file_ops::FileOps;
 use crate::kernel_memory_map;
 use crate::memory;
 use crate::page_allocator;
@@ -18,7 +18,7 @@ pub const PROCESS_STACK_START: usize = 0xffe0_0000;
 const PROCESS_STACK_STARTING_SIZE: usize = 0x4000;
 pub const PROCESS_MMAP_START: usize = 0x1_0000_0000;
 
-pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut process::Context) {
+pub fn init_from_elf<R: FileOps>(elf_handle: &mut R, context: &mut process::Context) {
     let header = read_elf::read_elf64_header(elf_handle).unwrap();
 
     let (base_vaddr, heap_start) =
@@ -141,7 +141,7 @@ pub fn init_from_elf<R: io::Read + io::Seek>(elf_handle: &mut R, context: &mut p
     );
 }
 
-fn load_elf<R: io::Read + io::Seek>(
+fn load_elf<R: FileOps>(
     elf_handle: &mut R,
     header: &read_elf::Elf64Header,
 ) -> Result<(usize, usize), &'static str> {
@@ -184,7 +184,7 @@ fn load_elf<R: io::Read + io::Seek>(
                 PageFlags::READ | PageFlags::WRITE | PageFlags::EXECUTE | PageFlags::ACCESSED | PageFlags::DIRTY,
             );
 
-            elf_handle.seek(io::SeekFrom::Start(offset))
+            elf_handle.seek(crate::file_ops::SeekFrom::Start(offset))
                 .map_err(|_| "Failed to seek to program header offset")?;
 
             println!("Loading from {:#x}", virt_addr_start);

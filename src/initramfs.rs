@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 
-use crate::io;
+use crate::file_ops::{self, FileOps};
 
 static mut FILES: MaybeUninit<Vec<FileEntry>> = MaybeUninit::uninit();
 
@@ -19,31 +19,29 @@ pub struct IfsHandle {
     offset: usize,
 }
 
-impl io::Read for IfsHandle {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+impl FileOps for IfsHandle {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, file_ops::Error> {
         let remaining = &self.data[self.offset..];
         let len = remaining.len().min(buf.len());
         buf[..len].copy_from_slice(&remaining[..len]);
         self.offset += len;
         Ok(len)
     }
-}
 
-impl io::Seek for IfsHandle {
-    fn seek(&mut self, pos: io::SeekFrom) -> Result<(), io::Error> {
+    fn seek(&mut self, pos: file_ops::SeekFrom) -> Result<(), file_ops::Error> {
         match pos {
-            io::SeekFrom::Start(offset) => {
+            file_ops::SeekFrom::Start(offset) => {
                 if offset > self.data.len() {
-                    return Err(io::Error::UnexpectedEof);
+                    return Err(file_ops::Error::UnexpectedEof);
                 }
                 self.offset = offset;
             }
-            io::SeekFrom::Current(offset) => {
+            file_ops::SeekFrom::Current(offset) => {
                 let new_offset = self.offset
                     .checked_add_signed(offset)
-                    .ok_or_else(|| io::Error::InvalidInput)?;
+                    .ok_or_else(|| file_ops::Error::InvalidInput)?;
                 if new_offset > self.data.len() {
-                    return Err(io::Error::UnexpectedEof);
+                    return Err(file_ops::Error::UnexpectedEof);
                 }
                 self.offset = new_offset;
             }
@@ -112,7 +110,7 @@ mod tests {
     use alloc::vec::Vec;
     use alloc::boxed::Box;
     use super::*;
-    use crate::io::*;
+    use crate::file_ops::*;
 
     fn pad4(len: usize) -> usize {
         (len + 3) & !3
@@ -169,7 +167,7 @@ mod tests {
         assert_eq!(handle.read(&mut buf).unwrap(), 5);
         assert_eq!(&buf, b"hello");
 
-        handle.seek(io::SeekFrom::Start(6)).unwrap();
+        handle.seek(SeekFrom::Start(6)).unwrap();
         assert_eq!(handle.read(&mut buf).unwrap(), 5);
         assert_eq!(&buf, b"world");
     }
@@ -183,8 +181,8 @@ mod tests {
         ifs_mount(image);
 
         let mut handle = ifs_open("/tiny.txt").unwrap();
-        let result = handle.seek(io::SeekFrom::Start(1000));
-        assert!(matches!(result, Err(io::Error::UnexpectedEof)));
+        let result = handle.seek(SeekFrom::Start(1000));
+        assert!(matches!(result, Err(Error::UnexpectedEof)));
     }
 
     #[test_case]
@@ -196,7 +194,7 @@ mod tests {
         ifs_mount(image);
 
         let mut handle = ifs_open("/back.txt").unwrap();
-        let result = handle.seek(io::SeekFrom::Current(-10));
-        assert!(matches!(result, Err(io::Error::InvalidInput)));
+        let result = handle.seek(SeekFrom::Current(-10));
+        assert!(matches!(result, Err(Error::InvalidInput)));
     }
 }

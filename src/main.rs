@@ -25,7 +25,6 @@ mod demos;
 mod dtb;
 mod file_ops;
 mod initramfs;
-mod io;
 mod kernel_allocator;
 mod kernel_main;
 mod kernel_memory_map;
