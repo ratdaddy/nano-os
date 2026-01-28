@@ -13,16 +13,17 @@ static WRITER_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
 /// Send a write buffer to the UART writer thread.
 /// Takes ownership of the data via Box::into_raw; the writer thread
 /// reconstructs and frees it after writing.
+/// Uses send_message_urgent so the writer thread runs immediately.
 fn send_write(buf: &[u8]) {
     let data = buf.to_vec();
     let ptr = Box::into_raw(Box::new(data));
-    thread::send_message(
-        WRITER_THREAD_ID.load(Ordering::Relaxed),
-        thread::Message {
-            sender: thread::Thread::current().id,
-            data: ptr as usize,
-        },
-    );
+    unsafe {
+        thread::send_message_urgent(
+            WRITER_THREAD_ID.load(Ordering::Relaxed),
+            thread::Thread::current().id,
+            ptr as usize,
+        );
+    }
 }
 
 pub struct UartFileOps;

@@ -74,9 +74,14 @@ impl ThreadManager {
         self.thread_table.remove(&thread_id)
     }
 
-    /// Add a thread to the ready queue
+    /// Add a thread to the back of the ready queue
     fn enqueue_ready(&mut self, thread_id: usize) {
         self.ready_queue.push_back(thread_id);
+    }
+
+    /// Add a thread to the front of the ready queue (priority wake)
+    fn enqueue_ready_front(&mut self, thread_id: usize) {
+        self.ready_queue.push_front(thread_id);
     }
 
     /// Get next ready thread from queue
@@ -330,6 +335,51 @@ pub fn send_message(target_id: usize, msg: Message) {
             manager.enqueue_ready(target_id);
         }
     }
+}
+
+/// Send a message to a target thread and immediately yield to it.
+/// The target is placed at the front of the ready queue, and the sender
+/// yields so the target runs next. Use this for latency-sensitive receivers
+/// like the UART writer or future interrupt handler threads.
+///
+/// Must be called as a naked function to save the caller's context before yielding.
+#[naked]
+pub unsafe extern "C" fn send_message_urgent(target_id: usize, msg_sender: usize, msg_data: usize) {
+    core::arch::naked_asm!(
+        "mv t1, ra",
+        "call {save_helper}",
+        "call {urgent_impl}",
+        save_helper = sym save_context_with_ra_in_t1,
+        urgent_impl = sym send_message_urgent_impl,
+    )
+}
+
+/// Implementation after context is saved.
+/// a0 = target_id, a1 = msg_sender, a2 = msg_data (preserved across save_context)
+fn send_message_urgent_impl(target_id: usize, msg_sender: usize, msg_data: usize) -> ! {
+    let current = Thread::current();
+    let current_id = current.id;
+    current.state = ThreadState::Ready;
+
+    let mut manager = THREAD_MANAGER.lock();
+
+    // Deliver the message
+    if let Some(target) = manager.get_thread(target_id) {
+        target.inbox.push_back(Message {
+            sender: msg_sender,
+            data: msg_data,
+        });
+        if target.state == ThreadState::Blocked {
+            target.state = ThreadState::Ready;
+            manager.enqueue_ready_front(target_id);
+        }
+    }
+
+    // Re-enqueue sender to back of queue and yield
+    manager.enqueue_ready(current_id);
+    drop(manager);
+
+    schedule()
 }
 
 /// Receive a message from the current thread's inbox
