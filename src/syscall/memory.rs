@@ -28,7 +28,6 @@ pub fn mmap(tf: &mut types::ProcessTrapFrame) {
 
     let ctx = process::Context::current();
     let size = memory::align_up(len);
-
     let virt_addr = ctx.mmap_next;
     println!("mmap at {:#x}, size: {:#x}", virt_addr, size);
 

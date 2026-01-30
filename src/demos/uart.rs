@@ -1,37 +1,28 @@
 use crate::dtb;
-use crate::drivers::plic;
 use crate::drivers::uart;
+use crate::kernel_trap;
+use crate::riscv;
 
 #[allow(dead_code)]
 pub fn uart_demo() {
-    let uart = if dtb::get_cpu_type() == dtb::CpuType::LicheeRVNano {
-        uart::Uart::new(uart::NANO_UART)
-    } else {
-        uart::Uart::new(uart::QEMU_UART)
-    };
+    // Enable UART RX interrupt for this demo
+    uart::get().enable_rx_interrupt();
 
     println!("about to write to UART");
-    uart.write_str("Direct write to uart\r\n");
-
-    uart.enable_rx_interrupt();
-    unsafe {
-        plic::init();
-    }
+    uart::get().write_str("Direct write to uart\r\n");
 
     println!("Enabling S-mode interrupts");
     unsafe {
-        // Enable external, timer, and software interrupts in sie register
-        // 0x222 = SEIE (bit 9) | STIE (bit 5) | SSIE (bit 1)
-        core::arch::asm!(
-            "li t0, 0x222",
-            "csrw sie, t0",
-        );
+        // Set up sscratch with the trap stack address before enabling interrupts.
+        // The kernel trap handler swaps sp with sscratch on entry.
+        let trap_stack = kernel_trap::trap_stack_top();
+        core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
 
-        // Enable interrupts globally in S-mode by setting SIE bit (bit 1) in sstatus
-        core::arch::asm!(
-            "li t0, (1 << 1)",
-            "csrs sstatus, t0",
-        );
+        // Enable all S-mode interrupt sources in sie register
+        core::arch::asm!("csrw sie, {}", in(reg) riscv::SIE_ALL);
+
+        // Enable interrupts globally in S-mode
+        core::arch::asm!("csrs sstatus, {}", in(reg) riscv::SSTATUS_SIE);
     }
     println!("Interrupts enabled, waiting for input...");
 

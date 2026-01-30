@@ -1,0 +1,53 @@
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use alloc::vec;
+
+use crate::kernel_trap;
+use crate::riscv;
+use crate::thread;
+
+use types::ThreadContext;
+
+const IDLE_STACK_SIZE: usize = 4096;
+
+pub fn init() {
+    let stack = vec![0u8; IDLE_STACK_SIZE];
+    let sp = stack.as_ptr() as usize + IDLE_STACK_SIZE;
+
+    let thread = Box::new(thread::Thread {
+        id: 0,
+        state: thread::ThreadState::Ready,
+        context: ThreadContext {
+            sp,
+            ra: idle_entry as usize,
+            ..ThreadContext::default()
+        },
+        stack,
+        inbox: VecDeque::new(),
+    });
+
+    let ptr = Box::into_raw(thread);
+    thread::set_idle_thread(ptr, idle_entry as usize);
+}
+
+fn idle_entry() -> ! {
+    println!("Idle thread started");
+
+    unsafe {
+        // Set sscratch to kernel trap stack top (for trap handler sp swap)
+        let trap_stack = kernel_trap::trap_stack_top();
+        core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
+
+        // Enable all S-mode interrupt sources in sie register
+        core::arch::asm!("csrw sie, {}", in(reg) riscv::SIE_ALL);
+    }
+
+    loop {
+        unsafe {
+            core::arch::asm!("csrs sstatus, {}", in(reg) riscv::SSTATUS_SIE);
+            core::arch::asm!("wfi");
+            core::arch::asm!("csrc sstatus, {}", in(reg) riscv::SSTATUS_SIE);
+        }
+        thread::schedule_if_ready();
+    }
+}

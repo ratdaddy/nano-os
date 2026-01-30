@@ -1,4 +1,6 @@
 use crate::amo;
+use crate::drivers::plic;
+use crate::riscv::{self, exception, interrupt};
 use crate::syscall;
 
 extern "C" {
@@ -152,26 +154,30 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
         "Trap handler called: scause: {:#x}, stval: {:#x}, sepc: {:#x}",
         scause, stval, sepc
     );
-    const AMO_FAULT: usize = 7;
-    const USER_ECALL: usize = 8;
-    const LOAD_PAGE_FAULT: usize = 13;
-    const STORE_PAGE_FAULT: usize = 15;
-    const SUPERVISOR_EXTERNAL_INTERRUPT: usize = 0x8000000000000009;
 
-    //match scause & 0xff {
-    match scause {
-        AMO_FAULT => {
-            amo::handle_amo_fault(tf);
+    if riscv::is_interrupt(scause) {
+        // Handle interrupt while user process was running
+        match interrupt::code(scause) {
+            interrupt::code::EXTERNAL => {
+                plic::dispatch_irq();
+            }
+            _ => {
+                panic!("Unhandled interrupt in user trap: scause={:#x}", scause);
+            }
         }
-        LOAD_PAGE_FAULT | STORE_PAGE_FAULT => {
-            panic!("Page fault at address {:#x} (scause: {})", stval, scause);
-        }
-        USER_ECALL => syscall::handle(tf),
-        SUPERVISOR_EXTERNAL_INTERRUPT => {
-            panic!("Interrupt occurred");
-        }
-        _ => {
-            panic!("Unhandled trap: scause: {:#x}, stval: {:#x}", scause, stval);
+    } else {
+        // Handle exception
+        match scause {
+            exception::STORE_ACCESS_FAULT => {
+                amo::handle_amo_fault(tf);
+            }
+            exception::LOAD_PAGE_FAULT | exception::STORE_PAGE_FAULT => {
+                panic!("Page fault at address {:#x} (scause: {})", stval, scause);
+            }
+            exception::ECALL_FROM_U => syscall::handle(tf),
+            _ => {
+                panic!("Unhandled exception: scause={:#x}, stval={:#x}, sepc={:#x}", scause, stval, sepc);
+            }
         }
     }
 

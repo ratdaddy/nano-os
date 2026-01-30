@@ -7,6 +7,11 @@ use alloc::vec::Vec;
 use core::mem;
 use core::ptr::addr_of_mut;
 
+/// 16-byte aligned stack for RISC-V calling convention compliance.
+/// 16KB is needed to handle syscalls with println formatting overhead.
+#[repr(C, align(16))]
+pub struct AlignedStack(pub [u8; 16384]);
+
 #[repr(C)]
 pub struct Context {
     pub page_map: page_mapper::PageMapper,
@@ -15,7 +20,7 @@ pub struct Context {
     pub heap_end: usize,
     pub mmap_next: usize,
     pub trap_frame: &'static mut types::ProcessTrapFrame,
-    pub kernel_stack: [u8; 8192],
+    pub kernel_stack: AlignedStack,
 }
 
 impl Context {
@@ -24,10 +29,11 @@ impl Context {
         let ptr = boxed.as_mut_ptr() as *mut Self;
 
         unsafe {
-            let stack = addr_of_mut!((*ptr).kernel_stack);
-            let stack_top = (*stack).as_ptr().add(8192) as usize;
-            let tf_ptr = (stack_top - mem::size_of::<types::ProcessTrapFrame>()) as *mut types::ProcessTrapFrame;
-            (*ptr).trap_frame = &mut *(tf_ptr as *mut _);
+            // Place the process trap frame at the top of the per-process kernel stack.
+            let stack_base = addr_of_mut!((*ptr).kernel_stack.0) as *mut u8;
+            let stack_top = stack_base.add(mem::size_of::<AlignedStack>());
+            let tf_ptr = stack_top.offset(-(mem::size_of::<types::ProcessTrapFrame>() as isize));
+            (*ptr).trap_frame = &mut *(tf_ptr as *mut types::ProcessTrapFrame);
 
             (*ptr).page_map = page_mapper::PageMapper::new();
             (*ptr).satp = (*ptr).page_map.satp();

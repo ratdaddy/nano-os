@@ -1,4 +1,5 @@
 use crate::console;
+use crate::drivers::{plic, uart};
 use crate::kernel_trap;
 use crate::kthread;
 
@@ -12,7 +13,12 @@ pub fn kernel_main() -> ! {
         );
     }
 
+    // Initialize PLIC and UART
+    unsafe { plic::init(); }
+    uart::init();
+
     kthread::uart_writer::init();
+    kthread::idle::init();
 
     loop {
         println!();

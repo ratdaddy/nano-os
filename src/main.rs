@@ -38,6 +38,7 @@ mod process_init;
 mod process_memory_map;
 mod process_trampoline;
 mod read_elf;
+mod riscv;
 mod test;
 mod thread;
 mod trap;

@@ -3,7 +3,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::dtb;
 use crate::file_ops::{self, FileOps};
 use crate::thread;
 use crate::drivers::uart;
@@ -90,19 +89,14 @@ pub fn init() {
 }
 
 fn writer_entry() {
-    let uart = match dtb::get_cpu_type() {
-        dtb::CpuType::LicheeRVNano => uart::Uart::new(uart::NANO_UART),
-        _ => uart::Uart::new(uart::QEMU_UART),
-    };
-
     loop {
         let msg = thread::receive_message();
         let data = unsafe { Box::from_raw(msg.data as *mut Vec<u8>) };
         for &byte in data.iter() {
             if byte == b'\n' {
-                uart.write_byte(b'\r');
+                uart::get().write_byte(b'\r');
             }
-            uart.write_byte(byte);
+            uart::get().write_byte(byte);
         }
     }
 }

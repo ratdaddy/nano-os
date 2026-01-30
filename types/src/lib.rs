@@ -83,6 +83,16 @@ impl GpRegisters {
     }
 }
 
+/// Kernel trap frame - ALL registers saved during interrupt/exception handling.
+/// Since a trap can occur at any point, we must preserve both caller and callee-saved regs.
+/// Layout: all 31 GP registers (matching GpRegisters order) + sepc
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+pub struct KernelTrapFrame {
+    pub registers: GpRegisters,
+    pub sepc: usize,
+}
+
 /// Kernel thread context - registers saved/restored during context switch
 /// Only callee-saved registers need to be saved (sp, ra, s0-s11)
 /// Stored contiguously for efficient access (registers aren't physically contiguous)

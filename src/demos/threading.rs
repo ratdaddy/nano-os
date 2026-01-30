@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::drivers::uart;
 use crate::thread;
 
 static THREAD_A_ID: AtomicUsize = AtomicUsize::new(0);
@@ -44,6 +45,9 @@ fn thread_b_entry() {
 /// Note: This function never returns (start_scheduler is divergent)
 pub fn test_message_passing() -> ! {
     println!("=== Message Passing Demo ===");
+
+    // Enable UART RX interrupt for interrupt-driven I/O during the demo
+    uart::get().enable_rx_interrupt();
 
     let thread_a = thread::Thread::new(thread_a_entry);
     let a_id = thread_a.id;

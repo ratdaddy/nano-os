@@ -97,6 +97,10 @@ static THREAD_MANAGER: Mutex<ThreadManager> = Mutex::new(ThreadManager::new());
 // For SMP: This would need to be per-CPU storage
 static mut CURRENT_THREAD: *mut Thread = core::ptr::null_mut();
 
+// Idle thread (not in thread table or ready queue — special scheduler fallback)
+static mut IDLE_THREAD: *mut Thread = core::ptr::null_mut();
+static mut IDLE_ENTRY: usize = 0;
+
 impl Thread {
     /// Create a new kernel thread with the given entry point
     /// Returns Box<Thread> so the thread never moves after sp is calculated
@@ -137,6 +141,15 @@ impl Thread {
         unsafe {
             CURRENT_THREAD = thread;
         }
+    }
+}
+
+/// Register the idle thread. Called once during boot by kthread::idle::init().
+/// The idle thread is not added to the thread table or ready queue.
+pub fn set_idle_thread(thread: *mut Thread, entry: usize) {
+    unsafe {
+        IDLE_THREAD = thread;
+        IDLE_ENTRY = entry;
     }
 }
 
@@ -268,12 +281,9 @@ fn schedule() -> ! {
             restore_context_asm(&(*next_ptr).context as *const ThreadContext);
         }
     } else {
-        // No ready threads - idle loop
+        // No ready threads — enter idle thread
         drop(manager);
-        println!("No ready threads, entering idle loop");
-        loop {
-            unsafe { core::arch::asm!("wfi"); }
-        }
+        enter_idle();
     }
 }
 
@@ -282,6 +292,36 @@ fn schedule() -> ! {
 /// Never returns
 pub fn start_scheduler() -> ! {
     schedule()
+}
+
+/// Enter the idle thread. Resets sp to top of idle stack and jumps to idle_entry.
+/// The idle thread is always restarted from its entry point (no context restore).
+fn enter_idle() -> ! {
+    unsafe {
+        let idle_ptr = IDLE_THREAD;
+        assert!(!idle_ptr.is_null(), "Idle thread not initialized");
+        (*idle_ptr).state = ThreadState::Running;
+        Thread::set_current(idle_ptr);
+
+        let sp = (*idle_ptr).stack.as_ptr().add((*idle_ptr).stack.len()) as usize;
+        core::arch::asm!(
+            "mv sp, {sp}",
+            "jr {entry}",
+            sp = in(reg) sp,
+            entry = in(reg) IDLE_ENTRY,
+            options(noreturn),
+        );
+    }
+}
+
+/// Called by the idle loop after handling an interrupt.
+/// If threads are ready, calls schedule() which never returns to idle.
+/// If no threads are ready, returns so the idle loop can wfi again.
+pub fn schedule_if_ready() {
+    let has_ready = !THREAD_MANAGER.lock().ready_queue.is_empty();
+    if has_ready {
+        schedule();
+    }
 }
 
 /// Exit the current thread

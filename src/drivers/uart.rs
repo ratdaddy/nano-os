@@ -1,40 +1,70 @@
-#[derive(Copy, Clone)]
-pub struct UartConfig {
-    pub base: usize,
-    pub reg_shift: usize,     // log2(word spacing): 0 for ns16550a, 2 for dw-apb-uart
-    pub reg_io_width: usize,  // in bytes: 1 or 4 (use 4 for dw-apb-uart)
-}
+use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::dtb;
 
-pub struct Uart {
-    config: UartConfig,
+#[derive(Copy, Clone)]
+struct UartConfig {
+    base: usize,
+    reg_shift: usize,     // log2(word spacing): 0 for ns16550a, 2 for dw-apb-uart
+    reg_io_width: usize,  // in bytes: 1 or 4 (use 4 for dw-apb-uart)
 }
 
 // For QEMU `virt` machine with ns16550a UART
-pub const QEMU_UART: UartConfig = UartConfig {
+const QEMU_UART: UartConfig = UartConfig {
     base: 0x1000_0000,
     reg_shift: 0,
     reg_io_width: 1,
 };
 
 // For NanoKVM's dw-apb-uart at serial@04140000
-pub const NANO_UART: UartConfig = UartConfig {
+const NANO_UART: UartConfig = UartConfig {
     base: 0x0414_0000,
     reg_shift: 2,
     reg_io_width: 4,
 };
 
-impl Uart {
-    pub const fn new(config: UartConfig) -> Self {
-        Self { config }
-    }
+// Store config in atomics to avoid mutable static references
+static UART_BASE: AtomicUsize = AtomicUsize::new(0);
+static UART_REG_SHIFT: AtomicUsize = AtomicUsize::new(0);
+static UART_REG_IO_WIDTH: AtomicUsize = AtomicUsize::new(0);
 
+/// Initialize the UART driver. Must be called after dtb::init().
+pub fn init() {
+    let config = match dtb::get_cpu_type() {
+        dtb::CpuType::LicheeRVNano => NANO_UART,
+        _ => QEMU_UART,
+    };
+    UART_BASE.store(config.base, Ordering::Relaxed);
+    UART_REG_SHIFT.store(config.reg_shift, Ordering::Relaxed);
+    UART_REG_IO_WIDTH.store(config.reg_io_width, Ordering::Relaxed);
+}
+
+/// Get a UART handle for performing operations.
+/// Panics if init() hasn't been called.
+pub fn get() -> Uart {
+    let base = UART_BASE.load(Ordering::Relaxed);
+    assert!(base != 0, "UART not initialized - call uart::init() first");
+    Uart {
+        base,
+        reg_shift: UART_REG_SHIFT.load(Ordering::Relaxed),
+        reg_io_width: UART_REG_IO_WIDTH.load(Ordering::Relaxed),
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Uart {
+    base: usize,
+    reg_shift: usize,
+    reg_io_width: usize,
+}
+
+impl Uart {
     // Compute address of register `n` with shift
     fn reg_addr(&self, n: usize) -> *mut u8 {
-        (self.config.base + (n << self.config.reg_shift)) as *mut u8
+        (self.base + (n << self.reg_shift)) as *mut u8
     }
 
     fn reg_addr_32(&self, n: usize) -> *mut u32 {
-        (self.config.base + (n << self.config.reg_shift)) as *mut u32
+        (self.base + (n << self.reg_shift)) as *mut u32
     }
 
     /// Polling-based transmit
@@ -77,7 +107,6 @@ impl Uart {
         }
     }
 
-    #[allow(dead_code)]
     pub fn read_byte(&self) -> Option<u8> {
         const LSR_OFFSET: usize = 5;
         const RBR_OFFSET: usize = 0;
@@ -94,7 +123,7 @@ impl Uart {
     }
 
     unsafe fn read_reg(&self, offset: usize) -> u8 {
-        if self.config.reg_io_width == 4 {
+        if self.reg_io_width == 4 {
             self.reg_addr_32(offset).read_volatile() as u8
         } else {
             self.reg_addr(offset).read_volatile()
@@ -102,10 +131,47 @@ impl Uart {
     }
 
     unsafe fn write_reg(&self, offset: usize, val: u8) {
-        if self.config.reg_io_width == 4 {
+        if self.reg_io_width == 4 {
             self.reg_addr_32(offset).write_volatile(val as u32);
         } else {
             self.reg_addr(offset).write_volatile(val);
+        }
+    }
+}
+
+/// Handle UART interrupt. Called by PLIC dispatch when UART IRQ fires.
+/// Checks IIR to determine interrupt type (RX/TX) and handles accordingly.
+pub fn handle_irq() {
+    const IIR_OFFSET: usize = 2;
+    const IIR_NO_INTERRUPT: u8 = 0x01;
+    const IIR_ID_MASK: u8 = 0x0E;
+    const IIR_RX_DATA: u8 = 0x04;      // Received data available
+    const IIR_TX_EMPTY: u8 = 0x02;     // Transmitter holding register empty
+    const IIR_RX_TIMEOUT: u8 = 0x0C;   // Character timeout
+
+    let uart = get();
+
+    loop {
+        let iir = unsafe { uart.read_reg(IIR_OFFSET) };
+
+        if iir & IIR_NO_INTERRUPT != 0 {
+            break; // No more pending interrupts
+        }
+
+        match iir & IIR_ID_MASK {
+            IIR_RX_DATA | IIR_RX_TIMEOUT => {
+                // Drain all available bytes from RX FIFO
+                while let Some(byte) = uart.read_byte() {
+                    println!("UART RX: {:#x} ('{}')", byte, byte as char);
+                }
+            }
+            IIR_TX_EMPTY => {
+                // TX buffer empty - could wake up waiting writers
+                // For now, just acknowledge by reading IIR (which we did)
+            }
+            id => {
+                println!("UART: unhandled interrupt type {:#x}", id);
+            }
         }
     }
 }
