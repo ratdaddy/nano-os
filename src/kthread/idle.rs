@@ -31,8 +31,6 @@ pub fn init() {
 }
 
 fn idle_entry() -> ! {
-    println!("Idle thread started");
-
     unsafe {
         // Set sscratch to kernel trap stack top (for trap handler sp swap)
         let trap_stack = kernel_trap::trap_stack_top();
@@ -44,9 +42,13 @@ fn idle_entry() -> ! {
 
     loop {
         unsafe {
-            core::arch::asm!("csrs sstatus, {}", in(reg) riscv::SSTATUS_SIE);
-            core::arch::asm!("wfi");
-            core::arch::asm!("csrc sstatus, {}", in(reg) riscv::SSTATUS_SIE);
+            // All in one asm block to ensure no instructions between them
+            core::arch::asm!(
+                "csrs sstatus, {sie}",      // Enable interrupts
+                "wfi",                       // Wait for interrupt
+                "csrc sstatus, {sie}",      // Disable interrupts
+                sie = in(reg) riscv::SSTATUS_SIE,
+            );
         }
         thread::schedule_if_ready();
     }

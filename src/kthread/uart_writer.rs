@@ -1,30 +1,82 @@
-use alloc::boxed::Box;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
+//! UART writer thread - handles asynchronous, interrupt-driven UART TX.
+//!
+//! Other threads send write requests via messages. The writer thread pushes data
+//! into a ring buffer, and TX interrupts drain the buffer to the UART FIFO.
+//!
+//! # Architecture
+//!
+//! ```text
+//! [caller] --WriteData msg--> [uart_writer thread] --push--> [ring buffer]
+//!                                                                  |
+//!                                                                  v
+//!                             [TX interrupt handler] <--pop-- [ring buffer]
+//!                                                                  |
+//!                                                                  v
+//!                                                            [UART FIFO]
+//! ```
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use crate::collections::SpscRing;
+use crate::drivers::uart;
 use crate::file_ops::{self, FileOps};
 use crate::thread;
-use crate::drivers::uart;
 
+// =============================================================================
+// Configuration
+// =============================================================================
+
+const TX_RING_SIZE: usize = 1024;
+
+// =============================================================================
+// Shared State
+// =============================================================================
+
+/// The TX ring buffer (SPSC: writer thread produces, interrupt handler consumes).
+static TX_RING: SpscRing<TX_RING_SIZE> = SpscRing::new();
+
+/// Thread ID of the uart_writer thread (for message delivery and wakeups).
 static WRITER_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// Send a write buffer to the UART writer thread.
-/// Takes ownership of the data via Box::into_raw; the writer thread
-/// reconstructs and frees it after writing.
-/// Uses send_message_urgent so the writer thread runs immediately.
-fn send_write(buf: &[u8]) {
-    let data = buf.to_vec();
-    let ptr = Box::into_raw(Box::new(data));
-    unsafe {
-        thread::send_message_urgent(
-            WRITER_THREAD_ID.load(Ordering::Relaxed),
-            thread::Thread::current().id,
-            ptr as usize,
-        );
+/// Is the TX pump running (interrupt enabled, handler actively draining)?
+static TX_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Is the writer thread blocked waiting for buffer space?
+static WAITING_FOR_SPACE: AtomicBool = AtomicBool::new(false);
+
+/// Has the interrupt signaled that buffer space is available?
+/// Set by notify_tx_ready(), cleared by push_slice_blocking().
+static BUFFER_SPACE_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
+// =============================================================================
+// Public API
+// =============================================================================
+
+/// Initialize the UART writer thread.
+pub fn init() {
+    let t = thread::Thread::new(writer_entry);
+    WRITER_THREAD_ID.store(t.id, Ordering::Relaxed);
+    thread::add(t);
+}
+
+/// Called from TX interrupt handler to drain the ring buffer to UART.
+///
+/// This is the "consumer" side of the SPSC ring buffer. If the writer thread
+/// is blocked waiting for buffer space, it signals and wakes it.
+pub fn notify_tx_ready() {
+    drain_ring_to_fifo();
+
+    // If writer thread is blocked waiting for space, signal and wake it
+    if WAITING_FOR_SPACE.swap(false, Ordering::AcqRel) {
+        BUFFER_SPACE_AVAILABLE.store(true, Ordering::Release);
+        let target = WRITER_THREAD_ID.load(Ordering::Relaxed);
+        thread::wake_thread(target);
     }
 }
 
+/// FileOps implementation for writing to the UART via the writer thread.
 pub struct UartFileOps;
 
 impl FileOps for UartFileOps {
@@ -35,68 +87,126 @@ impl FileOps for UartFileOps {
     }
 }
 
-/// Buffered writer for kprint!/kprintln! macros.
-/// Accumulates formatted output, then sends it as a single message on drop.
-pub struct KPrintWriter {
-    buf: String,
+// =============================================================================
+// Writer Thread
+// =============================================================================
+
+/// Message type for the writer thread's inbox.
+enum WriterMessage {
+    WriteData(Vec<u8>),
 }
 
-impl KPrintWriter {
-    pub fn new() -> Self {
-        Self { buf: String::new() }
+/// Send a write request to the writer thread.
+fn send_write(buf: &[u8]) {
+    let target = WRITER_THREAD_ID.load(Ordering::Relaxed);
+    let sender = thread::Thread::current().id;
+    let msg = WriterMessage::WriteData(buf.to_vec());
+    let ptr = Box::into_raw(Box::new(msg));
+    unsafe {
+        thread::send_message_urgent(target, sender, ptr as usize);
     }
 }
 
-impl core::fmt::Write for KPrintWriter {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.buf.push_str(s);
-        Ok(())
-    }
-}
-
-impl Drop for KPrintWriter {
-    fn drop(&mut self) {
-        if !self.buf.is_empty() {
-            let mut uart = UartFileOps;
-            let _ = uart.write(self.buf.as_bytes());
-        }
-    }
-}
-
-#[macro_export]
-macro_rules! kprint {
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let mut writer = $crate::kthread::uart_writer::KPrintWriter::new();
-        let _ = write!(writer, $($arg)*);
-    }};
-}
-
-#[macro_export]
-macro_rules! kprintln {
-    () => { $crate::kprint!("\n") };
-    ($($arg:tt)*) => {{
-        use core::fmt::Write;
-        let mut writer = $crate::kthread::uart_writer::KPrintWriter::new();
-        let _ = writeln!(writer, $($arg)*);
-    }};
-}
-
-pub fn init() {
-    let t = thread::Thread::new(writer_entry);
-    WRITER_THREAD_ID.store(t.id, Ordering::Relaxed);
-    thread::add(t);
-}
-
+/// Writer thread entry point.
 fn writer_entry() {
     loop {
         let msg = thread::receive_message();
-        let data = unsafe { Box::from_raw(msg.data as *mut Vec<u8>) };
-        for &byte in data.iter() {
-            if byte == b'\n' {
-                uart::get().write_byte(b'\r');
+        let writer_msg = unsafe { *Box::from_raw(msg.data as *mut WriterMessage) };
+
+        match writer_msg {
+            WriterMessage::WriteData(data) => {
+                write_data(&data);
             }
-            uart::get().write_byte(byte);
         }
+    }
+}
+
+/// Write data to the ring buffer with LF→CRLF conversion, then kick-start TX.
+fn write_data(data: &[u8]) {
+    let mut remaining = data;
+
+    while !remaining.is_empty() {
+        // Find next newline (or end of data)
+        let newline_pos = remaining.iter().position(|&b| b == b'\n');
+        let chunk_end = newline_pos.unwrap_or(remaining.len());
+
+        // Push chunk before newline
+        if chunk_end > 0 {
+            push_slice_blocking(&remaining[..chunk_end]);
+        }
+
+        // Handle newline: convert LF to CRLF
+        if newline_pos.is_some() {
+            push_slice_blocking(b"\r\n");
+            remaining = &remaining[chunk_end + 1..];
+        } else {
+            remaining = &[];
+        }
+    }
+
+    // Kick-start TX by filling the FIFO
+    drain_ring_to_fifo();
+}
+
+/// Push a slice to the ring buffer, blocking if necessary until it fits.
+fn push_slice_blocking(data: &[u8]) {
+    let mut remaining = data;
+
+    while !remaining.is_empty() {
+        let pushed = TX_RING.push_slice(remaining);
+
+        if pushed == 0 {
+            // Buffer full - wait for interrupt to drain some data
+            TX_ACTIVE.store(true, Ordering::Release);
+            uart::get().enable_tx_interrupt();
+            BUFFER_SPACE_AVAILABLE.store(false, Ordering::Release);
+            WAITING_FOR_SPACE.store(true, Ordering::Release);
+
+            // Loop until interrupt signals space is available
+            // (may be woken spuriously by incoming WriteData messages)
+            while !BUFFER_SPACE_AVAILABLE.load(Ordering::Acquire) {
+                unsafe { thread::block_now(); }
+            }
+
+            WAITING_FOR_SPACE.store(false, Ordering::Release);
+        } else {
+            remaining = &remaining[pushed..];
+        }
+    }
+}
+
+// =============================================================================
+// TX Pump (Ring Buffer → UART FIFO)
+// =============================================================================
+
+/// Drain the ring buffer into the UART FIFO.
+///
+/// Waits for FIFO to be ready, then writes up to TX_FIFO_SIZE bytes.
+/// Manages TX_ACTIVE flag and interrupt enable/disable state.
+fn drain_ring_to_fifo() {
+    let uart = uart::get();
+
+    // Wait for FIFO to be ready (THRE=1 means holding register empty).
+    // This should rarely spin - only if lower-level diagnostic code
+    // is using synchronous writes that haven't finished yet.
+    while !uart.tx_ready() {}
+
+    // Fill up to TX_FIFO_SIZE bytes without re-checking THRE
+    // (THRE goes LOW after first write even though FIFO has space)
+    for _ in 0..uart::TX_FIFO_SIZE {
+        if let Some(byte) = TX_RING.pop() {
+            uart.write_byte_nowait(byte);
+        } else {
+            // Ring buffer empty - disable TX interrupt
+            TX_ACTIVE.store(false, Ordering::Release);
+            uart.disable_tx_interrupt();
+            return;
+        }
+    }
+
+    // Filled FIFO but ring buffer still has data - ensure interrupt stays enabled
+    if !TX_RING.is_empty() {
+        TX_ACTIVE.store(true, Ordering::Release);
+        uart.enable_tx_interrupt();
     }
 }

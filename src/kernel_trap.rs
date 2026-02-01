@@ -95,6 +95,12 @@ core::arch::global_asm!(
     "ld t0, KTF_SP(sp)",
     "csrw sscratch, t0",
 
+    // Clear SPIE so sret returns with interrupts disabled.
+    // This prevents immediate re-trapping when there's a pending interrupt.
+    // Done before restoring t0 so we don't clobber the restored value.
+    "li t0, {SSTATUS_SPIE}",
+    "csrc sstatus, t0",
+
     // Restore all general-purpose registers (except sp)
     "ld ra,  KTF_RA(sp)",
     "ld gp,  KTF_GP(sp)",
@@ -134,6 +140,8 @@ core::arch::global_asm!(
     "csrrw sp, sscratch, sp",
 
     "sret",
+
+    SSTATUS_SPIE = const riscv::SSTATUS_SPIE,
 );
 
 #[no_mangle]

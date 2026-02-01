@@ -344,7 +344,7 @@ pub fn exit() -> ! {
 /// Unlike yield_now, does NOT enqueue the thread — it stays Blocked
 /// until another thread calls send_message to wake it.
 #[naked]
-unsafe extern "C" fn block_now() {
+pub unsafe extern "C" fn block_now() {
     core::arch::naked_asm!(
         "mv t1, ra",
         "call {save_helper}",
@@ -370,6 +370,19 @@ pub fn send_message(target_id: usize, msg: Message) {
     let mut manager = THREAD_MANAGER.lock();
     if let Some(target) = manager.get_thread(target_id) {
         target.inbox.push_back(msg);
+        if target.state == ThreadState::Blocked {
+            target.state = ThreadState::Ready;
+            manager.enqueue_ready(target_id);
+        }
+    }
+}
+
+/// Wake a thread without sending a message.
+/// Used for direct signaling (e.g., buffer space available) that doesn't
+/// need to go through the message inbox.
+pub fn wake_thread(target_id: usize) {
+    let mut manager = THREAD_MANAGER.lock();
+    if let Some(target) = manager.get_thread(target_id) {
         if target.state == ThreadState::Blocked {
             target.state = ThreadState::Ready;
             manager.enqueue_ready(target_id);
@@ -434,3 +447,4 @@ pub fn receive_message() -> Message {
         unsafe { block_now(); }
     }
 }
+

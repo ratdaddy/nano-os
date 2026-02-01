@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::dtb;
+use crate::kthread::uart_writer;
 
 #[derive(Copy, Clone)]
 struct UartConfig {
@@ -22,6 +23,9 @@ const NANO_UART: UartConfig = UartConfig {
     reg_io_width: 4,
 };
 
+/// 16550 UART TX FIFO size in bytes.
+pub const TX_FIFO_SIZE: usize = 16;
+
 // Store config in atomics to avoid mutable static references
 static UART_BASE: AtomicUsize = AtomicUsize::new(0);
 static UART_REG_SHIFT: AtomicUsize = AtomicUsize::new(0);
@@ -36,6 +40,20 @@ pub fn init() {
     UART_BASE.store(config.base, Ordering::Relaxed);
     UART_REG_SHIFT.store(config.reg_shift, Ordering::Relaxed);
     UART_REG_IO_WIDTH.store(config.reg_io_width, Ordering::Relaxed);
+
+    // Enable FIFOs (required for 16550 to use 16-byte TX/RX buffers)
+    let uart = Uart {
+        base: config.base,
+        reg_shift: config.reg_shift,
+        reg_io_width: config.reg_io_width,
+    };
+    const FCR_OFFSET: usize = 2;
+    const FCR_FIFO_ENABLE: u8 = 0x01;
+    const FCR_RX_RESET: u8 = 0x02;
+    const FCR_TX_RESET: u8 = 0x04;
+    unsafe {
+        uart.write_reg(FCR_OFFSET, FCR_FIFO_ENABLE | FCR_RX_RESET | FCR_TX_RESET);
+    }
 }
 
 /// Get a UART handle for performing operations.
@@ -95,6 +113,32 @@ impl Uart {
             let current = self.read_reg(IER_OFFSET);
             self.write_reg(IER_OFFSET, current | IER_THRE);
         }
+    }
+
+    pub fn disable_tx_interrupt(&self) {
+        const IER_OFFSET: usize = 1;
+        const IER_THRE: u8 = 1 << 1;
+
+        unsafe {
+            let current = self.read_reg(IER_OFFSET);
+            self.write_reg(IER_OFFSET, current & !IER_THRE);
+        }
+    }
+
+    /// Write a byte without waiting for THR to be empty.
+    /// Caller must ensure THR is ready (e.g., after receiving TxReady interrupt).
+    pub fn write_byte_nowait(&self, byte: u8) {
+        const THR_OFFSET: usize = 0;
+        unsafe {
+            self.write_reg(THR_OFFSET, byte);
+        }
+    }
+
+    /// Check if transmit holding register is empty (ready for next byte)
+    pub fn tx_ready(&self) -> bool {
+        const LSR_OFFSET: usize = 5;
+        const LSR_THRE: u8 = 1 << 5;
+        unsafe { self.read_reg(LSR_OFFSET) & LSR_THRE != 0 }
     }
 
     pub fn enable_rx_interrupt(&self) {
@@ -166,8 +210,11 @@ pub fn handle_irq() {
                 }
             }
             IIR_TX_EMPTY => {
-                // TX buffer empty - could wake up waiting writers
-                // For now, just acknowledge by reading IIR (which we did)
+                // TX buffer empty - notify uart_writer thread, then break.
+                // We only handle TX once per interrupt - even if more data
+                // becomes ready, we'll get another interrupt.
+                uart_writer::notify_tx_ready();
+                break;
             }
             id => {
                 println!("UART: unhandled interrupt type {:#x}", id);

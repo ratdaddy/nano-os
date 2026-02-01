@@ -68,7 +68,14 @@ pub fn uart_demo() {
 
         println!("Waiting for interrupt (press any key)...");
         loop {
-            core::arch::asm!("wfi");
+            // Interrupt handler returns with interrupts disabled (SPIE cleared).
+            // Re-enable before wfi, disable after to match handler expectations.
+            core::arch::asm!(
+                "csrs sstatus, {sie}",  // Enable interrupts
+                "wfi",                   // Wait for interrupt
+                "csrc sstatus, {sie}",  // Disable after waking
+                sie = in(reg) riscv::SSTATUS_SIE,
+            );
         }
     }
 }

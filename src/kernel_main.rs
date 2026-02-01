@@ -27,6 +27,7 @@ pub fn kernel_main() -> ! {
         println!("2) UART interrupt demo");
         println!("3) Initramfs inspect");
         println!("4) Run init process");
+        println!("5) UART TX flood test");
         print!("Select: ");
 
         let ch = console::getchar();
@@ -38,6 +39,7 @@ pub fn kernel_main() -> ! {
             b'2' => crate::demos::uart::uart_demo(),
             b'3' => crate::demos::initramfs_inspect::inspect_initramfs(),
             b'4' => crate::process_init::run_init_process(),
+            b'5' => crate::demos::uart_flood::run(),
             _ => println!("Invalid selection"),
         }
     }

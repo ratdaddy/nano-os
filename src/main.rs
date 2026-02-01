@@ -17,9 +17,12 @@ mod trampoline;
 mod console;
 
 #[macro_use]
+mod kprint;
+
 mod kthread;
 
 mod amo;
+mod collections;
 mod asm_offsets;
 mod demos;
 mod dtb;
