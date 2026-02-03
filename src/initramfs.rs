@@ -4,10 +4,21 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
+use core::sync::atomic::Ordering;
 
+use crate::dtb;
 use crate::file_ops::{self, FileOps};
 
 static mut FILES: MaybeUninit<Vec<FileEntry>> = MaybeUninit::uninit();
+
+/// Initialize the initramfs by mounting from the DTB-specified location.
+/// Must be called after dtb::parse_dtb() and before any ifs_open() calls.
+pub fn init() {
+    let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
+    let initrd_len = dtb::INITRD_END.load(Ordering::Relaxed) - initrd_start;
+    let slice = unsafe { core::slice::from_raw_parts(initrd_start as *const u8, initrd_len) };
+    ifs_mount(slice);
+}
 
 struct FileEntry {
     path: String,
