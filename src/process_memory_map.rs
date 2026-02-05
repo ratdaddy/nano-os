@@ -32,11 +32,14 @@ pub fn init_from_elf<R: FileOps>(elf_handle: &mut R, context: &mut process::Cont
     let page_map = &mut context.page_map;
 
     unsafe {
-        let process_load_area_entry = (*kernel_memory_map::root_table()).entries[PROCESS_LOAD_AREA_ENTRY];
+        let kernel_root = kernel_memory_map::root_table() as *mut page_mapper::PageTable;
+        let process_load_area_entry = (*kernel_root).entries[PROCESS_LOAD_AREA_ENTRY];
         let process_load_area_page_table = process_load_area_entry.addr() as *mut page_mapper::PageTable;
         switch_pages_to_user(&mut *process_load_area_page_table);
         (*page_map.root_table).entries[0].set(process_load_area_page_table as usize, PageFlags::VALID);
-        // TODO: unset kernel process load area table entry
+
+        // Clear kernel's process load area entry so next process gets fresh page tables
+        (*kernel_root).entries[PROCESS_LOAD_AREA_ENTRY] = page_mapper::PageTableEntry::new();
     }
 
     // Map first page of process stack
