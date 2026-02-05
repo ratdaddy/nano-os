@@ -4,7 +4,8 @@ use core::{ mem, ptr };
 use core::slice;
 use core::sync::atomic::Ordering;
 
-use crate::file_ops::FileOps;
+use crate::file::File;
+use crate::vfs;
 use crate::kernel_memory_map;
 use crate::memory;
 use crate::page_allocator;
@@ -18,7 +19,7 @@ pub const PROCESS_STACK_START: usize = 0xffe0_0000;
 const PROCESS_STACK_STARTING_SIZE: usize = 0x4000;
 pub const PROCESS_MMAP_START: usize = 0x1_0000_0000;
 
-pub fn init_from_elf<R: FileOps>(elf_handle: &mut R, context: &mut process::Context) {
+pub fn init_from_elf(elf_handle: &mut File, context: &mut process::Context) {
     let header = read_elf::read_elf64_header(elf_handle).unwrap();
 
     let (base_vaddr, heap_start) =
@@ -144,8 +145,8 @@ pub fn init_from_elf<R: FileOps>(elf_handle: &mut R, context: &mut process::Cont
     );
 }
 
-fn load_elf<R: FileOps>(
-    elf_handle: &mut R,
+fn load_elf(
+    elf_handle: &mut File,
     header: &read_elf::Elf64Header,
 ) -> Result<(usize, usize), &'static str> {
     let mut base_vaddr = usize::MAX;
@@ -187,12 +188,12 @@ fn load_elf<R: FileOps>(
                 PageFlags::READ | PageFlags::WRITE | PageFlags::EXECUTE | PageFlags::ACCESSED | PageFlags::DIRTY,
             );
 
-            elf_handle.seek(crate::file_ops::SeekFrom::Start(offset))
+            vfs::vfs_seek(elf_handle, crate::file::SeekFrom::Start(offset))
                 .map_err(|_| "Failed to seek to program header offset")?;
 
             println!("Loading from {:#x}", virt_addr_start);
             let buffer = unsafe { slice::from_raw_parts_mut(virt_addr_start as *mut u8, file_size) };
-            elf_handle.read_exact(buffer)
+            vfs::vfs_read_exact(elf_handle, buffer)
                 .map_err(|_| "Failed to read ELF segment data")?;
 
             println!("Zeroing out {:#x} remaining bytes in ELF segment: virt: {:#x}", mem_size - file_size, virt_addr_start + file_size);

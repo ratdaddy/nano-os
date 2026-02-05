@@ -8,15 +8,15 @@ pub fn inspect_elf() {
 
     println!("Inspecting ELF file: {}", path);
 
-    let mut handle = match initramfs::ifs_open(path) {
-        Ok(h) => h,
+    let mut file = match initramfs::ifs_open(path) {
+        Ok(f) => f,
         Err(e) => {
             println!("Failed to open {}: {}", path, e);
             return;
         }
     };
 
-    let header = match read_elf::read_elf64_header(&mut handle) {
+    let header = match read_elf::read_elf64_header(&mut file) {
         Ok(h) => h,
         Err(e) => {
             println!("Failed to read ELF header: {:?}", e);
@@ -31,7 +31,7 @@ pub fn inspect_elf() {
     println!("PH entry size:   {}", header.e_phentsize);
     println!("PH count:        {}", header.e_phnum);
 
-    let program_headers = match read_elf::read_program_headers(&mut handle, &header) {
+    let program_headers = match read_elf::read_program_headers(&mut file, &header) {
         Ok(phs) => phs,
         Err(e) => {
             println!("Failed to read program headers: {:?}", e);

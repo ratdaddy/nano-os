@@ -7,7 +7,7 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
-use crate::file_ops::{self, FileOps};
+use crate::file::{self, File, FileOps};
 
 static mut FILES: MaybeUninit<Vec<FileEntry>> = MaybeUninit::uninit();
 
@@ -25,41 +25,44 @@ struct FileEntry {
     data: &'static [u8],
 }
 
-pub struct IfsHandle {
-    data: &'static [u8],
-    offset: usize,
-}
+/// Static file operations for initramfs files.
+/// Per-file state (data pointer, offset) is stored in the File struct.
+pub struct IfsFileOps;
 
-impl FileOps for IfsHandle {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, file_ops::Error> {
-        let remaining = &self.data[self.offset..];
+impl FileOps for IfsFileOps {
+    fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, file::Error> {
+        let data = unsafe { core::slice::from_raw_parts(file.data, file.data_len) };
+        let remaining = &data[file.offset..];
         let len = remaining.len().min(buf.len());
         buf[..len].copy_from_slice(&remaining[..len]);
-        self.offset += len;
+        file.offset += len;
         Ok(len)
     }
 
-    fn seek(&mut self, pos: file_ops::SeekFrom) -> Result<(), file_ops::Error> {
+    fn seek(&self, file: &mut File, pos: file::SeekFrom) -> Result<(), file::Error> {
         match pos {
-            file_ops::SeekFrom::Start(offset) => {
-                if offset > self.data.len() {
-                    return Err(file_ops::Error::UnexpectedEof);
+            file::SeekFrom::Start(offset) => {
+                if offset > file.data_len {
+                    return Err(file::Error::UnexpectedEof);
                 }
-                self.offset = offset;
+                file.offset = offset;
             }
-            file_ops::SeekFrom::Current(offset) => {
-                let new_offset = self.offset
+            file::SeekFrom::Current(offset) => {
+                let new_offset = file.offset
                     .checked_add_signed(offset)
-                    .ok_or_else(|| file_ops::Error::InvalidInput)?;
-                if new_offset > self.data.len() {
-                    return Err(file_ops::Error::UnexpectedEof);
+                    .ok_or(file::Error::InvalidInput)?;
+                if new_offset > file.data_len {
+                    return Err(file::Error::UnexpectedEof);
                 }
-                self.offset = new_offset;
+                file.offset = new_offset;
             }
         }
         Ok(())
     }
 }
+
+/// Static instance of IfsFileOps for use with File.
+pub static IFS_FILE_OPS: IfsFileOps = IfsFileOps;
 
 pub fn ifs_mount(initramfs: &'static [u8]) {
     let mut entries = Vec::new();
@@ -107,11 +110,10 @@ fn parse_hex(bytes: &[u8]) -> usize {
     usize::from_str_radix(core::str::from_utf8(bytes).unwrap(), 16).unwrap()
 }
 
-pub fn ifs_open(path: &str) -> Result<IfsHandle, &'static str> {
+pub fn ifs_open(path: &str) -> Result<File, &'static str> {
     let files = unsafe { &*FILES.as_ptr() };
-    let file = files.iter().find(|f| f.path == path).ok_or("File not found")?;
-
-    Ok(IfsHandle { data: file.data, offset: 0 })
+    let entry = files.iter().find(|f| f.path == path).ok_or("File not found")?;
+    Ok(File::with_data(&IFS_FILE_OPS, entry.data))
 }
 
 
@@ -121,7 +123,8 @@ mod tests {
     use alloc::vec::Vec;
     use alloc::boxed::Box;
     use super::*;
-    use crate::file_ops::*;
+    use crate::file::*;
+    use crate::vfs;
 
     fn pad4(len: usize) -> usize {
         (len + 3) & !3
@@ -172,14 +175,14 @@ mod tests {
         let image = make_test_image("test.txt", data);
         ifs_mount(image);
 
-        let mut handle = ifs_open("/test.txt").unwrap();
+        let mut file = ifs_open("/test.txt").unwrap();
 
         let mut buf = [0u8; 5];
-        assert_eq!(handle.read(&mut buf).unwrap(), 5);
+        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 5);
         assert_eq!(&buf, b"hello");
 
-        handle.seek(SeekFrom::Start(6)).unwrap();
-        assert_eq!(handle.read(&mut buf).unwrap(), 5);
+        vfs::vfs_seek(&mut file, SeekFrom::Start(6)).unwrap();
+        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 5);
         assert_eq!(&buf, b"world");
     }
 
@@ -191,8 +194,8 @@ mod tests {
         let image = make_test_image("tiny.txt", data);
         ifs_mount(image);
 
-        let mut handle = ifs_open("/tiny.txt").unwrap();
-        let result = handle.seek(SeekFrom::Start(1000));
+        let mut file = ifs_open("/tiny.txt").unwrap();
+        let result = vfs::vfs_seek(&mut file, SeekFrom::Start(1000));
         assert!(matches!(result, Err(Error::UnexpectedEof)));
     }
 
@@ -204,8 +207,8 @@ mod tests {
         let image = make_test_image("back.txt", data);
         ifs_mount(image);
 
-        let mut handle = ifs_open("/back.txt").unwrap();
-        let result = handle.seek(SeekFrom::Current(-10));
+        let mut file = ifs_open("/back.txt").unwrap();
+        let result = vfs::vfs_seek(&mut file, SeekFrom::Current(-10));
         assert!(matches!(result, Err(Error::InvalidInput)));
     }
 }

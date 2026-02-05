@@ -18,7 +18,7 @@ use crate::thread::{self, Thread};
 ///
 /// Returns the thread ID of the spawned process thread.
 pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
-    let mut handle = initramfs::ifs_open(path)?;
+    let mut file = initramfs::ifs_open(path)?;
 
     // Create thread first so we can place ProcessTrapFrame on its stack
     let mut thread = Thread::new(user_thread_entry);
@@ -40,7 +40,7 @@ pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
     };
 
     // Initialize from ELF (writes entry point, stack, etc. to trap_frame)
-    process_memory_map::init_from_elf(&mut handle, &mut process_ctx);
+    process_memory_map::init_from_elf(&mut file, &mut process_ctx);
 
     thread.process = Some(process_ctx);
 

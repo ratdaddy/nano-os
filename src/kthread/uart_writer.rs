@@ -21,7 +21,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::collections::SpscRing;
 use crate::drivers::uart;
-use crate::file_ops::{self, FileOps};
+use crate::file::{self, File, FileOps};
 use crate::thread;
 
 // =============================================================================
@@ -80,11 +80,19 @@ pub fn notify_tx_ready() {
 pub struct UartFileOps;
 
 impl FileOps for UartFileOps {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, file_ops::Error> {
+    fn write(&self, _file: &mut File, buf: &[u8]) -> Result<usize, file::Error> {
         let len = buf.len();
         send_write(buf);
         Ok(len)
     }
+}
+
+/// Static instance of UartFileOps for use with File.
+static UART_FILE_OPS: UartFileOps = UartFileOps;
+
+/// Open the UART for writing.
+pub fn uart_open() -> File {
+    File::new(&UART_FILE_OPS)
 }
 
 // =============================================================================

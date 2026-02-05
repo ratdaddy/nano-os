@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 
 use crate::dtb;
 use crate::initramfs;
-use crate::file_ops::FileOps;
+use crate::vfs;
 
 pub fn inspect_initramfs() {
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
@@ -43,9 +43,9 @@ pub fn inspect_initramfs() {
 
     // Read /etc/motd (initramfs already mounted by kernel_main)
     match initramfs::ifs_open("/etc/motd") {
-        Ok(mut handle) => {
+        Ok(mut file) => {
             let mut contents = alloc::string::String::new();
-            let _ = handle.read_to_string(&mut contents);
+            let _ = vfs::vfs_read_to_string(&mut file, &mut contents);
             println!("Contents of /etc/motd: {}", contents);
         }
         Err(e) => println!("/etc/motd: {}", e),

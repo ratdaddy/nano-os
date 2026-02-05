@@ -2,10 +2,33 @@
 //!
 //! Provides `kprint!` and `kprintln!` macros for kernel-space output that goes
 //! through the UART writer thread (non-blocking, interrupt-driven).
+//!
+//! Call `init()` once after the UART writer thread is initialized to cache
+//! the console file handle.
 
 use alloc::string::String;
-use crate::file_ops::FileOps;
-use crate::kthread::uart_writer::UartFileOps;
+use crate::file::File;
+use crate::kthread::uart_writer;
+use crate::vfs;
+
+/// Cached console file handle, opened once during init().
+static mut CONSOLE: Option<File> = None;
+
+/// Initialize kprint by opening and caching the console file.
+/// Call this after the UART writer thread is initialized.
+pub fn init() {
+    // For now, use uart_open(). Later: vfs_open("/dev/console")
+    unsafe {
+        CONSOLE = Some(uart_writer::uart_open());
+    }
+}
+
+/// Get the cached console file handle.
+fn console() -> &'static mut File {
+    unsafe {
+        CONSOLE.as_mut().expect("kprint::init() not called")
+    }
+}
 
 /// Buffered writer for kprint!/kprintln! macros.
 ///
@@ -31,8 +54,7 @@ impl core::fmt::Write for KPrintWriter {
 impl Drop for KPrintWriter {
     fn drop(&mut self) {
         if !self.buf.is_empty() {
-            let mut uart = UartFileOps;
-            let _ = uart.write(self.buf.as_bytes());
+            let _ = vfs::vfs_write(console(), self.buf.as_bytes());
         }
     }
 }

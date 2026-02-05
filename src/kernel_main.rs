@@ -2,6 +2,7 @@ use crate::console;
 use crate::drivers::{plic, uart};
 use crate::initramfs;
 use crate::kernel_trap;
+use crate::kprint;
 use crate::kthread;
 use crate::thread;
 
@@ -23,6 +24,7 @@ pub fn kernel_main() -> ! {
     initramfs::init();
 
     kthread::uart_writer::init();
+    kprint::init();
     kthread::idle::init();
 
     loop {
