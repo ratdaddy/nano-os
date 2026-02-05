@@ -22,6 +22,7 @@ pub fn handle(tf: &mut types::ProcessTrapFrame) {
         // ppoll, rt_sigaction, sigaltstack, rt_sigprocmask
         73 | 134 | 132 | 135 => signal::generic_stub(tf),
         96 => process::set_tid_address(tf),
+        178 => process::gettid(tf),
         222 => memory::mmap(tf),
         214 => memory::brk(tf),
         64 => file::write(tf),

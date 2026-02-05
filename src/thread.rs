@@ -6,6 +6,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 use types::ThreadContext;
 
+use crate::kernel_memory_map::TRAMPOLINE_TRAP_FRAME;
+use crate::kernel_trap;
+use crate::process;
+use crate::trap;
+
 /// Thread execution state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadState {
@@ -20,7 +25,7 @@ pub struct Message {
     pub data: usize,
 }
 
-const STACK_SIZE: usize = 8 * 1024; // 8 KB stack
+const STACK_SIZE: usize = 16 * 1024; // 16 KB stack
 
 /// Kernel thread structure
 pub struct Thread {
@@ -35,6 +40,9 @@ pub struct Thread {
 
     // Message inbox for inter-thread communication
     pub inbox: VecDeque<Message>,
+
+    // Optional user process context (None for kernel-only threads)
+    pub process: Option<Box<process::Context>>,
 }
 
 /// Thread manager - holds all threading state
@@ -116,6 +124,7 @@ impl Thread {
             context: ThreadContext::default(),
             stack,
             inbox: VecDeque::new(),
+            process: None,
         });
 
         // Calculate sp based on the stable location of the Vec's buffer
@@ -251,6 +260,7 @@ pub unsafe extern "C" fn yield_now() {
 fn yield_impl() -> ! {
     let current = Thread::current();
     let current_id = current.id;
+    println!("[sched] thread {} yielding", current_id);
 
     // Mark current thread as ready and add back to queue
     current.state = ThreadState::Ready;
@@ -272,10 +282,44 @@ fn schedule() -> ! {
         // Get raw pointer before dropping lock
         let next_ptr = next_thread.as_mut() as *mut Thread;
 
+        // Set up trap handling based on thread type
+        if let Some(ref process_ctx) = next_thread.process {
+            // User thread: set up user-mode trap handler
+            unsafe {
+                let tramp = TRAMPOLINE_TRAP_FRAME as *mut types::TrampolineTrapFrame;
+                (*tramp).kernel_sp = process_ctx.trap_frame as *const _ as usize;
+                // Restore user sp and t0 from ProcessTrapFrame to TrampolineTrapFrame.
+                // These are needed by the trap return path after SATP switch (when PTF
+                // is no longer accessible). Another thread may have overwritten TTF.
+                (*tramp).user_sp = process_ctx.trap_frame.registers.sp;
+                (*tramp).t0 = process_ctx.trap_frame.registers.t0;
+
+                core::arch::asm!(
+                    "csrw stvec, {stvec}",
+                    "csrw sscratch, {sscratch}",
+                    stvec = in(reg) trap::trap_entry as usize,
+                    sscratch = in(reg) TRAMPOLINE_TRAP_FRAME,
+                );
+            }
+        } else {
+            // Kernel thread: use kernel trap handler
+            unsafe {
+                core::arch::asm!(
+                    "csrw stvec, {stvec}",
+                    "csrw sscratch, {sscratch}",
+                    stvec = in(reg) kernel_trap::kernel_trap_entry as usize,
+                    sscratch = in(reg) kernel_trap::trap_stack_top(),
+                );
+            }
+        }
+
         // Drop lock before context switch (don't hold lock during thread execution)
         drop(manager);
 
         // Set as current and restore context (never returns)
+        // Note: We do NOT switch SATP here. SATP switching happens:
+        // - For fresh threads: in enter_process before sret to user mode
+        // - For resumed threads: in trap handler return path before sret
         Thread::set_current(next_ptr);
         unsafe {
             restore_context_asm(&(*next_ptr).context as *const ThreadContext);
@@ -302,6 +346,14 @@ fn enter_idle() -> ! {
         assert!(!idle_ptr.is_null(), "Idle thread not initialized");
         (*idle_ptr).state = ThreadState::Running;
         Thread::set_current(idle_ptr);
+
+        // Idle is a kernel thread - use kernel trap handler
+        core::arch::asm!(
+            "csrw stvec, {stvec}",
+            "csrw sscratch, {sscratch}",
+            stvec = in(reg) kernel_trap::kernel_trap_entry as usize,
+            sscratch = in(reg) kernel_trap::trap_stack_top(),
+        );
 
         let sp = (*idle_ptr).stack.as_ptr().add((*idle_ptr).stack.len()) as usize;
         core::arch::asm!(

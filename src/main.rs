@@ -37,7 +37,6 @@ mod page_allocator;
 mod page_mapper;
 mod drivers;
 mod process;
-mod process_init;
 mod process_memory_map;
 mod process_trampoline;
 mod read_elf;

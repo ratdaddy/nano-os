@@ -3,6 +3,7 @@ use crate::drivers::{plic, uart};
 use crate::initramfs;
 use crate::kernel_trap;
 use crate::kthread;
+use crate::thread;
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");
@@ -27,12 +28,20 @@ pub fn kernel_main() -> ! {
     loop {
         println!();
         println!("=== Nano OS Boot Menu ===");
-        println!("1) Thread message passing demo");
-        println!("2) UART interrupt demo");
-        println!("3) Initramfs inspect");
-        println!("4) ELF inspect");
-        println!("5) Run init process");
-        println!("6) UART TX flood test");
+        println!();
+        println!("  Process:");
+        println!("    1) Run one process");
+        println!("    2) Run two processes");
+        println!();
+        println!("  Demos:");
+        println!("    3) Thread message passing");
+        println!("    4) UART RX interrupts");
+        println!("    5) UART TX flood");
+        println!();
+        println!("  Inspect:");
+        println!("    6) Initramfs");
+        println!("    7) ELF headers");
+        println!();
         print!("Select: ");
 
         let ch = console::getchar();
@@ -40,13 +49,49 @@ pub fn kernel_main() -> ! {
         println!();
 
         match ch {
-            b'1' => crate::demos::threading::test_message_passing(),
-            b'2' => crate::demos::uart::uart_demo(),
-            b'3' => crate::demos::initramfs_inspect::inspect_initramfs(),
-            b'4' => crate::demos::elf_inspect::inspect_elf(),
-            b'5' => crate::process_init::run_init_process(),
-            b'6' => crate::demos::uart_flood::run(),
+            b'1' => run_process_as_kthread(),
+            b'2' => run_two_processes(),
+            b'3' => crate::demos::threading::test_message_passing(),
+            b'4' => crate::demos::uart::uart_demo(),
+            b'5' => crate::demos::uart_flood::run(),
+            b'6' => crate::demos::initramfs_inspect::inspect_initramfs(),
+            b'7' => crate::demos::elf_inspect::inspect_elf(),
             _ => println!("Invalid selection"),
         }
     }
+}
+
+/// Spawn the init process as a kernel thread and start the scheduler.
+fn run_process_as_kthread() -> ! {
+    match kthread::user_process::spawn_process("/prog_example") {
+        Ok(tid) => println!("Process spawned as thread {}, starting scheduler...", tid),
+        Err(e) => {
+            println!("Failed to spawn process: {}", e);
+            loop { unsafe { core::arch::asm!("wfi"); } }
+        }
+    }
+
+    thread::start_scheduler()
+}
+
+/// Spawn two processes to test multi-process scheduling with yield.
+fn run_two_processes() -> ! {
+    match kthread::user_process::spawn_process("/prog_example") {
+        Ok(tid) => println!("Process 1 spawned as thread {}", tid),
+        Err(e) => {
+            println!("Failed to spawn process 1: {}", e);
+            loop { unsafe { core::arch::asm!("wfi"); } }
+        }
+    }
+
+    match kthread::user_process::spawn_process("/prog_example") {
+        Ok(tid) => println!("Process 2 spawned as thread {}", tid),
+        Err(e) => {
+            println!("Failed to spawn process 2: {}", e);
+            loop { unsafe { core::arch::asm!("wfi"); } }
+        }
+    }
+
+    println!("Starting scheduler with two processes...");
+    thread::start_scheduler()
 }

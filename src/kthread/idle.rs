@@ -2,7 +2,6 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec;
 
-use crate::kernel_trap;
 use crate::riscv;
 use crate::thread;
 
@@ -24,6 +23,7 @@ pub fn init() {
         },
         stack,
         inbox: VecDeque::new(),
+        process: None,
     });
 
     let ptr = Box::into_raw(thread);
@@ -31,12 +31,8 @@ pub fn init() {
 }
 
 fn idle_entry() -> ! {
+    // Enable all S-mode interrupt sources in sie register
     unsafe {
-        // Set sscratch to kernel trap stack top (for trap handler sp swap)
-        let trap_stack = kernel_trap::trap_stack_top();
-        core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
-
-        // Enable all S-mode interrupt sources in sie register
         core::arch::asm!("csrw sie, {}", in(reg) riscv::SIE_ALL);
     }
 
