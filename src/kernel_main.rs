@@ -5,6 +5,7 @@ use crate::kernel_trap;
 use crate::kprint;
 use crate::kthread;
 use crate::thread;
+use crate::vfs;
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");
@@ -20,8 +21,8 @@ pub fn kernel_main() -> ! {
     unsafe { plic::init(); }
     uart::init();
 
-    // Mount initramfs (available for all demos and process loading)
-    initramfs::init();
+    // Mount initramfs as root filesystem
+    vfs::init(initramfs::new());
 
     kthread::uart_writer::init();
     kprint::init();
@@ -41,7 +42,7 @@ pub fn kernel_main() -> ! {
         println!("    5) UART TX flood");
         println!();
         println!("  Inspect:");
-        println!("    6) Initramfs");
+        println!("    6) VFS");
         println!("    7) ELF headers");
         println!();
         print!("Select: ");
@@ -56,7 +57,7 @@ pub fn kernel_main() -> ! {
             b'3' => crate::demos::threading::test_message_passing(),
             b'4' => crate::demos::uart::uart_demo(),
             b'5' => crate::demos::uart_flood::run(),
-            b'6' => crate::demos::initramfs_inspect::inspect_initramfs(),
+            b'6' => crate::demos::vfs_inspect::inspect_vfs(),
             b'7' => crate::demos::elf_inspect::inspect_elf(),
             _ => println!("Invalid selection"),
         }

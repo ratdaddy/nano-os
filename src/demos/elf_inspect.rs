@@ -1,17 +1,17 @@
-//! Demo: Inspect ELF file headers from initramfs.
+//! Demo: Inspect ELF file headers from /prog_example.
 
-use crate::initramfs;
 use crate::read_elf;
+use crate::vfs;
 
 pub fn inspect_elf() {
     let path = "/prog_example";
 
     println!("Inspecting ELF file: {}", path);
 
-    let mut file = match initramfs::ifs_open(path) {
+    let mut file = match vfs::vfs_open(path) {
         Ok(f) => f,
         Err(e) => {
-            println!("Failed to open {}: {}", path, e);
+            println!("Failed to open {}: {:?}", path, e);
             return;
         }
     };

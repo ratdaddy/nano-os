@@ -4,6 +4,7 @@ mod tests;
 mod allocator;
 mod block_header;
 
+#[cfg(not(test))]
 use allocator::LinkedListAllocator;
 
 #[cfg(not(test))]

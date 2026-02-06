@@ -11,7 +11,7 @@ pub enum SeekFrom {
     Current(isize),
 }
 
-/// A file handle with position tracking and optional private data.
+/// A file handle with position tracking and inode reference.
 ///
 /// This is the kernel's internal representation of an open file.
 /// Use vfs_read/vfs_write/vfs_seek to perform operations.
@@ -20,10 +20,9 @@ pub struct File {
     pub fops: &'static dyn FileOps,
     /// Current read/write position in the file
     pub offset: usize,
-    /// Private data pointer (e.g., initramfs file content)
-    pub data: *const u8,
-    /// Length of private data
-    pub data_len: usize,
+    /// Inode for this file. Currently optional for legacy device files (UART),
+    /// but will become required when devices are integrated into VFS.
+    pub inode: Option<&'static dyn Inode>,
 }
 
 impl File {
@@ -32,18 +31,16 @@ impl File {
         Self {
             fops,
             offset: 0,
-            data: core::ptr::null(),
-            data_len: 0,
+            inode: None,
         }
     }
 
-    /// Create a new File with FileOps and private data (for initramfs files).
-    pub fn with_data(fops: &'static dyn FileOps, data: &'static [u8]) -> Self {
+    /// Create a new File with FileOps and an inode.
+    pub fn with_inode(fops: &'static dyn FileOps, inode: &'static dyn Inode) -> Self {
         Self {
             fops,
             offset: 0,
-            data: data.as_ptr(),
-            data_len: data.len(),
+            inode: Some(inode),
         }
     }
 }
@@ -51,6 +48,11 @@ impl File {
 /// File operations trait. Implementations must be Send + Sync since they're
 /// stored as 'static references.
 pub trait FileOps: Send + Sync {
+    /// Open a file from an inode.
+    fn open(&self, inode: &'static dyn Inode) -> Result<File, Error> {
+        Ok(File::with_inode(inode.file_ops(), inode))
+    }
+
     fn read(&self, _file: &mut File, _buf: &mut [u8]) -> Result<usize, Error> {
         Err(Error::InvalidInput)
     }
@@ -62,4 +64,30 @@ pub trait FileOps: Send + Sync {
     fn seek(&self, _file: &mut File, _pos: SeekFrom) -> Result<(), Error> {
         Err(Error::InvalidInput)
     }
+
+    /// Read directory entries (for directories).
+    /// Returns a vector of (name, size, is_dir) tuples.
+    fn readdir(&self, _file: &mut File) -> Result<alloc::vec::Vec<(alloc::string::String, usize, bool)>, Error> {
+        Err(Error::InvalidInput) // Not a directory
+    }
+}
+
+/// Inode trait for filesystem-specific metadata and operations.
+///
+/// Implementations must be Send + Sync since they're stored as 'static references.
+pub trait Inode: Send + Sync {
+    /// Downcast to concrete type for filesystem-specific operations.
+    fn as_any(&self) -> &dyn core::any::Any;
+
+    /// Size of the file in bytes.
+    fn len(&self) -> usize;
+
+    /// Look up a child by name (for directories).
+    /// Returns the child inode if found.
+    fn lookup(&self, _name: &str) -> Result<&'static dyn Inode, Error> {
+        Err(Error::InvalidInput) // Not a directory
+    }
+
+    /// Get the FileOps for this inode.
+    fn file_ops(&self) -> &'static dyn FileOps;
 }

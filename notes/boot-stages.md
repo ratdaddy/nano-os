@@ -119,17 +119,40 @@ This is a critical transition point where the real kernel page table is created:
 - **Memory Map**: Kernel page table (high memory kernel, MMIO mapped)
 - **Trap Handler**: kernel_trap_entry (kernel panic handler)
 - **Stack**: High-memory kernel stack
-- **Console**: **SBI console**
+- **Console**: **SBI console** (switches to kprintln! after init)
 - **Heap**: Available
 
 ### What Happens
-- Initializes process table (empty Vec)
 - Sets stvec to kernel_trap_entry
-- Mounts initramfs filesystem
-- Reads and parses user program ELF from initramfs
-- Creates process context (new page table, trap frame)
-- Loads program into process page table
-- Calls enter_process() - never returns
+- Initializes PLIC and UART drivers
+- **Mounts VFS**: `vfs::init(initramfs::new())`
+  - Creates ramfs instance populated from CPIO initramfs
+  - Registers root inode with VFS
+  - Files accessible via `vfs_open()`, `vfs_read()`, etc.
+- Initializes uart_writer (async message-based UART output thread)
+- Initializes kprint (kernel print via uart_writer)
+- Initializes idle thread
+- Displays interactive boot menu
+- On process selection: spawns user process as kernel thread, starts scheduler
+
+---
+
+## Stage 3.5: Scheduler and Kernel Threads
+
+**File**: `src/thread.rs`
+**CPU Mode**: S-mode
+
+### How User Processes Start
+User processes run as kernel threads via the scheduler:
+1. `kthread::user_process::spawn_process(path)` creates a Thread with process context
+2. Thread is added to scheduler queue
+3. `thread::start_scheduler()` begins scheduling (never returns)
+4. When the user process thread is scheduled, it calls `enter_process()`
+
+### Kernel Thread Types
+- **uart_writer**: Handles async UART output via message passing
+- **idle**: Runs when no other threads are ready (executes `wfi`)
+- **user_process**: Wraps a user process, calls enter_process()
 
 ---
 
@@ -142,13 +165,12 @@ This is a critical transition point where the real kernel page table is created:
 - **Interrupts**: **DISABLED** (sstatus.SIE = 0, sie = 0)
 - **Memory Map**: Kernel page table
 - **Trap Handler**: kernel_trap_entry
-- **Stack**: Kernel stack
-- **Console**: **SBI console**
+- **Stack**: Kernel thread stack (with ProcessTrapFrame at top)
+- **Console**: kprintln! available
 
 ### What Happens
 - Sets current process context (global pointer)
 - Sets up trampoline trap frame (kernel stack pointer, kernel satp)
-- **Initializes PLIC** (priority, enable UART IRQ, set threshold)
 - Enables supervisor interrupts in sie register (0x202 = SEIE | SSIE)
 - Prepares sstatus for user mode (SPIE = 1, SPP = 0)
 - **Changes stvec to trap_entry** (user-mode trap handler)
@@ -276,7 +298,7 @@ User program continues execution...
 
 ## Stage 9: Kernel Panic (kernel_trap_entry)
 
-**File**: `src/kernel_main.rs`
+**File**: `src/kernel_trap.rs`
 **When**: Trap occurs while in kernel mode (S-mode)
 
 ### State
@@ -302,12 +324,11 @@ User program continues execution...
 
 ## Console Implementation
 
-### Current: SBI Console Only
+### SBI Console (println!)
 
 **Used in**:
-- All boot stages (rust_main, kernel_main, enter_process)
-- trap_handler (syscalls, diagnostics)
-- Panic handlers
+- Early boot stages (rust_main, before uart_writer init)
+- Panic handlers (always available fallback)
 
 **How it works**:
 - println! → PutcharWriter → sbi_console_putchar()
@@ -315,41 +336,42 @@ User program continues execution...
 - Firmware outputs to serial port
 
 **Pros**: Simple, always available
-**Cons**: Slow (ecall per character), not interrupt-driven
+**Cons**: Slow (ecall per character), blocks caller
 
-### Future: Interrupt-Driven UART Console
+### Kernel Console (kprintln!)
 
-**When to enable**:
-- After kernel_memory_map::init() (UART MMIO mapped, heap available)
-- Before user process creation (want all kernel messages on new console)
+**Used in**:
+- kernel_main and kernel threads (after uart_writer::init())
+- Kernel diagnostics and debugging
 
-**Implementation**:
-1. Allocate circular TX buffer (4 KB)
-2. Get UART config from dtb::get_cpu_type()
-3. Initialize UART with FIFOs enabled
-4. Enable TX interrupt in UART (IER register)
-5. Replace println! backend with buffer writer
+**How it works**:
+- kprintln! → kprint::CONSOLE (cached File) → vfs_write()
+- vfs_write() → UartFileOps::write() → sends message to uart_writer thread
+- uart_writer thread receives message, writes to UART
 
-**Interrupt handling** (in trap_handler):
-- Match scause = SUPERVISOR_EXTERNAL_INTERRUPT
-- Read PLIC claim register (get IRQ number)
-- Dispatch to UART interrupt handler
-- UART handler: Drain TX buffer into UART THR (up to 16 bytes)
-- If buffer empty, disable TX interrupt
-- Write IRQ to PLIC complete register
+**Architecture**:
+- Message-passing based (thread::send/receive)
+- uart_writer is a dedicated kernel thread with elevated priority
+- Non-blocking for callers (message queued, writer drains asynchronously)
+- Uses UART TX with polling (interrupt-driven TX is future work)
 
-**Mutual exclusion**:
-- **No locks needed!** Hardware provides mutual exclusion
-- All println! calls run with interrupts disabled (syscalls, kernel code)
-- Interrupt handler can't interrupt itself
+### User Console (fd 1)
+
+**Used in**:
+- User processes via sys_write(1, buf, len)
+
+**How it works**:
+- Process fd 1 is initialized to uart_open() File
+- sys_write translates user VA to PA, calls vfs_write()
+- Same path as kprintln! from there
 
 ---
 
 ## Two Trap Handlers Summary
 
 ### kernel_trap_entry / kernel_trap_handler
-- **File**: src/kernel_main.rs
-- **Active**: During kernel_main, before user process starts
+- **File**: src/kernel_trap.rs
+- **Active**: During kernel_main and kernel thread execution
 - **Purpose**: Panic handler for kernel bugs
 - **Stack**: Dedicated KERNEL_STACK (4 KB)
 - **Behavior**: Print diagnostics, halt
@@ -395,7 +417,13 @@ User program continues execution...
    - Any bug would crash immediately
    - Code must be extremely careful
 
-5. **Console can switch from SBI to interrupt-driven UART**
-   - After MMIO mapping in kernel_memory_map::init()
-   - No locks needed (hardware mutual exclusion)
-   - Drop-in replacement for println! backend
+5. **VFS provides unified file access**
+   - Root inode registered via vfs::init()
+   - Path traversal via inode.lookup()
+   - FileOps trait for read/write/seek/readdir
+   - Inode trait for filesystem metadata and lookup
+
+6. **Console has multiple implementations**
+   - println! (SBI): Always available, slow, for early boot and panic
+   - kprintln! (uart_writer): Message-based, non-blocking, for kernel threads
+   - sys_write fd 1: User process output via same uart_writer path

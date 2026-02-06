@@ -1,104 +1,62 @@
-#![allow(static_mut_refs)]
+//! Initramfs support - unpacks CPIO archives into ramfs.
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::mem::MaybeUninit;
+use alloc::boxed::Box;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
-use crate::file::{self, File, FileOps};
+use crate::file::Inode;
+use crate::ramfs::Ramfs;
 
-static mut FILES: MaybeUninit<Vec<FileEntry>> = MaybeUninit::uninit();
-
-/// Initialize the initramfs by mounting from the DTB-specified location.
-/// Must be called after dtb::parse_dtb() and before any ifs_open() calls.
-pub fn init() {
+/// Create a ramfs populated from the DTB-specified initramfs location.
+/// Returns the root inode for registration with VFS.
+/// Must be called after dtb::parse_dtb().
+pub fn new() -> &'static dyn Inode {
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
     let initrd_len = dtb::INITRD_END.load(Ordering::Relaxed) - initrd_start;
-    let slice = unsafe { core::slice::from_raw_parts(initrd_start as *const u8, initrd_len) };
-    ifs_mount(slice);
+    let cpio = unsafe { core::slice::from_raw_parts(initrd_start as *const u8, initrd_len) };
+
+    // Create ramfs and populate from CPIO
+    let ramfs = Box::leak(Box::new(Ramfs::new()));
+    unpack_cpio(ramfs, cpio);
+
+    ramfs.root()
 }
 
-struct FileEntry {
-    path: String,
-    data: &'static [u8],
-}
-
-/// Static file operations for initramfs files.
-/// Per-file state (data pointer, offset) is stored in the File struct.
-pub struct IfsFileOps;
-
-impl FileOps for IfsFileOps {
-    fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, file::Error> {
-        let data = unsafe { core::slice::from_raw_parts(file.data, file.data_len) };
-        let remaining = &data[file.offset..];
-        let len = remaining.len().min(buf.len());
-        buf[..len].copy_from_slice(&remaining[..len]);
-        file.offset += len;
-        Ok(len)
-    }
-
-    fn seek(&self, file: &mut File, pos: file::SeekFrom) -> Result<(), file::Error> {
-        match pos {
-            file::SeekFrom::Start(offset) => {
-                if offset > file.data_len {
-                    return Err(file::Error::UnexpectedEof);
-                }
-                file.offset = offset;
-            }
-            file::SeekFrom::Current(offset) => {
-                let new_offset = file.offset
-                    .checked_add_signed(offset)
-                    .ok_or(file::Error::InvalidInput)?;
-                if new_offset > file.data_len {
-                    return Err(file::Error::UnexpectedEof);
-                }
-                file.offset = new_offset;
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Static instance of IfsFileOps for use with File.
-pub static IFS_FILE_OPS: IfsFileOps = IfsFileOps;
-
-pub fn ifs_mount(initramfs: &'static [u8]) {
-    let mut entries = Vec::new();
+/// Unpack a CPIO "newc" archive into a ramfs instance.
+pub(crate) fn unpack_cpio(ramfs: &Ramfs, cpio: &'static [u8]) {
     let mut pos = 0;
 
-    while pos + 110 <= initramfs.len() {
-        let hdr = &initramfs[pos..];
+    while pos + 110 <= cpio.len() {
+        let hdr = &cpio[pos..];
         if &hdr[0..6] != b"070701" {
             break;
         }
 
-        let namesize = parse_hex(&hdr[94..102]);
+        let mode = parse_hex(&hdr[14..22]) as u16;
         let filesize = parse_hex(&hdr[54..62]);
+        let namesize = parse_hex(&hdr[94..102]);
 
         let name_start = pos + 110;
         let name_end = name_start + namesize;
-        let filename = &initramfs[name_start..name_end - 1]; // strip null terminator
-        let filename_str = core::str::from_utf8(filename).unwrap();
+        let filename = match core::str::from_utf8(&cpio[name_start..name_end - 1]) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
 
-        if filename_str == "TRAILER!!!" {
+        if filename == "TRAILER!!!" {
             break;
         }
 
         let data_start = align_up(name_end, 4);
         let data_end = data_start + filesize;
 
-        entries.push(FileEntry {
-            path: format!("/{}", filename_str),
-            data: &initramfs[data_start..data_end],
-        });
+        // Skip directories, only add files
+        let is_dir = (mode & 0o170000) == 0o040000;
+        if !is_dir && filesize > 0 {
+            let _ = ramfs.insert_file(filename, &cpio[data_start..data_end]);
+        }
 
         pos = align_up(data_end, 4);
-    }
-
-    unsafe {
-        FILES.write(entries);
     }
 }
 
@@ -107,58 +65,57 @@ fn align_up(x: usize, align: usize) -> usize {
 }
 
 fn parse_hex(bytes: &[u8]) -> usize {
-    usize::from_str_radix(core::str::from_utf8(bytes).unwrap(), 16).unwrap()
+    usize::from_str_radix(core::str::from_utf8(bytes).unwrap_or("0"), 16).unwrap_or(0)
 }
-
-pub fn ifs_open(path: &str) -> Result<File, &'static str> {
-    let files = unsafe { &*FILES.as_ptr() };
-    let entry = files.iter().find(|f| f.path == path).ok_or("File not found")?;
-    Ok(File::with_data(&IFS_FILE_OPS, entry.data))
-}
-
 
 #[cfg(test)]
 mod tests {
-    extern crate alloc;
-    use alloc::vec::Vec;
     use alloc::boxed::Box;
+    use alloc::format;
+    use alloc::vec::Vec;
     use super::*;
-    use crate::file::*;
+    use crate::ramfs::Ramfs;
     use crate::vfs;
 
-    fn pad4(len: usize) -> usize {
-        (len + 3) & !3
-    }
-
-    fn make_test_image(name: &str, data: &[u8]) -> &'static [u8] {
-        //init_test_alloc();
+    /// Build a CPIO "newc" archive from a list of (name, data, mode) entries.
+    fn make_cpio(entries: &[(&str, &[u8], u16)]) -> &'static [u8] {
         let mut buf = Vec::new();
-        let name_cstr = format!("{}\0", name);
-        let namesize = name_cstr.len();
-        let filesize = data.len();
 
-        // Write minimal CPIO "newc" header (110 bytes total)
-        buf.extend_from_slice(b"070701"); // c_magic
-        buf.extend_from_slice(&[b'0'; 110 - 6]); // fill rest of header with '0's
-        buf[54..62].copy_from_slice(format!("{:08X}", filesize).as_bytes()); // c_filesize
-        buf[94..102].copy_from_slice(format!("{:08X}", namesize).as_bytes()); // c_namesize
+        for (name, data, mode) in entries {
+            let name_cstr = format!("{}\0", name);
+            let namesize = name_cstr.len();
+            let filesize = data.len();
 
-        buf.extend_from_slice(name_cstr.as_bytes());
-        while buf.len() % 4 != 0 {
-            buf.push(0);
+            // Write CPIO "newc" header (110 bytes)
+            buf.extend_from_slice(b"070701"); // c_magic
+            buf.extend_from_slice(&[b'0'; 110 - 6]); // fill with '0's
+            let hdr_start = buf.len() - 110;
+            // c_mode at offset 14
+            buf[hdr_start + 14..hdr_start + 22]
+                .copy_from_slice(format!("{:08X}", mode).as_bytes());
+            // c_filesize at offset 54
+            buf[hdr_start + 54..hdr_start + 62]
+                .copy_from_slice(format!("{:08X}", filesize).as_bytes());
+            // c_namesize at offset 94
+            buf[hdr_start + 94..hdr_start + 102]
+                .copy_from_slice(format!("{:08X}", namesize).as_bytes());
+
+            buf.extend_from_slice(name_cstr.as_bytes());
+            while buf.len() % 4 != 0 {
+                buf.push(0);
+            }
+
+            buf.extend_from_slice(data);
+            while buf.len() % 4 != 0 {
+                buf.push(0);
+            }
         }
 
-        buf.extend_from_slice(data);
-        while buf.len() % 4 != 0 {
-            buf.push(0);
-        }
-
-        // Append "TRAILER!!!" entry
+        // Append TRAILER!!! entry
         buf.extend_from_slice(b"070701");
         buf.extend_from_slice(&[b'0'; 110 - 6]);
-        let buf_len = buf.len();
-        buf[94 + buf_len - 110..102 + buf_len - 110]
-            .copy_from_slice(b"0000000B");
+        let trailer_start = buf.len() - 110;
+        buf[trailer_start + 94..trailer_start + 102].copy_from_slice(b"0000000B");
         buf.extend_from_slice(b"TRAILER!!!\0");
         while buf.len() % 4 != 0 {
             buf.push(0);
@@ -167,48 +124,89 @@ mod tests {
         Box::leak(buf.into_boxed_slice())
     }
 
-    #[test_case]
-    fn test_seek_and_read() {
-        println!("Testing seek and read...");
-
-        let data = b"hello world";
-        let image = make_test_image("test.txt", data);
-        ifs_mount(image);
-
-        let mut file = ifs_open("/test.txt").unwrap();
-
-        let mut buf = [0u8; 5];
-        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 5);
-        assert_eq!(&buf, b"hello");
-
-        vfs::vfs_seek(&mut file, SeekFrom::Start(6)).unwrap();
-        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 5);
-        assert_eq!(&buf, b"world");
+    /// Helper to set up a test ramfs from CPIO and register with VFS.
+    fn setup_test_ramfs(cpio: &'static [u8]) -> &'static Ramfs {
+        let ramfs = Box::leak(Box::new(Ramfs::new()));
+        unpack_cpio(ramfs, cpio);
+        vfs::init(ramfs.root());
+        ramfs
     }
 
     #[test_case]
-    fn test_seek_beyond_end() {
-        println!("Testing seek beyond end...");
+    fn test_cpio_single_file() {
+        println!("Testing CPIO single file parsing...");
 
-        let data = b"short";
-        let image = make_test_image("tiny.txt", data);
-        ifs_mount(image);
+        let cpio = make_cpio(&[("hello.txt", b"Hello!", 0o100644)]);
+        setup_test_ramfs(cpio);
 
-        let mut file = ifs_open("/tiny.txt").unwrap();
-        let result = vfs::vfs_seek(&mut file, SeekFrom::Start(1000));
-        assert!(matches!(result, Err(Error::UnexpectedEof)));
+        let mut file = vfs::vfs_open("/hello.txt").unwrap();
+        let mut buf = [0u8; 6];
+        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 6);
+        assert_eq!(&buf, b"Hello!");
     }
 
     #[test_case]
-    fn test_seek_negative() {
-        println!("Testing seek negative...");
+    fn test_cpio_multiple_files() {
+        println!("Testing CPIO multiple files parsing...");
 
-        let data = b"12345678";
-        let image = make_test_image("back.txt", data);
-        ifs_mount(image);
+        let cpio = make_cpio(&[
+            ("one.txt", b"first", 0o100644),
+            ("two.txt", b"second", 0o100644),
+        ]);
+        setup_test_ramfs(cpio);
 
-        let mut file = ifs_open("/back.txt").unwrap();
-        let result = vfs::vfs_seek(&mut file, SeekFrom::Current(-10));
-        assert!(matches!(result, Err(Error::InvalidInput)));
+        let entries = vfs::vfs_readdir("/").unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test_case]
+    fn test_cpio_nested_path() {
+        println!("Testing CPIO nested path parsing...");
+
+        let cpio = make_cpio(&[("etc/motd", b"Welcome to nano-os!", 0o100644)]);
+        setup_test_ramfs(cpio);
+
+        // Should create /etc directory and /etc/motd file
+        let etc_entries = vfs::vfs_readdir("/etc").unwrap();
+        assert_eq!(etc_entries.len(), 1);
+        assert_eq!(etc_entries[0].0, "motd");
+
+        let mut file = vfs::vfs_open("/etc/motd").unwrap();
+        let mut buf = [0u8; 19];
+        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 19);
+        assert_eq!(&buf, b"Welcome to nano-os!");
+    }
+
+    #[test_case]
+    fn test_cpio_skips_directories() {
+        println!("Testing CPIO skips directory entries...");
+
+        // Mode 0o040755 = directory
+        let cpio = make_cpio(&[
+            ("mydir", b"", 0o040755),           // directory entry (should skip)
+            ("mydir/file.txt", b"content", 0o100644),
+        ]);
+        setup_test_ramfs(cpio);
+
+        // The directory was created implicitly by the nested file
+        let entries = vfs::vfs_readdir("/mydir").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "file.txt");
+    }
+
+    #[test_case]
+    fn test_cpio_empty_file_skipped() {
+        println!("Testing CPIO empty file is skipped...");
+
+        let cpio = make_cpio(&[
+            ("empty.txt", b"", 0o100644),
+            ("nonempty.txt", b"data", 0o100644),
+        ]);
+        setup_test_ramfs(cpio);
+
+        // Empty file should be skipped, only nonempty.txt present
+        let entries = vfs::vfs_readdir("/").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "nonempty.txt");
     }
 }

@@ -5,21 +5,21 @@
 
 use core::mem;
 
-use crate::initramfs;
 use crate::kthread::uart_writer;
 use crate::process;
+use crate::vfs;
 use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::thread::{self, Thread};
 
 /// Spawn a user process as a kernel thread.
 ///
-/// Loads the ELF from the given initramfs path, initializes the process
+/// Loads the ELF from the given path, initializes the process
 /// context, and adds the thread to the scheduler.
 ///
 /// Returns the thread ID of the spawned process thread.
 pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
-    let mut file = initramfs::ifs_open(path)?;
+    let mut file = vfs::vfs_open(path).map_err(|_| "failed to open file")?;
 
     // Create thread first so we can place ProcessTrapFrame on its stack
     let mut thread = Thread::new(user_thread_entry);

@@ -40,6 +40,7 @@ mod drivers;
 mod process;
 mod process_memory_map;
 mod process_trampoline;
+mod ramfs;
 mod read_elf;
 mod riscv;
 mod test;
