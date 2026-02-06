@@ -4,6 +4,7 @@
 //! operation type into submodules.  This allows the kernel to grow
 //! groups of related syscalls without creating a single massive file.
 
+pub mod errno;
 mod file;
 mod memory;
 mod process;

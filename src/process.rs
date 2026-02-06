@@ -1,8 +1,11 @@
 #![allow(static_mut_refs)]
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::file::File;
 use crate::page_mapper;
 use crate::process_memory_map;
-use alloc::boxed::Box;
 
 /// Process context - contains page tables and memory layout info.
 /// The ProcessTrapFrame lives on the owning Thread's stack.
@@ -14,6 +17,8 @@ pub struct Context {
     pub heap_end: usize,
     pub mmap_next: usize,
     pub trap_frame: &'static mut types::ProcessTrapFrame,
+    /// File descriptor table. Index is the fd number.
+    pub files: Vec<Option<File>>,
 }
 
 // Safety: Context is only accessed by its owning thread. The raw pointers
@@ -34,6 +39,7 @@ impl Context {
             heap_end: 0,
             mmap_next: process_memory_map::PROCESS_MMAP_START,
             trap_frame,
+            files: Vec::new(),
         })
     }
 

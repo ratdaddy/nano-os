@@ -26,7 +26,9 @@ pub fn init() {
 /// Get the cached console file handle.
 fn console() -> &'static mut File {
     unsafe {
-        CONSOLE.as_mut().expect("kprint::init() not called")
+        (*core::ptr::addr_of_mut!(CONSOLE))
+            .as_mut()
+            .expect("kprint::init() not called")
     }
 }
 
