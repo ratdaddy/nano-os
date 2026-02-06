@@ -45,6 +45,7 @@ $(INITRAMFS): $(shell find $(INITRAMFS_DIR)) $(INIT_ELF)
 	mkdir -p $(BUILD_DIR)
 	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)
 	cp $(INIT_ELF) $(BUILD_DIR)/initramfs
+	mkdir -p $(BUILD_DIR)/initramfs/newroot
 	cd $(BUILD_DIR)/initramfs && find * | cpio -o --format=newc > ../initramfs.cpio
 
 $(INIT_ELF):

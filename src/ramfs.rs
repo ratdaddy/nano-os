@@ -156,6 +156,20 @@ impl Ramfs {
         self.root
     }
 
+    /// Insert an empty directory, creating parent directories as needed.
+    pub fn insert_dir(&self, path: &str) -> Result<(), Error> {
+        let parts: alloc::vec::Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut current = self.root;
+        for &dir_name in &parts {
+            current = self.get_or_create_dir(current, dir_name)?;
+        }
+        Ok(())
+    }
+
     /// Insert a file, creating parent directories as needed.
     pub fn insert_file(&self, path: &str, data: &'static [u8]) -> Result<(), Error> {
         let parts: alloc::vec::Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -301,5 +315,56 @@ mod tests {
 
         let entries = vfs::vfs_readdir("/").unwrap();
         assert_eq!(entries.len(), 2); // file1.txt and subdir
+    }
+
+    #[test_case]
+    fn test_insert_empty_dir() {
+        println!("Testing ramfs insert empty directory...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_dir("mnt").unwrap();
+
+        let entries = vfs::vfs_readdir("/").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "mnt");
+        assert!(entries[0].2); // is_dir
+
+        // Empty directory should have no children
+        let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
+        assert_eq!(mnt_entries.len(), 0);
+    }
+
+    #[test_case]
+    fn test_insert_nested_empty_dir() {
+        println!("Testing ramfs insert nested empty directory...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_dir("mnt/usb").unwrap();
+
+        // Both mnt and mnt/usb should exist
+        let root_entries = vfs::vfs_readdir("/").unwrap();
+        assert_eq!(root_entries.len(), 1);
+        assert_eq!(root_entries[0].0, "mnt");
+
+        let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
+        assert_eq!(mnt_entries.len(), 1);
+        assert_eq!(mnt_entries[0].0, "usb");
+
+        let usb_entries = vfs::vfs_readdir("/mnt/usb").unwrap();
+        assert_eq!(usb_entries.len(), 0);
+    }
+
+    #[test_case]
+    fn test_insert_dir_existing() {
+        println!("Testing ramfs insert_dir on existing directory...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_file("etc/motd", leak_data(b"Welcome!")).unwrap();
+        // insert_dir on already-existing dir should succeed without destroying contents
+        ramfs.insert_dir("etc").unwrap();
+
+        let entries = vfs::vfs_readdir("/etc").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "motd");
     }
 }

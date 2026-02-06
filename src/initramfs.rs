@@ -50,9 +50,10 @@ pub(crate) fn unpack_cpio(ramfs: &Ramfs, cpio: &'static [u8]) {
         let data_start = align_up(name_end, 4);
         let data_end = data_start + filesize;
 
-        // Skip directories, only add files
         let is_dir = (mode & 0o170000) == 0o040000;
-        if !is_dir && filesize > 0 {
+        if is_dir {
+            let _ = ramfs.insert_dir(filename);
+        } else if filesize > 0 {
             let _ = ramfs.insert_file(filename, &cpio[data_start..data_end]);
         }
 
@@ -178,20 +179,37 @@ mod tests {
     }
 
     #[test_case]
-    fn test_cpio_skips_directories() {
-        println!("Testing CPIO skips directory entries...");
+    fn test_cpio_creates_directories() {
+        println!("Testing CPIO creates directory entries...");
 
         // Mode 0o040755 = directory
         let cpio = make_cpio(&[
-            ("mydir", b"", 0o040755),           // directory entry (should skip)
+            ("mydir", b"", 0o040755),
             ("mydir/file.txt", b"content", 0o100644),
         ]);
         setup_test_ramfs(cpio);
 
-        // The directory was created implicitly by the nested file
         let entries = vfs::vfs_readdir("/mydir").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "file.txt");
+    }
+
+    #[test_case]
+    fn test_cpio_empty_directory() {
+        println!("Testing CPIO empty directory...");
+
+        let cpio = make_cpio(&[
+            ("mnt", b"", 0o040755),
+        ]);
+        setup_test_ramfs(cpio);
+
+        let entries = vfs::vfs_readdir("/").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "mnt");
+        assert!(entries[0].2); // is_dir
+
+        let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
+        assert_eq!(mnt_entries.len(), 0);
     }
 
     #[test_case]
