@@ -9,7 +9,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use core::any::Any;
 
-use crate::file::{Error, File, FileOps, Inode, SeekFrom};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, SeekFrom};
 
 /// Filesystem-specific node data.
 enum RamfsNode {
@@ -17,6 +17,8 @@ enum RamfsNode {
     File { data: &'static [u8] },
     /// Directory with named children.
     Dir { children: BTreeMap<String, &'static RamfsInode> },
+    /// Character device with major/minor numbers.
+    CharDevice { major: u32, minor: u32 },
 }
 
 /// Inode for ramfs, containing node type.
@@ -32,7 +34,7 @@ impl Inode for RamfsInode {
     fn len(&self) -> usize {
         match &self.node {
             RamfsNode::File { data } => data.len(),
-            RamfsNode::Dir { .. } => 0,
+            RamfsNode::Dir { .. } | RamfsNode::CharDevice { .. } => 0,
         }
     }
 
@@ -41,12 +43,19 @@ impl Inode for RamfsInode {
             RamfsNode::Dir { children } => {
                 children.get(name).map(|&inode| inode as &'static dyn Inode).ok_or(Error::InvalidInput)
             }
-            RamfsNode::File { .. } => Err(Error::InvalidInput),
+            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => Err(Error::InvalidInput),
         }
     }
 
     fn file_ops(&self) -> &'static dyn FileOps {
         &RAMFS_FILE_OPS
+    }
+
+    fn rdev(&self) -> Option<(u32, u32)> {
+        match &self.node {
+            RamfsNode::CharDevice { major, minor } => Some((*major, *minor)),
+            _ => None,
+        }
     }
 }
 
@@ -63,7 +72,7 @@ impl FileOps for RamfsFileOps {
 
         let data = match &ramfs_inode.node {
             RamfsNode::File { data } => *data,
-            RamfsNode::Dir { .. } => return Err(Error::InvalidInput),
+            RamfsNode::Dir { .. } | RamfsNode::CharDevice { .. } => return Err(Error::InvalidInput),
         };
 
         let remaining = &data[file.offset..];
@@ -103,7 +112,7 @@ impl FileOps for RamfsFileOps {
         Err(Error::InvalidInput)
     }
 
-    fn readdir(&self, file: &mut File) -> Result<alloc::vec::Vec<(String, usize, bool)>, Error> {
+    fn readdir(&self, file: &mut File) -> Result<alloc::vec::Vec<DirEntry>, Error> {
         let inode = file.inode.ok_or(Error::InvalidInput)?;
         let ramfs_inode = inode
             .as_any()
@@ -112,15 +121,18 @@ impl FileOps for RamfsFileOps {
 
         let children = match &ramfs_inode.node {
             RamfsNode::Dir { children } => children,
-            RamfsNode::File { .. } => return Err(Error::InvalidInput),
+            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => return Err(Error::InvalidInput),
         };
 
         let entries = children
             .iter()
             .map(|(name, inode)| {
-                let is_dir = matches!(inode.node, RamfsNode::Dir { .. });
-                let size = inode.len();
-                (name.clone(), size, is_dir)
+                let file_type = match &inode.node {
+                    RamfsNode::Dir { .. } => FileType::Directory,
+                    RamfsNode::File { .. } => FileType::RegularFile,
+                    RamfsNode::CharDevice { .. } => FileType::CharDevice,
+                };
+                DirEntry { name: name.clone(), file_type }
             })
             .collect();
 
@@ -196,6 +208,34 @@ impl Ramfs {
         unsafe {
             if let RamfsNode::Dir { children } = &mut (*current_ptr).node {
                 children.insert(String::from(filename), file_inode);
+            }
+        }
+        Ok(())
+    }
+
+    /// Insert a character device node, creating parent directories as needed.
+    pub fn insert_chardev(&self, path: &str, major: u32, minor: u32) -> Result<(), Error> {
+        let parts: alloc::vec::Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            return Err(Error::InvalidInput);
+        }
+
+        let (dirs, filename) = parts.split_at(parts.len() - 1);
+        let filename = filename[0];
+
+        let mut current = self.root;
+        for &dir_name in dirs {
+            current = self.get_or_create_dir(current, dir_name)?;
+        }
+
+        let dev_inode = Box::leak(Box::new(RamfsInode {
+            node: RamfsNode::CharDevice { major, minor },
+        }));
+
+        let current_ptr = current as *const RamfsInode as *mut RamfsInode;
+        unsafe {
+            if let RamfsNode::Dir { children } = &mut (*current_ptr).node {
+                children.insert(String::from(filename), dev_inode);
             }
         }
         Ok(())
@@ -326,8 +366,8 @@ mod tests {
 
         let entries = vfs::vfs_readdir("/").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "mnt");
-        assert!(entries[0].2); // is_dir
+        assert_eq!(entries[0].name, "mnt");
+        assert_eq!(entries[0].file_type, FileType::Directory);
 
         // Empty directory should have no children
         let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
@@ -344,11 +384,11 @@ mod tests {
         // Both mnt and mnt/usb should exist
         let root_entries = vfs::vfs_readdir("/").unwrap();
         assert_eq!(root_entries.len(), 1);
-        assert_eq!(root_entries[0].0, "mnt");
+        assert_eq!(root_entries[0].name, "mnt");
 
         let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
         assert_eq!(mnt_entries.len(), 1);
-        assert_eq!(mnt_entries[0].0, "usb");
+        assert_eq!(mnt_entries[0].name, "usb");
 
         let usb_entries = vfs::vfs_readdir("/mnt/usb").unwrap();
         assert_eq!(usb_entries.len(), 0);
@@ -365,6 +405,22 @@ mod tests {
 
         let entries = vfs::vfs_readdir("/etc").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "motd");
+        assert_eq!(entries[0].name, "motd");
+    }
+
+    #[test_case]
+    fn test_insert_chardev() {
+        println!("Testing ramfs insert chardev...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_chardev("dev/console", 5, 1).unwrap();
+
+        let entries = vfs::vfs_readdir("/dev").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "console");
+        assert_eq!(entries[0].file_type, FileType::CharDevice);
+
+        let file = vfs::vfs_open("/dev/console").unwrap();
+        assert_eq!(file.inode.unwrap().rdev(), Some((5, 1)));
     }
 }

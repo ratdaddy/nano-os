@@ -5,6 +5,18 @@ pub enum Error {
     InvalidInput,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileType {
+    RegularFile,
+    Directory,
+    CharDevice,
+}
+
+pub struct DirEntry {
+    pub name: alloc::string::String,
+    pub file_type: FileType,
+}
+
 #[allow(dead_code)]
 pub enum SeekFrom {
     Start(usize),
@@ -66,8 +78,7 @@ pub trait FileOps: Send + Sync {
     }
 
     /// Read directory entries (for directories).
-    /// Returns a vector of (name, size, is_dir) tuples.
-    fn readdir(&self, _file: &mut File) -> Result<alloc::vec::Vec<(alloc::string::String, usize, bool)>, Error> {
+    fn readdir(&self, _file: &mut File) -> Result<alloc::vec::Vec<DirEntry>, Error> {
         Err(Error::InvalidInput) // Not a directory
     }
 }
@@ -90,4 +101,9 @@ pub trait Inode: Send + Sync {
 
     /// Get the FileOps for this inode.
     fn file_ops(&self) -> &'static dyn FileOps;
+
+    /// Return device major/minor numbers (for device nodes).
+    fn rdev(&self) -> Option<(u32, u32)> {
+        None
+    }
 }

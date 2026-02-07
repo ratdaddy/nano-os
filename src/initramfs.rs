@@ -50,9 +50,13 @@ pub(crate) fn unpack_cpio(ramfs: &Ramfs, cpio: &'static [u8]) {
         let data_start = align_up(name_end, 4);
         let data_end = data_start + filesize;
 
-        let is_dir = (mode & 0o170000) == 0o040000;
-        if is_dir {
+        let fmt = mode & 0o170000;
+        if fmt == 0o040000 {
             let _ = ramfs.insert_dir(filename);
+        } else if fmt == 0o020000 {
+            let rdevmajor = parse_hex(&hdr[78..86]) as u32;
+            let rdevminor = parse_hex(&hdr[86..94]) as u32;
+            let _ = ramfs.insert_chardev(filename, rdevmajor, rdevminor);
         } else if filesize > 0 {
             let _ = ramfs.insert_file(filename, &cpio[data_start..data_end]);
         }
@@ -78,11 +82,11 @@ mod tests {
     use crate::ramfs::Ramfs;
     use crate::vfs;
 
-    /// Build a CPIO "newc" archive from a list of (name, data, mode) entries.
-    fn make_cpio(entries: &[(&str, &[u8], u16)]) -> &'static [u8] {
+    /// Build a CPIO "newc" archive from a list of (name, data, mode, rdevmajor, rdevminor) entries.
+    fn make_cpio(entries: &[(&str, &[u8], u16, u32, u32)]) -> &'static [u8] {
         let mut buf = Vec::new();
 
-        for (name, data, mode) in entries {
+        for &(name, data, mode, rdevmajor, rdevminor) in entries {
             let name_cstr = format!("{}\0", name);
             let namesize = name_cstr.len();
             let filesize = data.len();
@@ -97,6 +101,12 @@ mod tests {
             // c_filesize at offset 54
             buf[hdr_start + 54..hdr_start + 62]
                 .copy_from_slice(format!("{:08X}", filesize).as_bytes());
+            // c_rdevmajor at offset 78
+            buf[hdr_start + 78..hdr_start + 86]
+                .copy_from_slice(format!("{:08X}", rdevmajor).as_bytes());
+            // c_rdevminor at offset 86
+            buf[hdr_start + 86..hdr_start + 94]
+                .copy_from_slice(format!("{:08X}", rdevminor).as_bytes());
             // c_namesize at offset 94
             buf[hdr_start + 94..hdr_start + 102]
                 .copy_from_slice(format!("{:08X}", namesize).as_bytes());
@@ -137,7 +147,7 @@ mod tests {
     fn test_cpio_single_file() {
         println!("Testing CPIO single file parsing...");
 
-        let cpio = make_cpio(&[("hello.txt", b"Hello!", 0o100644)]);
+        let cpio = make_cpio(&[("hello.txt", b"Hello!", 0o100644, 0, 0)]);
         setup_test_ramfs(cpio);
 
         let mut file = vfs::vfs_open("/hello.txt").unwrap();
@@ -151,8 +161,8 @@ mod tests {
         println!("Testing CPIO multiple files parsing...");
 
         let cpio = make_cpio(&[
-            ("one.txt", b"first", 0o100644),
-            ("two.txt", b"second", 0o100644),
+            ("one.txt", b"first", 0o100644, 0, 0),
+            ("two.txt", b"second", 0o100644, 0, 0),
         ]);
         setup_test_ramfs(cpio);
 
@@ -164,13 +174,13 @@ mod tests {
     fn test_cpio_nested_path() {
         println!("Testing CPIO nested path parsing...");
 
-        let cpio = make_cpio(&[("etc/motd", b"Welcome to nano-os!", 0o100644)]);
+        let cpio = make_cpio(&[("etc/motd", b"Welcome to nano-os!", 0o100644, 0, 0)]);
         setup_test_ramfs(cpio);
 
         // Should create /etc directory and /etc/motd file
         let etc_entries = vfs::vfs_readdir("/etc").unwrap();
         assert_eq!(etc_entries.len(), 1);
-        assert_eq!(etc_entries[0].0, "motd");
+        assert_eq!(etc_entries[0].name, "motd");
 
         let mut file = vfs::vfs_open("/etc/motd").unwrap();
         let mut buf = [0u8; 19];
@@ -184,14 +194,14 @@ mod tests {
 
         // Mode 0o040755 = directory
         let cpio = make_cpio(&[
-            ("mydir", b"", 0o040755),
-            ("mydir/file.txt", b"content", 0o100644),
+            ("mydir", b"", 0o040755, 0, 0),
+            ("mydir/file.txt", b"content", 0o100644, 0, 0),
         ]);
         setup_test_ramfs(cpio);
 
         let entries = vfs::vfs_readdir("/mydir").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "file.txt");
+        assert_eq!(entries[0].name, "file.txt");
     }
 
     #[test_case]
@@ -199,14 +209,14 @@ mod tests {
         println!("Testing CPIO empty directory...");
 
         let cpio = make_cpio(&[
-            ("mnt", b"", 0o040755),
+            ("mnt", b"", 0o040755, 0, 0),
         ]);
         setup_test_ramfs(cpio);
 
         let entries = vfs::vfs_readdir("/").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "mnt");
-        assert!(entries[0].2); // is_dir
+        assert_eq!(entries[0].name, "mnt");
+        assert_eq!(entries[0].file_type, crate::file::FileType::Directory);
 
         let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
         assert_eq!(mnt_entries.len(), 0);
@@ -217,14 +227,33 @@ mod tests {
         println!("Testing CPIO empty file is skipped...");
 
         let cpio = make_cpio(&[
-            ("empty.txt", b"", 0o100644),
-            ("nonempty.txt", b"data", 0o100644),
+            ("empty.txt", b"", 0o100644, 0, 0),
+            ("nonempty.txt", b"data", 0o100644, 0, 0),
         ]);
         setup_test_ramfs(cpio);
 
         // Empty file should be skipped, only nonempty.txt present
         let entries = vfs::vfs_readdir("/").unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "nonempty.txt");
+        assert_eq!(entries[0].name, "nonempty.txt");
+    }
+
+    #[test_case]
+    fn test_cpio_chardev() {
+        println!("Testing CPIO character device parsing...");
+
+        let cpio = make_cpio(&[
+            ("dev", b"", 0o040755, 0, 0),
+            ("dev/console", b"", 0o020600, 5, 1),
+        ]);
+        setup_test_ramfs(cpio);
+
+        let entries = vfs::vfs_readdir("/dev").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "console");
+        assert_eq!(entries[0].file_type, crate::file::FileType::CharDevice);
+
+        let file = vfs::vfs_open("/dev/console").unwrap();
+        assert_eq!(file.inode.unwrap().rdev(), Some((5, 1)));
     }
 }

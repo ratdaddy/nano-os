@@ -1,23 +1,44 @@
 //! Demo: Inspect filesystem through VFS interface.
 
+use crate::file::FileType;
 use crate::vfs;
 
-pub fn inspect_vfs() {
-    println!("=== VFS Inspect Demo ===");
-    println!();
-
-    // List root directory
-    println!("Root directory (via vfs_readdir):");
-    match vfs::vfs_readdir("/") {
+fn list_dir(path: &str) {
+    println!("{} directory:", path);
+    match vfs::vfs_readdir(path) {
         Ok(entries) => {
-            for (name, len, is_dir) in entries {
-                let type_char = if is_dir { 'd' } else { 'f' };
-                println!("  {} {:>6} {}", type_char, len, name);
+            for entry in &entries {
+                let type_char = match entry.file_type {
+                    FileType::Directory => 'd',
+                    FileType::RegularFile => 'f',
+                    FileType::CharDevice => 'c',
+                };
+                match entry.file_type {
+                    FileType::CharDevice => {
+                        let path = if path == "/" {
+                            alloc::format!("/{}", entry.name)
+                        } else {
+                            alloc::format!("{}/{}", path, entry.name)
+                        };
+                        let file = vfs::vfs_open(&path).unwrap();
+                        let (major, minor) = file.inode.unwrap().rdev().unwrap();
+                        println!("  {} {} {}:{}", type_char, entry.name, major, minor);
+                    }
+                    _ => println!("  {} {}", type_char, entry.name),
+                }
             }
         }
         Err(e) => println!("  Error: {:?}", e),
     }
     println!();
+}
+
+pub fn inspect_vfs() {
+    println!("=== VFS Inspect Demo ===");
+    println!();
+
+    list_dir("/");
+    list_dir("/dev");
 
     // Open and read /etc/motd
     println!("Reading /etc/motd via vfs_open:");

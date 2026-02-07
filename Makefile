@@ -6,6 +6,7 @@ BOOT_SD := $(BUILD_DIR)/boot.sd
 BOOT_ITS := $(BUILD_DIR)/boot.its
 INITRAMFS := $(BUILD_DIR)/initramfs.cpio
 INITRAMFS_DIR := bootdata/initramfs
+INITRAMFS_IMAGE := initramfs-builder
 INIT_ELF := prog_example/target/riscv64gc-unknown-linux-musl/release/prog_example
 
 #FEATURES := --features print_dtb
@@ -17,7 +18,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs $(INIT_ELF)
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker $(INIT_ELF)
 
 all: $(BOOT_SD)
 
@@ -43,10 +44,17 @@ initramfs: $(INITRAMFS)
 $(INITRAMFS): $(shell find $(INITRAMFS_DIR)) $(INIT_ELF)
 	@echo "Creating initramfs.cpio..."
 	mkdir -p $(BUILD_DIR)
-	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)
+	rm -rf $(BUILD_DIR)/initramfs
+	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)/initramfs
 	cp $(INIT_ELF) $(BUILD_DIR)/initramfs
-	mkdir -p $(BUILD_DIR)/initramfs/newroot
-	cd $(BUILD_DIR)/initramfs && find * | cpio -o --format=newc > ../initramfs.cpio
+	mkdir -p $(BUILD_DIR)/initramfs/dev
+	docker run --rm --privileged \
+		-v $$(pwd)/$(BUILD_DIR)/initramfs:/input \
+		-v $$(pwd)/$(BUILD_DIR):/output \
+		$(INITRAMFS_IMAGE)
+
+initramfs-docker:
+	docker build -t $(INITRAMFS_IMAGE) initramfs/
 
 $(INIT_ELF):
 	make -C prog_example

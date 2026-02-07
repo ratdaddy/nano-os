@@ -3,10 +3,9 @@
 //! Provides the kernel's file operation API. The VFS caches a root inode
 //! and uses inode operations for path traversal.
 
-use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::file::{Error, File, Inode, SeekFrom};
+use crate::file::{DirEntry, Error, File, Inode, SeekFrom};
 
 static mut ROOT_INODE: Option<&'static dyn Inode> = None;
 
@@ -28,10 +27,7 @@ pub fn vfs_open(path: &str) -> Result<File, Error> {
 }
 
 /// Read directory entries.
-///
-/// Opens the directory and calls readdir on it.
-/// Returns a vector of (name, size, is_dir) tuples.
-pub fn vfs_readdir(path: &str) -> Result<Vec<(String, usize, bool)>, Error> {
+pub fn vfs_readdir(path: &str) -> Result<Vec<DirEntry>, Error> {
     let mut file = vfs_open(path)?;
     let ops = file.fops;
     ops.readdir(&mut file)
