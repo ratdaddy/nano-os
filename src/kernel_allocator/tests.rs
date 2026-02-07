@@ -479,11 +479,11 @@ fn test_alignment_with_heap_growth_create_new_block() {
 }
 
 unsafe fn setup_allocator() {
-    TEST_ALLOCATOR.init(TEST_HEAP.0.as_ptr() as usize, TEST_HEAP_SIZE / 2);
+    TEST_ALLOCATOR.init(core::ptr::addr_of!(TEST_HEAP) as usize, TEST_HEAP_SIZE / 2);
 }
 
 fn test_grow_heap(size: usize) -> Option<(usize, usize)> {
-    let heap_start = unsafe { TEST_HEAP.0.as_ptr() as usize };
+    let heap_start = core::ptr::addr_of!(TEST_HEAP) as usize;
     let second_half_start = heap_start + (TEST_HEAP_SIZE / 2);
     let second_half_size = TEST_HEAP_SIZE / 2;
 

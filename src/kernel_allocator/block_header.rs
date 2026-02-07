@@ -154,7 +154,7 @@ pub static mut TEST_HEAP: AlignedHeap = AlignedHeap([0; TEST_HEAP_SIZE]);
 #[cfg(test)]
 #[inline]
 fn heap_start() -> usize {
-    unsafe { TEST_HEAP.0.as_ptr() as usize }
+    core::ptr::addr_of!(TEST_HEAP) as usize
 }
 
 #[cfg(not(test))]

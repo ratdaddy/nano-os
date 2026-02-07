@@ -3,6 +3,8 @@ pub enum Error {
     UnexpectedEof,
     InvalidUtf8,
     InvalidInput,
+    NotADirectory,
+    NotFound,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

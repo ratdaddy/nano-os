@@ -41,9 +41,9 @@ impl Inode for RamfsInode {
     fn lookup(&self, name: &str) -> Result<&'static dyn Inode, Error> {
         match &self.node {
             RamfsNode::Dir { children } => {
-                children.get(name).map(|&inode| inode as &'static dyn Inode).ok_or(Error::InvalidInput)
+                children.get(name).map(|&inode| inode as &'static dyn Inode).ok_or(Error::NotFound)
             }
-            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => Err(Error::InvalidInput),
+            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => Err(Error::NotADirectory),
         }
     }
 
@@ -121,7 +121,7 @@ impl FileOps for RamfsFileOps {
 
         let children = match &ramfs_inode.node {
             RamfsNode::Dir { children } => children,
-            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => return Err(Error::InvalidInput),
+            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => return Err(Error::NotADirectory),
         };
 
         let entries = children
@@ -422,5 +422,138 @@ mod tests {
 
         let file = vfs::vfs_open("/dev/console").unwrap();
         assert_eq!(file.inode.unwrap().rdev(), Some((5, 1)));
+    }
+
+    // -- lookup error tests --
+
+    #[test_case]
+    fn test_lookup_not_found() {
+        println!("Testing ramfs lookup non-existent child...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+
+        let root = ramfs.root();
+        let result = root.lookup("nonexistent");
+        assert!(matches!(result, Err(Error::NotFound)));
+    }
+
+    #[test_case]
+    fn test_lookup_on_file() {
+        println!("Testing ramfs lookup on a file inode...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+
+        let file_inode = ramfs.root().lookup("a.txt").unwrap();
+        let result = file_inode.lookup("child");
+        assert!(matches!(result, Err(Error::NotADirectory)));
+    }
+
+    #[test_case]
+    fn test_lookup_on_chardev() {
+        println!("Testing ramfs lookup on a chardev inode...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_chardev("dev/console", 5, 1).unwrap();
+
+        let dev = ramfs.root().lookup("dev").unwrap();
+        let console = dev.lookup("console").unwrap();
+        let result = console.lookup("child");
+        assert!(matches!(result, Err(Error::NotADirectory)));
+    }
+
+    // -- rdev tests --
+
+    #[test_case]
+    fn test_rdev_on_file() {
+        println!("Testing ramfs rdev on a file inode...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+
+        let file_inode = ramfs.root().lookup("a.txt").unwrap();
+        assert_eq!(file_inode.rdev(), None);
+    }
+
+    #[test_case]
+    fn test_rdev_on_directory() {
+        println!("Testing ramfs rdev on a directory inode...");
+
+        let ramfs = setup_test_ramfs();
+        assert_eq!(ramfs.root().rdev(), None);
+    }
+
+    // -- read error tests --
+
+    #[test_case]
+    fn test_read_directory() {
+        println!("Testing ramfs read on a directory...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_dir("mydir").unwrap();
+
+        let mut file = vfs::vfs_open("/mydir").unwrap();
+        let mut buf = [0u8; 4];
+        let result = vfs::vfs_read(&mut file, &mut buf);
+        assert!(matches!(result, Err(Error::InvalidInput)));
+    }
+
+    #[test_case]
+    fn test_read_chardev() {
+        println!("Testing ramfs read on a chardev...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_chardev("dev/console", 5, 1).unwrap();
+
+        let mut file = vfs::vfs_open("/dev/console").unwrap();
+        let mut buf = [0u8; 4];
+        let result = vfs::vfs_read(&mut file, &mut buf);
+        assert!(matches!(result, Err(Error::InvalidInput)));
+    }
+
+    // -- readdir error tests --
+
+    #[test_case]
+    fn test_readdir_on_file() {
+        println!("Testing ramfs readdir on a file...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+
+        let result = vfs::vfs_readdir("/a.txt");
+        assert!(matches!(result, Err(Error::NotADirectory)));
+    }
+
+    #[test_case]
+    fn test_readdir_on_chardev() {
+        println!("Testing ramfs readdir on a chardev...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_chardev("dev/console", 5, 1).unwrap();
+
+        let result = vfs::vfs_readdir("/dev/console");
+        assert!(matches!(result, Err(Error::NotADirectory)));
+    }
+
+    #[test_case]
+    fn test_readdir_mixed_types() {
+        println!("Testing ramfs readdir with mixed node types...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_chardev("console", 5, 1).unwrap();
+        ramfs.insert_file("hello.txt", leak_data(b"hi")).unwrap();
+        ramfs.insert_dir("subdir").unwrap();
+
+        let entries = vfs::vfs_readdir("/").unwrap();
+        assert_eq!(entries.len(), 3);
+
+        // BTreeMap sorts by name
+        assert_eq!(entries[0].name, "console");
+        assert_eq!(entries[0].file_type, FileType::CharDevice);
+        assert_eq!(entries[1].name, "hello.txt");
+        assert_eq!(entries[1].file_type, FileType::RegularFile);
+        assert_eq!(entries[2].name, "subdir");
+        assert_eq!(entries[2].file_type, FileType::Directory);
     }
 }

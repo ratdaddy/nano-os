@@ -62,7 +62,7 @@ $(INIT_ELF):
 run: initramfs
 	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
-test:
+test: initramfs
 	cargo -Z build-std=core,alloc test --target $(TARGET) $(FEATURES)
 
 lint:

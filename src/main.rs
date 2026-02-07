@@ -14,38 +14,64 @@ extern crate alloc;
 mod trampoline;
 
 #[macro_use]
+#[cfg_attr(test, allow(dead_code))]
 mod console;
 
+#[cfg(not(test))]
 #[macro_use]
 mod kprint;
 
+#[cfg(not(test))]
 mod kthread;
 
+#[cfg(not(test))]
 mod amo;
+#[cfg(not(test))]
 mod collections;
+#[cfg(not(test))]
 mod asm_offsets;
+#[cfg(not(test))]
 mod demos;
+#[cfg_attr(test, allow(dead_code))]
 mod dtb;
+#[cfg_attr(test, allow(dead_code))]
 mod file;
 mod vfs;
+#[cfg_attr(test, allow(dead_code))]
 mod initramfs;
+#[cfg_attr(test, allow(dead_code))]
 mod kernel_allocator;
+#[cfg(not(test))]
 mod kernel_main;
+#[cfg(not(test))]
 mod kernel_memory_map;
+#[cfg(not(test))]
 mod kernel_trap;
+#[cfg_attr(test, allow(dead_code))]
 mod memory;
+#[cfg(not(test))]
 mod page_allocator;
+#[cfg(not(test))]
 mod page_mapper;
+#[cfg(not(test))]
 mod drivers;
+#[cfg(not(test))]
 mod process;
+#[cfg(not(test))]
 mod process_memory_map;
+#[cfg(not(test))]
 mod process_trampoline;
 mod ramfs;
+#[cfg(not(test))]
 mod read_elf;
+#[cfg(not(test))]
 mod riscv;
 mod test;
+#[cfg(not(test))]
 mod thread;
+#[cfg(not(test))]
 mod trap;
+#[cfg(not(test))]
 mod syscall;
 
 use core::panic::PanicInfo;
@@ -103,6 +129,7 @@ fn rust_main(
     kernel_main::kernel_main();
 }
 
+#[cfg(not(test))]
 fn zero_bss() {
     extern "C" {
         static mut _bss_start: u8;

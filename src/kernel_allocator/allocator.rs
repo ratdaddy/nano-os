@@ -4,6 +4,7 @@ use core::ptr::null_mut;
 
 use super::align_up;
 use super::block_header::{BlockHeader, BLOCK_HEADER_SIZE};
+#[cfg(not(test))]
 use crate::kernel_memory_map;
 use crate::memory;
 
@@ -37,6 +38,7 @@ pub struct LinkedListAllocator {
 }
 
 impl LinkedListAllocator {
+    #[cfg(not(test))]
     pub const fn new() -> Self {
         LinkedListAllocator {
             head: UnsafeCell::new(null_mut()),

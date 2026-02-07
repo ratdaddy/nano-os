@@ -72,6 +72,9 @@ static mut TEST_HEAP: [u8; 32 * 1024] = [0; 32 * 1024]; // 32 KiB heap
 #[no_mangle]
 pub extern "C" fn init_test_alloc() {
     unsafe {
-        TEST_ALLOCATOR.init(TEST_HEAP.as_mut_ptr(), TEST_HEAP.len());
+        (*core::ptr::addr_of_mut!(TEST_ALLOCATOR)).init(
+            core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8,
+            32 * 1024,
+        );
     }
 }
