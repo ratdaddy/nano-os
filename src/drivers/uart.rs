@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::chardev;
 use crate::dtb;
+use crate::file::{self, File, FileOps};
 use crate::kthread::uart_writer;
 
 #[derive(Copy, Clone)]
@@ -30,6 +32,25 @@ pub const TX_FIFO_SIZE: usize = 16;
 static UART_BASE: AtomicUsize = AtomicUsize::new(0);
 static UART_REG_SHIFT: AtomicUsize = AtomicUsize::new(0);
 static UART_REG_IO_WIDTH: AtomicUsize = AtomicUsize::new(0);
+
+/// FileOps implementation for writing to the UART via the writer thread.
+struct UartFileOps;
+
+impl FileOps for UartFileOps {
+    fn write(&self, _file: &mut File, buf: &[u8]) -> Result<usize, file::Error> {
+        let len = buf.len();
+        uart_writer::send_write(buf);
+        Ok(len)
+    }
+}
+
+static UART_FILE_OPS: UartFileOps = UartFileOps;
+
+/// Register the UART as a character device (major 5, minor 1).
+/// Must be called after VFS is initialized.
+pub fn register_chrdev() {
+    chardev::chrdev_register(5, 1, &UART_FILE_OPS);
+}
 
 /// Initialize the UART driver. Must be called after dtb::init().
 pub fn init() {

@@ -34,27 +34,17 @@ pub struct File {
     pub fops: &'static dyn FileOps,
     /// Current read/write position in the file
     pub offset: usize,
-    /// Inode for this file. Currently optional for legacy device files (UART),
-    /// but will become required when devices are integrated into VFS.
-    pub inode: Option<&'static dyn Inode>,
+    /// Inode for this file.
+    pub inode: &'static dyn Inode,
 }
 
 impl File {
-    /// Create a new File with the given FileOps.
-    pub fn new(fops: &'static dyn FileOps) -> Self {
-        Self {
-            fops,
-            offset: 0,
-            inode: None,
-        }
-    }
-
     /// Create a new File with FileOps and an inode.
-    pub fn with_inode(fops: &'static dyn FileOps, inode: &'static dyn Inode) -> Self {
+    pub fn new(fops: &'static dyn FileOps, inode: &'static dyn Inode) -> Self {
         Self {
             fops,
             offset: 0,
-            inode: Some(inode),
+            inode,
         }
     }
 }
@@ -64,7 +54,7 @@ impl File {
 pub trait FileOps: Send + Sync {
     /// Open a file from an inode.
     fn open(&self, inode: &'static dyn Inode) -> Result<File, Error> {
-        Ok(File::with_inode(inode.file_ops(), inode))
+        Ok(File::new(inode.file_ops(), inode))
     }
 
     fn read(&self, _file: &mut File, _buf: &mut [u8]) -> Result<usize, Error> {
@@ -91,6 +81,9 @@ pub trait FileOps: Send + Sync {
 pub trait Inode: Send + Sync {
     /// Downcast to concrete type for filesystem-specific operations.
     fn as_any(&self) -> &dyn core::any::Any;
+
+    /// The type of this inode (file, directory, char device, etc.).
+    fn file_type(&self) -> FileType;
 
     /// Size of the file in bytes.
     fn len(&self) -> usize;

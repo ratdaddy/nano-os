@@ -20,8 +20,8 @@ fn list_dir(path: &str) {
                         } else {
                             alloc::format!("{}/{}", path, entry.name)
                         };
-                        let file = vfs::vfs_open(&path).unwrap();
-                        let (major, minor) = file.inode.unwrap().rdev().unwrap();
+                        let inode = vfs::vfs_lookup(&path).unwrap();
+                        let (major, minor) = inode.rdev().unwrap();
                         println!("  {} {} {}:{}", type_char, entry.name, major, minor);
                     }
                     _ => println!("  {} {}", type_char, entry.name),

@@ -36,6 +36,7 @@ mod demos;
 mod dtb;
 #[cfg_attr(test, allow(dead_code))]
 mod file;
+mod chardev;
 mod vfs;
 #[cfg_attr(test, allow(dead_code))]
 mod initramfs;

@@ -5,7 +5,7 @@
 
 use alloc::vec::Vec;
 
-use crate::file::{DirEntry, Error, File, Inode, SeekFrom};
+use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom};
 
 static mut ROOT_INODE: Option<&'static dyn Inode> = None;
 
@@ -16,11 +16,20 @@ pub fn init(root: &'static dyn Inode) {
     }
 }
 
-/// Open a file by path.
-pub fn vfs_open(path: &str) -> Result<File, Error> {
+/// Look up an inode by path without opening it.
+pub fn vfs_lookup(path: &str) -> Result<&'static dyn Inode, Error> {
     let mut inode = unsafe { ROOT_INODE.ok_or(Error::InvalidInput)? };
     for component in path.split('/').filter(|s| !s.is_empty()) {
         inode = inode.lookup(component)?;
+    }
+    Ok(inode)
+}
+
+/// Open a file by path.
+pub fn vfs_open(path: &str) -> Result<File, Error> {
+    let inode = vfs_lookup(path)?;
+    if inode.file_type() == FileType::CharDevice {
+        return crate::chardev::chrdev_open(inode);
     }
     let fops = inode.file_ops();
     fops.open(inode)
@@ -41,6 +50,7 @@ pub fn vfs_read(file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
 }
 
 /// Seek to a position in a file.
+#[cfg_attr(test, allow(dead_code))]
 pub fn vfs_seek(file: &mut File, pos: SeekFrom) -> Result<(), Error> {
     let ops = file.fops;
     ops.seek(file, pos)
@@ -76,7 +86,7 @@ pub fn vfs_read_to_string(file: &mut File, out: &mut alloc::string::String) -> R
 
 /// Write a buffer to a file.
 /// Returns the number of bytes written.
-#[allow(dead_code)]
+#[cfg_attr(test, allow(dead_code))]
 pub fn vfs_write(file: &mut File, buf: &[u8]) -> Result<usize, Error> {
     let ops = file.fops;
     ops.write(file, buf)
@@ -97,6 +107,7 @@ mod tests {
     struct MockInode {
         children: BTreeMap<&'static str, &'static MockInode>,
         data: &'static [u8],
+        rdev: Option<(u32, u32)>,
     }
 
     impl MockInode {
@@ -105,11 +116,15 @@ mod tests {
             for &(name, inode) in children {
                 map.insert(name, inode);
             }
-            Box::leak(Box::new(MockInode { children: map, data: b"" }))
+            Box::leak(Box::new(MockInode { children: map, data: b"", rdev: None }))
         }
 
         fn file(data: &'static [u8]) -> &'static Self {
-            Box::leak(Box::new(MockInode { children: BTreeMap::new(), data }))
+            Box::leak(Box::new(MockInode { children: BTreeMap::new(), data, rdev: None }))
+        }
+
+        fn chardev(major: u32, minor: u32) -> &'static Self {
+            Box::leak(Box::new(MockInode { children: BTreeMap::new(), data: b"", rdev: Some((major, minor)) }))
         }
     }
 
@@ -117,8 +132,18 @@ mod tests {
 
     impl Inode for MockInode {
         fn as_any(&self) -> &dyn Any { self }
+        fn file_type(&self) -> crate::file::FileType {
+            if self.rdev.is_some() {
+                crate::file::FileType::CharDevice
+            } else if !self.children.is_empty() || self.data.is_empty() {
+                crate::file::FileType::Directory
+            } else {
+                crate::file::FileType::RegularFile
+            }
+        }
         fn len(&self) -> usize { self.data.len() }
         fn file_ops(&self) -> &'static dyn FileOps { &MOCK_OPS }
+        fn rdev(&self) -> Option<(u32, u32)> { self.rdev }
 
         fn lookup(&self, name: &str) -> Result<&'static dyn Inode, Error> {
             if self.children.is_empty() && self.data.len() > 0 {
@@ -135,8 +160,7 @@ mod tests {
 
     impl FileOps for MockFileOps {
         fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
-            let inode = file.inode.ok_or(Error::InvalidInput)?;
-            let mock = inode.as_any().downcast_ref::<MockInode>().unwrap();
+            let mock = file.inode.as_any().downcast_ref::<MockInode>().unwrap();
             let remaining = &mock.data[file.offset..];
             // Return at most 3 bytes per read to exercise chunked reads
             let len = remaining.len().min(buf.len()).min(3);
@@ -158,7 +182,7 @@ mod tests {
         setup(MockInode::dir(&[("a.txt", MockInode::file(b"hello"))]));
 
         let file = vfs_open("/").unwrap();
-        assert!(file.inode.is_some());
+        assert_eq!(file.inode.file_type(), crate::file::FileType::Directory);
     }
 
     #[test_case]
@@ -169,7 +193,7 @@ mod tests {
         setup(MockInode::dir(&[("sub", sub)]));
 
         let file = vfs_open("/sub/leaf").unwrap();
-        assert_eq!(file.inode.unwrap().len(), 4);
+        assert_eq!(file.inode.len(), 4);
     }
 
     #[test_case]
@@ -188,6 +212,21 @@ mod tests {
 
         let result = vfs_open("/a.txt/child");
         assert!(matches!(result, Err(Error::NotADirectory)));
+    }
+
+    #[test_case]
+    fn test_open_chardev() {
+        println!("Testing vfs_open calls chrdev_open for character device...");
+        setup(MockInode::dir(&[
+            ("dev", MockInode::dir(&[
+                ("console", MockInode::chardev(255, 255)),
+            ])),
+        ]));
+
+        // vfs_open should detect file_type() == CharDevice and call chrdev_open
+        // chrdev_open has no device registered for (255,255), so it returns NotFound
+        let result = vfs_open("/dev/console");
+        assert!(matches!(result, Err(Error::NotFound)));
     }
 
     // ---- vfs_read_exact tests ----

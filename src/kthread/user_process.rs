@@ -5,7 +5,6 @@
 
 use core::mem;
 
-use crate::kthread::uart_writer;
 use crate::process;
 use crate::vfs;
 use crate::process_memory_map;
@@ -44,8 +43,8 @@ pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
     process_memory_map::init_from_elf(&mut file, &mut process_ctx);
 
     // Set up file descriptors
-    process_ctx.files.push(None);                           // fd 0 (stdin)
-    process_ctx.files.push(Some(uart_writer::uart_open())); // fd 1 (stdout)
+    process_ctx.files.push(None);                                                      // fd 0 (stdin)
+    process_ctx.files.push(Some(vfs::vfs_open("/dev/console").expect("no console")));  // fd 1 (stdout)
 
     thread.process = Some(process_ctx);
 

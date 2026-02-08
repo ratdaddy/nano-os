@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(entries[0].name, "console");
         assert_eq!(entries[0].file_type, crate::file::FileType::CharDevice);
 
-        let file = vfs::vfs_open("/dev/console").unwrap();
-        assert_eq!(file.inode.unwrap().rdev(), Some((5, 1)));
+        let inode = vfs::vfs_lookup("/dev/console").unwrap();
+        assert_eq!(inode.rdev(), Some((5, 1)));
     }
 }

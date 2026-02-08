@@ -24,6 +24,7 @@ pub fn kernel_main() -> ! {
     // Mount initramfs as root filesystem
     vfs::init(initramfs::new());
 
+    uart::register_chrdev();
     kthread::uart_writer::init();
     kprint::init();
     kthread::idle::init();

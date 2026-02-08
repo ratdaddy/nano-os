@@ -21,7 +21,6 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::collections::SpscRing;
 use crate::drivers::uart;
-use crate::file::{self, File, FileOps};
 use crate::thread;
 
 // =============================================================================
@@ -76,25 +75,6 @@ pub fn notify_tx_ready() {
     }
 }
 
-/// FileOps implementation for writing to the UART via the writer thread.
-pub struct UartFileOps;
-
-impl FileOps for UartFileOps {
-    fn write(&self, _file: &mut File, buf: &[u8]) -> Result<usize, file::Error> {
-        let len = buf.len();
-        send_write(buf);
-        Ok(len)
-    }
-}
-
-/// Static instance of UartFileOps for use with File.
-static UART_FILE_OPS: UartFileOps = UartFileOps;
-
-/// Open the UART for writing.
-pub fn uart_open() -> File {
-    File::new(&UART_FILE_OPS)
-}
-
 // =============================================================================
 // Writer Thread
 // =============================================================================
@@ -105,7 +85,7 @@ enum WriterMessage {
 }
 
 /// Send a write request to the writer thread.
-fn send_write(buf: &[u8]) {
+pub fn send_write(buf: &[u8]) {
     let target = WRITER_THREAD_ID.load(Ordering::Relaxed);
     let sender = thread::Thread::current().id;
     let msg = WriterMessage::WriteData(buf.to_vec());

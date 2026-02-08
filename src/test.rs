@@ -67,14 +67,14 @@ unsafe impl GlobalAlloc for TestBumpAllocator {
 #[global_allocator]
 static mut TEST_ALLOCATOR: TestBumpAllocator = TestBumpAllocator::new();
 
-static mut TEST_HEAP: [u8; 32 * 1024] = [0; 32 * 1024]; // 32 KiB heap
+static mut TEST_HEAP: [u8; 64 * 1024] = [0; 64 * 1024]; // 32 KiB heap
 
 #[no_mangle]
 pub extern "C" fn init_test_alloc() {
     unsafe {
         (*core::ptr::addr_of_mut!(TEST_ALLOCATOR)).init(
             core::ptr::addr_of_mut!(TEST_HEAP) as *mut u8,
-            32 * 1024,
+            64 * 1024,
         );
     }
 }

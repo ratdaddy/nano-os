@@ -31,6 +31,14 @@ impl Inode for RamfsInode {
         self
     }
 
+    fn file_type(&self) -> FileType {
+        match &self.node {
+            RamfsNode::File { .. } => FileType::RegularFile,
+            RamfsNode::Dir { .. } => FileType::Directory,
+            RamfsNode::CharDevice { .. } => FileType::CharDevice,
+        }
+    }
+
     fn len(&self) -> usize {
         match &self.node {
             RamfsNode::File { data } => data.len(),
@@ -64,8 +72,7 @@ struct RamfsFileOps;
 
 impl FileOps for RamfsFileOps {
     fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
-        let inode = file.inode.ok_or(Error::InvalidInput)?;
-        let ramfs_inode = inode
+        let ramfs_inode = file.inode
             .as_any()
             .downcast_ref::<RamfsInode>()
             .ok_or(Error::InvalidInput)?;
@@ -83,8 +90,7 @@ impl FileOps for RamfsFileOps {
     }
 
     fn seek(&self, file: &mut File, pos: SeekFrom) -> Result<(), Error> {
-        let inode = file.inode.ok_or(Error::InvalidInput)?;
-        let file_len = inode.len();
+        let file_len = file.inode.len();
 
         match pos {
             SeekFrom::Start(offset) => {
@@ -113,8 +119,7 @@ impl FileOps for RamfsFileOps {
     }
 
     fn readdir(&self, file: &mut File) -> Result<alloc::vec::Vec<DirEntry>, Error> {
-        let inode = file.inode.ok_or(Error::InvalidInput)?;
-        let ramfs_inode = inode
+        let ramfs_inode = file.inode
             .as_any()
             .downcast_ref::<RamfsInode>()
             .ok_or(Error::InvalidInput)?;
@@ -271,18 +276,48 @@ impl Ramfs {
 mod tests {
     use alloc::boxed::Box;
     use super::*;
-    use crate::vfs;
 
     /// Create static test data from a byte slice.
     fn leak_data(data: &[u8]) -> &'static [u8] {
         Box::leak(data.to_vec().into_boxed_slice())
     }
 
-    /// Helper to set up a test ramfs and register with VFS.
     fn setup_test_ramfs() -> &'static Ramfs {
-        let ramfs = Box::leak(Box::new(Ramfs::new()));
-        vfs::init(ramfs.root());
-        ramfs
+        Box::leak(Box::new(Ramfs::new()))
+    }
+
+    /// Look up an inode by path from the root.
+    fn lookup(root: &'static dyn Inode, path: &str) -> Result<&'static dyn Inode, Error> {
+        let mut inode = root;
+        for component in path.split('/').filter(|s| !s.is_empty()) {
+            inode = inode.lookup(component)?;
+        }
+        Ok(inode)
+    }
+
+    /// Open a file by path.
+    fn open(root: &'static dyn Inode, path: &str) -> Result<File, Error> {
+        let inode = lookup(root, path)?;
+        inode.file_ops().open(inode)
+    }
+
+    /// Read from a file.
+    fn read(file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
+        let ops = file.fops;
+        ops.read(file, buf)
+    }
+
+    /// Seek in a file.
+    fn seek(file: &mut File, pos: SeekFrom) -> Result<(), Error> {
+        let ops = file.fops;
+        ops.seek(file, pos)
+    }
+
+    /// Read directory entries by path.
+    fn readdir(root: &'static dyn Inode, path: &str) -> Result<alloc::vec::Vec<DirEntry>, Error> {
+        let mut file = open(root, path)?;
+        let ops = file.fops;
+        ops.readdir(&mut file)
     }
 
     #[test_case]
@@ -292,14 +327,14 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("test.txt", leak_data(b"hello world")).unwrap();
 
-        let mut file = vfs::vfs_open("/test.txt").unwrap();
+        let mut file = open(ramfs.root(), "test.txt").unwrap();
 
         let mut buf = [0u8; 5];
-        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 5);
+        assert_eq!(read(&mut file, &mut buf).unwrap(), 5);
         assert_eq!(&buf, b"hello");
 
-        vfs::vfs_seek(&mut file, SeekFrom::Start(6)).unwrap();
-        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 5);
+        seek(&mut file, SeekFrom::Start(6)).unwrap();
+        assert_eq!(read(&mut file, &mut buf).unwrap(), 5);
         assert_eq!(&buf, b"world");
     }
 
@@ -310,8 +345,8 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("tiny.txt", leak_data(b"short")).unwrap();
 
-        let mut file = vfs::vfs_open("/tiny.txt").unwrap();
-        let result = vfs::vfs_seek(&mut file, SeekFrom::Start(1000));
+        let mut file = open(ramfs.root(), "tiny.txt").unwrap();
+        let result = seek(&mut file, SeekFrom::Start(1000));
         assert!(matches!(result, Err(Error::UnexpectedEof)));
     }
 
@@ -322,8 +357,8 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("back.txt", leak_data(b"12345678")).unwrap();
 
-        let mut file = vfs::vfs_open("/back.txt").unwrap();
-        let result = vfs::vfs_seek(&mut file, SeekFrom::Current(-10));
+        let mut file = open(ramfs.root(), "back.txt").unwrap();
+        let result = seek(&mut file, SeekFrom::Current(-10));
         assert!(matches!(result, Err(Error::InvalidInput)));
     }
 
@@ -335,13 +370,12 @@ mod tests {
         ramfs.insert_file("etc/motd", leak_data(b"Welcome!")).unwrap();
         ramfs.insert_file("etc/hosts", leak_data(b"127.0.0.1 localhost")).unwrap();
 
-        let mut file = vfs::vfs_open("/etc/motd").unwrap();
+        let mut file = open(ramfs.root(), "etc/motd").unwrap();
         let mut buf = [0u8; 8];
-        assert_eq!(vfs::vfs_read(&mut file, &mut buf).unwrap(), 8);
+        assert_eq!(read(&mut file, &mut buf).unwrap(), 8);
         assert_eq!(&buf, b"Welcome!");
 
-        // Check directory listing
-        let entries = vfs::vfs_readdir("/etc").unwrap();
+        let entries = readdir(ramfs.root(), "etc").unwrap();
         assert_eq!(entries.len(), 2);
     }
 
@@ -353,8 +387,8 @@ mod tests {
         ramfs.insert_file("file1.txt", leak_data(b"one")).unwrap();
         ramfs.insert_file("subdir/file2.txt", leak_data(b"two")).unwrap();
 
-        let entries = vfs::vfs_readdir("/").unwrap();
-        assert_eq!(entries.len(), 2); // file1.txt and subdir
+        let entries = readdir(ramfs.root(), "/").unwrap();
+        assert_eq!(entries.len(), 2);
     }
 
     #[test_case]
@@ -364,13 +398,12 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_dir("mnt").unwrap();
 
-        let entries = vfs::vfs_readdir("/").unwrap();
+        let entries = readdir(ramfs.root(), "/").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "mnt");
         assert_eq!(entries[0].file_type, FileType::Directory);
 
-        // Empty directory should have no children
-        let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
+        let mnt_entries = readdir(ramfs.root(), "mnt").unwrap();
         assert_eq!(mnt_entries.len(), 0);
     }
 
@@ -381,16 +414,15 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_dir("mnt/usb").unwrap();
 
-        // Both mnt and mnt/usb should exist
-        let root_entries = vfs::vfs_readdir("/").unwrap();
+        let root_entries = readdir(ramfs.root(), "/").unwrap();
         assert_eq!(root_entries.len(), 1);
         assert_eq!(root_entries[0].name, "mnt");
 
-        let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
+        let mnt_entries = readdir(ramfs.root(), "mnt").unwrap();
         assert_eq!(mnt_entries.len(), 1);
         assert_eq!(mnt_entries[0].name, "usb");
 
-        let usb_entries = vfs::vfs_readdir("/mnt/usb").unwrap();
+        let usb_entries = readdir(ramfs.root(), "mnt/usb").unwrap();
         assert_eq!(usb_entries.len(), 0);
     }
 
@@ -400,10 +432,9 @@ mod tests {
 
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("etc/motd", leak_data(b"Welcome!")).unwrap();
-        // insert_dir on already-existing dir should succeed without destroying contents
         ramfs.insert_dir("etc").unwrap();
 
-        let entries = vfs::vfs_readdir("/etc").unwrap();
+        let entries = readdir(ramfs.root(), "etc").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "motd");
     }
@@ -415,13 +446,13 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_chardev("dev/console", 5, 1).unwrap();
 
-        let entries = vfs::vfs_readdir("/dev").unwrap();
+        let entries = readdir(ramfs.root(), "dev").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "console");
         assert_eq!(entries[0].file_type, FileType::CharDevice);
 
-        let file = vfs::vfs_open("/dev/console").unwrap();
-        assert_eq!(file.inode.unwrap().rdev(), Some((5, 1)));
+        let inode = lookup(ramfs.root(), "dev/console").unwrap();
+        assert_eq!(inode.rdev(), Some((5, 1)));
     }
 
     // -- lookup error tests --
@@ -433,8 +464,7 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
 
-        let root = ramfs.root();
-        let result = root.lookup("nonexistent");
+        let result = ramfs.root().lookup("nonexistent");
         assert!(matches!(result, Err(Error::NotFound)));
     }
 
@@ -493,9 +523,9 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_dir("mydir").unwrap();
 
-        let mut file = vfs::vfs_open("/mydir").unwrap();
+        let mut file = open(ramfs.root(), "mydir").unwrap();
         let mut buf = [0u8; 4];
-        let result = vfs::vfs_read(&mut file, &mut buf);
+        let result = read(&mut file, &mut buf);
         assert!(matches!(result, Err(Error::InvalidInput)));
     }
 
@@ -506,9 +536,9 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_chardev("dev/console", 5, 1).unwrap();
 
-        let mut file = vfs::vfs_open("/dev/console").unwrap();
+        let mut file = open(ramfs.root(), "dev/console").unwrap();
         let mut buf = [0u8; 4];
-        let result = vfs::vfs_read(&mut file, &mut buf);
+        let result = read(&mut file, &mut buf);
         assert!(matches!(result, Err(Error::InvalidInput)));
     }
 
@@ -521,7 +551,7 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
 
-        let result = vfs::vfs_readdir("/a.txt");
+        let result = readdir(ramfs.root(), "a.txt");
         assert!(matches!(result, Err(Error::NotADirectory)));
     }
 
@@ -532,7 +562,7 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_chardev("dev/console", 5, 1).unwrap();
 
-        let result = vfs::vfs_readdir("/dev/console");
+        let result = readdir(ramfs.root(), "dev/console");
         assert!(matches!(result, Err(Error::NotADirectory)));
     }
 
@@ -545,7 +575,7 @@ mod tests {
         ramfs.insert_file("hello.txt", leak_data(b"hi")).unwrap();
         ramfs.insert_dir("subdir").unwrap();
 
-        let entries = vfs::vfs_readdir("/").unwrap();
+        let entries = readdir(ramfs.root(), "/").unwrap();
         assert_eq!(entries.len(), 3);
 
         // BTreeMap sorts by name
