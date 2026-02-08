@@ -21,8 +21,13 @@ pub fn kernel_main() -> ! {
     unsafe { plic::init(); }
     uart::init();
 
+    // Register filesystem drivers
+    vfs::register_filesystem(&crate::ramfs::RAMFS_TYPE);
+    vfs::register_filesystem(&crate::procfs::PROCFS_TYPE);
+
     // Mount initramfs as root filesystem
     vfs::init(initramfs::new());
+    vfs::vfs_mount_at("/proc", "proc").expect("failed to mount /proc");
 
     uart::register_chrdev();
     kthread::uart_writer::init();
@@ -43,8 +48,9 @@ pub fn kernel_main() -> ! {
         println!("    5) UART TX flood");
         println!();
         println!("  Inspect:");
-        println!("    6) VFS");
-        println!("    7) ELF headers");
+        println!("    6) Mount table");
+        println!("    7) Filesystem contents");
+        println!("    8) ELF headers");
         println!();
         print!("Select: ");
 
@@ -58,8 +64,9 @@ pub fn kernel_main() -> ! {
             b'3' => crate::demos::threading::test_message_passing(),
             b'4' => crate::demos::uart::uart_demo(),
             b'5' => crate::demos::uart_flood::run(),
-            b'6' => crate::demos::vfs_inspect::inspect_vfs(),
-            b'7' => crate::demos::elf_inspect::inspect_elf(),
+            b'6' => crate::demos::mount_inspect::inspect_mounts(),
+            b'7' => crate::demos::vfs_inspect::inspect_vfs(),
+            b'8' => crate::demos::elf_inspect::inspect_elf(),
             _ => println!("Invalid selection"),
         }
     }

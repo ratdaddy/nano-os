@@ -37,6 +37,7 @@ mod dtb;
 #[cfg_attr(test, allow(dead_code))]
 mod file;
 mod chardev;
+mod procfs;
 mod vfs;
 #[cfg_attr(test, allow(dead_code))]
 mod initramfs;
@@ -156,7 +157,7 @@ fn alloc_error(layout: core::alloc::Layout) -> ! {
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    println!("Panic: {}", _info);
+    println!("\x1b[31mPanic: {}\x1b[0m", _info);
     loop {
         unsafe { core::arch::asm!("wfi") }
     }
@@ -179,10 +180,10 @@ extern "C" fn boot_trap_handler() {
         );
     }
 
-    println!("*** TRAP ***");
+    println!("\x1b[31m*** TRAP ***");
     println!("scause = {:#x}", scause);
     println!("sepc   = {:#x}", sepc);
-    println!("stval  = {:#x}", stval);
+    println!("stval  = {:#x}\x1b[0m", stval);
 
     // Halt the system
     loop {

@@ -152,6 +152,41 @@ static RAMFS_FILE_OPS: RamfsFileOps = RamfsFileOps;
 // Ramfs Builder API
 // =============================================================================
 
+// =============================================================================
+// Filesystem driver
+// =============================================================================
+
+pub struct RamfsType;
+
+impl crate::vfs::FileSystem for RamfsType {
+    fn name(&self) -> &'static str { "ramfs" }
+    fn mount(&self) -> Result<&'static dyn crate::vfs::SuperBlock, crate::file::Error> {
+        let ramfs = Box::leak(Box::new(Ramfs::new()));
+        Ok(Box::leak(Box::new(ramfs.superblock())))
+    }
+}
+
+pub static RAMFS_TYPE: RamfsType = RamfsType;
+
+// =============================================================================
+// SuperBlock
+// =============================================================================
+
+/// SuperBlock for ramfs.
+pub struct RamfsSuperBlock {
+    root: &'static RamfsInode,
+}
+
+impl crate::vfs::SuperBlock for RamfsSuperBlock {
+    fn root_inode(&self) -> &'static dyn Inode {
+        self.root
+    }
+
+    fn fs_type(&self) -> &'static str {
+        "ramfs"
+    }
+}
+
 /// A ramfs filesystem instance.
 pub struct Ramfs {
     root: &'static RamfsInode,
@@ -171,6 +206,11 @@ impl Ramfs {
     /// Get the root inode.
     pub fn root(&self) -> &'static dyn Inode {
         self.root
+    }
+
+    /// Create a SuperBlock for this ramfs instance.
+    pub fn superblock(&self) -> RamfsSuperBlock {
+        RamfsSuperBlock { root: self.root }
     }
 
     /// Insert an empty directory, creating parent directories as needed.

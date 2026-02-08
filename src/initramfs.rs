@@ -4,13 +4,13 @@ use alloc::boxed::Box;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
-use crate::file::Inode;
 use crate::ramfs::Ramfs;
+use crate::vfs::SuperBlock;
 
 /// Create a ramfs populated from the DTB-specified initramfs location.
-/// Returns the root inode for registration with VFS.
+/// Returns a SuperBlock for registration with VFS.
 /// Must be called after dtb::parse_dtb().
-pub fn new() -> &'static dyn Inode {
+pub fn new() -> &'static dyn SuperBlock {
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
     let initrd_len = dtb::INITRD_END.load(Ordering::Relaxed) - initrd_start;
     let cpio = unsafe { core::slice::from_raw_parts(initrd_start as *const u8, initrd_len) };
@@ -19,7 +19,7 @@ pub fn new() -> &'static dyn Inode {
     let ramfs = Box::leak(Box::new(Ramfs::new()));
     unpack_cpio(ramfs, cpio);
 
-    ramfs.root()
+    Box::leak(Box::new(ramfs.superblock()))
 }
 
 /// Unpack a CPIO "newc" archive into a ramfs instance.
@@ -139,7 +139,8 @@ mod tests {
     fn setup_test_ramfs(cpio: &'static [u8]) -> &'static Ramfs {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
         unpack_cpio(ramfs, cpio);
-        vfs::init(ramfs.root());
+        let sb: &'static dyn crate::vfs::SuperBlock = Box::leak(Box::new(ramfs.superblock()));
+        vfs::init(sb);
         ramfs
     }
 

@@ -7,18 +7,129 @@ use alloc::vec::Vec;
 
 use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom};
 
-static mut ROOT_INODE: Option<&'static dyn Inode> = None;
+// =============================================================================
+// SuperBlock and Mount Table
+// =============================================================================
 
-/// Initialize the VFS with a root inode.
-pub fn init(root: &'static dyn Inode) {
+/// SuperBlock trait — each filesystem provides one per mount.
+pub trait SuperBlock: Send + Sync {
+    fn root_inode(&self) -> &'static dyn Inode;
+    fn fs_type(&self) -> &'static str;
+}
+
+/// A single mount record.
+struct Mount {
+    mountpoint_inode: Option<&'static dyn Inode>,
+    mountpoint: &'static str,
+    sb: &'static dyn SuperBlock,
+}
+
+/// Flattened view of a mount for consumers (boot menu, /proc/mounts).
+pub struct MountInfo {
+    pub id: usize,
+    pub fs_type: &'static str,
+    pub mountpoint: &'static str,
+}
+
+static mut MOUNTS: Option<Vec<Mount>> = None;
+
+/// Initialize the VFS with a root filesystem SuperBlock (mount 0).
+pub fn init(sb: &'static dyn SuperBlock) {
     unsafe {
-        ROOT_INODE = Some(root);
+        let mounts = core::ptr::addr_of_mut!(MOUNTS);
+        *mounts = Some(Vec::new());
+        (*mounts).as_mut().unwrap().push(Mount { mountpoint_inode: None, mountpoint: "/", sb });
+    }
+}
+
+/// Return mount info for all mounted filesystems.
+pub fn mounts() -> Vec<MountInfo> {
+    unsafe {
+        let mounts = core::ptr::addr_of!(MOUNTS);
+        (*mounts).as_ref().map_or_else(Vec::new, |mounts| {
+            mounts.iter().enumerate().map(|(i, m)| MountInfo {
+                id: i,
+                fs_type: m.sb.fs_type(),
+                mountpoint: m.mountpoint,
+            }).collect()
+        })
+    }
+}
+
+/// Mount a registered filesystem at the given path.
+pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
+    let inode = vfs_lookup(path)?;
+    let fs = find_filesystem(fs_name).ok_or(Error::NotFound)?;
+    let sb = fs.mount()?;
+    unsafe {
+        let mounts = core::ptr::addr_of_mut!(MOUNTS);
+        (*mounts).as_mut().expect("VFS not initialized").push(Mount {
+            mountpoint_inode: Some(inode),
+            mountpoint: path,
+            sb,
+        });
+    }
+    Ok(())
+}
+
+// =============================================================================
+// Filesystem Registry
+// =============================================================================
+
+/// Filesystem driver trait — each filesystem type implements this.
+pub trait FileSystem: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn mount(&self) -> Result<&'static dyn SuperBlock, Error>;
+}
+
+static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
+
+/// Register a filesystem driver.
+pub fn register_filesystem(fs: &'static dyn FileSystem) {
+    unsafe {
+        let fss = core::ptr::addr_of_mut!(FILESYSTEMS);
+        if (*fss).is_none() {
+            *fss = Some(Vec::new());
+        }
+        (*fss).as_mut().unwrap().push(fs);
+    }
+}
+
+/// Look up a registered filesystem by name.
+pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
+    unsafe {
+        let fss = core::ptr::addr_of!(FILESYSTEMS);
+        (*fss).as_ref()
+            .and_then(|fss| fss.iter().find(|fs| fs.name() == name))
+            .copied()
+    }
+}
+
+/// Return names of all registered filesystems.
+pub fn filesystems() -> Vec<&'static str> {
+    unsafe {
+        let fss = core::ptr::addr_of!(FILESYSTEMS);
+        (*fss).as_ref().map_or_else(Vec::new, |fss| {
+            fss.iter().map(|fs| fs.name()).collect()
+        })
+    }
+}
+
+// =============================================================================
+// Path Lookup and File Operations
+// =============================================================================
+
+/// Return the root inode from mount 0.
+fn root_inode() -> Result<&'static dyn Inode, Error> {
+    unsafe {
+        let mounts = core::ptr::addr_of!(MOUNTS);
+        Ok((*mounts).as_ref().ok_or(Error::InvalidInput)?[0].sb.root_inode())
     }
 }
 
 /// Look up an inode by path without opening it.
 pub fn vfs_lookup(path: &str) -> Result<&'static dyn Inode, Error> {
-    let mut inode = unsafe { ROOT_INODE.ok_or(Error::InvalidInput)? };
+    let mut inode = root_inode()?;
     for component in path.split('/').filter(|s| !s.is_empty()) {
         inode = inode.lookup(component)?;
     }
@@ -170,8 +281,18 @@ mod tests {
         }
     }
 
+    struct MockSuperBlock {
+        root: &'static MockInode,
+    }
+
+    impl SuperBlock for MockSuperBlock {
+        fn root_inode(&self) -> &'static dyn Inode { self.root }
+        fn fs_type(&self) -> &'static str { "mock" }
+    }
+
     fn setup(root: &'static MockInode) {
-        init(root);
+        let sb: &'static dyn SuperBlock = Box::leak(Box::new(MockSuperBlock { root }));
+        init(sb);
     }
 
     // ---- vfs_open tests ----

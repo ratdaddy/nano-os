@@ -4,6 +4,7 @@ RUN mkdir /work
 CMD cp -r /input/* /work && \
     cd /work && \
     mkdir -p dev && \
+    mkdir -p proc && \
     mknod dev/console c 5 1 && \
     mkdir -p newroot && \
     find * | cpio -o --format=newc > /output/initramfs.cpio
