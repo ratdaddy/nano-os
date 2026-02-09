@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 
 use crate::dtb;
 use crate::ramfs::Ramfs;
-use crate::vfs::SuperBlock;
+use crate::file::SuperBlock;
 
 /// Create a ramfs populated from the DTB-specified initramfs location.
 /// Returns a SuperBlock for registration with VFS.
@@ -19,7 +19,7 @@ pub fn new() -> &'static dyn SuperBlock {
     let ramfs = Box::leak(Box::new(Ramfs::new()));
     unpack_cpio(ramfs, cpio);
 
-    Box::leak(Box::new(ramfs.superblock()))
+    ramfs.superblock()
 }
 
 /// Unpack a CPIO "newc" archive into a ramfs instance.
@@ -139,7 +139,7 @@ mod tests {
     fn setup_test_ramfs(cpio: &'static [u8]) -> &'static Ramfs {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
         unpack_cpio(ramfs, cpio);
-        let sb: &'static dyn crate::vfs::SuperBlock = Box::leak(Box::new(ramfs.superblock()));
+        let sb: &'static dyn crate::file::SuperBlock = ramfs.superblock();
         vfs::init(sb);
         ramfs
     }

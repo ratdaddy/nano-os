@@ -51,6 +51,7 @@ pub fn kernel_main() -> ! {
         println!("    6) Mount table");
         println!("    7) Filesystem contents");
         println!("    8) ELF headers");
+        println!("    9) Procfs contents");
         println!();
         print!("Select: ");
 
@@ -67,6 +68,7 @@ pub fn kernel_main() -> ! {
             b'6' => crate::demos::mount_inspect::inspect_mounts(),
             b'7' => crate::demos::vfs_inspect::inspect_vfs(),
             b'8' => crate::demos::elf_inspect::inspect_elf(),
+            b'9' => crate::demos::procfs_inspect::inspect_procfs(),
             _ => println!("Invalid selection"),
         }
     }

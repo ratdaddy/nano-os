@@ -75,6 +75,17 @@ pub trait FileOps: Send + Sync {
     }
 }
 
+/// Stable identity key for an inode (data pointer address).
+pub fn inode_id(inode: &dyn Inode) -> usize {
+    inode as *const dyn Inode as *const () as usize
+}
+
+/// SuperBlock trait — each filesystem provides one per mount.
+pub trait SuperBlock: Send + Sync {
+    fn root_inode(&self) -> &'static dyn Inode;
+    fn fs_type(&self) -> &'static str;
+}
+
 /// Inode trait for filesystem-specific metadata and operations.
 ///
 /// Implementations must be Send + Sync since they're stored as 'static references.
@@ -99,6 +110,11 @@ pub trait Inode: Send + Sync {
 
     /// Return device major/minor numbers (for device nodes).
     fn rdev(&self) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Return the superblock this inode belongs to.
+    fn superblock(&self) -> Option<&'static dyn SuperBlock> {
         None
     }
 }

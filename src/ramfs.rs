@@ -9,7 +9,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use core::any::Any;
 
-use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, SeekFrom};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, SeekFrom, SuperBlock};
 
 /// Filesystem-specific node data.
 enum RamfsNode {
@@ -63,6 +63,13 @@ impl Inode for RamfsInode {
         match &self.node {
             RamfsNode::CharDevice { major, minor } => Some((*major, *minor)),
             _ => None,
+        }
+    }
+
+    fn superblock(&self) -> Option<&'static dyn SuperBlock> {
+        unsafe {
+            let sb = core::ptr::addr_of!(RAMFS_SB);
+            *sb
         }
     }
 }
@@ -160,24 +167,27 @@ pub struct RamfsType;
 
 impl crate::vfs::FileSystem for RamfsType {
     fn name(&self) -> &'static str { "ramfs" }
-    fn mount(&self) -> Result<&'static dyn crate::vfs::SuperBlock, crate::file::Error> {
+    fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
-        Ok(Box::leak(Box::new(ramfs.superblock())))
+        Ok(ramfs.superblock())
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
 pub static RAMFS_TYPE: RamfsType = RamfsType;
 
 // =============================================================================
 // SuperBlock
 // =============================================================================
 
+static mut RAMFS_SB: Option<&'static dyn SuperBlock> = None;
+
 /// SuperBlock for ramfs.
 pub struct RamfsSuperBlock {
     root: &'static RamfsInode,
 }
 
-impl crate::vfs::SuperBlock for RamfsSuperBlock {
+impl SuperBlock for RamfsSuperBlock {
     fn root_inode(&self) -> &'static dyn Inode {
         self.root
     }
@@ -204,13 +214,19 @@ impl Ramfs {
     }
 
     /// Get the root inode.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn root(&self) -> &'static dyn Inode {
         self.root
     }
 
     /// Create a SuperBlock for this ramfs instance.
-    pub fn superblock(&self) -> RamfsSuperBlock {
-        RamfsSuperBlock { root: self.root }
+    pub fn superblock(&self) -> &'static RamfsSuperBlock {
+        let sb: &'static RamfsSuperBlock = Box::leak(Box::new(RamfsSuperBlock { root: self.root }));
+        unsafe {
+            let ptr = core::ptr::addr_of_mut!(RAMFS_SB);
+            *ptr = Some(sb);
+        }
+        sb
     }
 
     /// Insert an empty directory, creating parent directories as needed.

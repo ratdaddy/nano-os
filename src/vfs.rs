@@ -5,17 +5,11 @@
 
 use alloc::vec::Vec;
 
-use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom};
+use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom, SuperBlock, inode_id};
 
 // =============================================================================
 // SuperBlock and Mount Table
 // =============================================================================
-
-/// SuperBlock trait — each filesystem provides one per mount.
-pub trait SuperBlock: Send + Sync {
-    fn root_inode(&self) -> &'static dyn Inode;
-    fn fs_type(&self) -> &'static str;
-}
 
 /// A single mount record.
 struct Mount {
@@ -57,6 +51,7 @@ pub fn mounts() -> Vec<MountInfo> {
 }
 
 /// Mount a registered filesystem at the given path.
+#[cfg_attr(test, allow(dead_code))]
 pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
     let inode = vfs_lookup(path)?;
     let fs = find_filesystem(fs_name).ok_or(Error::NotFound)?;
@@ -77,14 +72,17 @@ pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
 // =============================================================================
 
 /// Filesystem driver trait — each filesystem type implements this.
+#[cfg_attr(test, allow(dead_code))]
 pub trait FileSystem: Send + Sync {
     fn name(&self) -> &'static str;
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error>;
 }
 
+#[cfg_attr(test, allow(dead_code))]
 static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
 
 /// Register a filesystem driver.
+#[cfg_attr(test, allow(dead_code))]
 pub fn register_filesystem(fs: &'static dyn FileSystem) {
     unsafe {
         let fss = core::ptr::addr_of_mut!(FILESYSTEMS);
@@ -96,6 +94,7 @@ pub fn register_filesystem(fs: &'static dyn FileSystem) {
 }
 
 /// Look up a registered filesystem by name.
+#[cfg_attr(test, allow(dead_code))]
 pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
     unsafe {
         let fss = core::ptr::addr_of!(FILESYSTEMS);
@@ -106,6 +105,7 @@ pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
 }
 
 /// Return names of all registered filesystems.
+#[cfg_attr(test, allow(dead_code))]
 pub fn filesystems() -> Vec<&'static str> {
     unsafe {
         let fss = core::ptr::addr_of!(FILESYSTEMS);
@@ -127,11 +127,29 @@ fn root_inode() -> Result<&'static dyn Inode, Error> {
     }
 }
 
+/// Check if an inode is a mountpoint; if so, return the mounted root inode.
+fn cross_mount(inode: &'static dyn Inode) -> &'static dyn Inode {
+    unsafe {
+        let mounts = core::ptr::addr_of!(MOUNTS);
+        if let Some(mounts) = (*mounts).as_ref() {
+            for mount in mounts {
+                if let Some(mp) = mount.mountpoint_inode {
+                    if inode_id(mp) == inode_id(inode) {
+                        return mount.sb.root_inode();
+                    }
+                }
+            }
+        }
+    }
+    inode
+}
+
 /// Look up an inode by path without opening it.
 pub fn vfs_lookup(path: &str) -> Result<&'static dyn Inode, Error> {
     let mut inode = root_inode()?;
     for component in path.split('/').filter(|s| !s.is_empty()) {
         inode = inode.lookup(component)?;
+        inode = cross_mount(inode);
     }
     Ok(inode)
 }
@@ -293,6 +311,62 @@ mod tests {
     fn setup(root: &'static MockInode) {
         let sb: &'static dyn SuperBlock = Box::leak(Box::new(MockSuperBlock { root }));
         init(sb);
+    }
+
+    /// Add a mount over the given inode, pointing to a second mock filesystem.
+    fn mount_over(mountpoint: &'static dyn Inode, root: &'static MockInode) {
+        let sb: &'static dyn SuperBlock = Box::leak(Box::new(MockSuperBlock { root }));
+        unsafe {
+            let mounts = core::ptr::addr_of_mut!(MOUNTS);
+            (*mounts).as_mut().unwrap().push(Mount {
+                mountpoint_inode: Some(mountpoint),
+                mountpoint: "",
+                sb,
+            });
+        }
+    }
+
+    // ---- cross_mount tests ----
+
+    #[test_case]
+    fn test_lookup_crosses_mount() {
+        println!("Testing vfs_lookup crosses mountpoint...");
+        let mnt = MockInode::dir(&[]);
+        setup(MockInode::dir(&[("mnt", mnt)]));
+
+        let mounted_root = MockInode::dir(&[("data.txt", MockInode::file(b"mounted"))]);
+        mount_over(mnt, mounted_root);
+
+        let mut file = vfs_open("/mnt/data.txt").unwrap();
+        let mut buf = [0u8; 7];
+        vfs_read_exact(&mut file, &mut buf).unwrap();
+        assert_eq!(&buf, b"mounted");
+    }
+
+    #[test_case]
+    fn test_lookup_mountpoint_returns_mounted_root() {
+        println!("Testing vfs_lookup on mountpoint returns mounted root...");
+        let mnt = MockInode::dir(&[]);
+        setup(MockInode::dir(&[("mnt", mnt)]));
+
+        let mounted_root = MockInode::dir(&[("inner.txt", MockInode::file(b"x"))]);
+        mount_over(mnt, mounted_root);
+
+        let inode = vfs_lookup("/mnt").unwrap();
+        assert_eq!(inode_id(inode), inode_id(mounted_root));
+    }
+
+    #[test_case]
+    fn test_lookup_not_found_in_mounted_fs() {
+        println!("Testing vfs_lookup not found in mounted filesystem...");
+        let mnt = MockInode::dir(&[]);
+        setup(MockInode::dir(&[("mnt", mnt)]));
+
+        let mounted_root = MockInode::dir(&[("exists.txt", MockInode::file(b"y"))]);
+        mount_over(mnt, mounted_root);
+
+        let result = vfs_open("/mnt/nonexistent");
+        assert!(matches!(result, Err(Error::NotFound)));
     }
 
     // ---- vfs_open tests ----
