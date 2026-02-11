@@ -260,6 +260,7 @@ pub unsafe extern "C" fn yield_now() {
 fn yield_impl() -> ! {
     let current = Thread::current();
     let current_id = current.id;
+    #[cfg(feature = "trace_scheduler")]
     println!("[sched] thread {} yielding", current_id);
 
     // Mark current thread as ready and add back to queue
@@ -321,6 +322,13 @@ fn schedule() -> ! {
         // - For fresh threads: in enter_process before sret to user mode
         // - For resumed threads: in trap handler return path before sret
         Thread::set_current(next_ptr);
+
+        // Restore process context pointer so syscall handlers see the correct process
+        unsafe {
+            if let Some(ref mut ctx) = (*next_ptr).process {
+                process::Context::set_current(ctx.as_mut());
+            }
+        }
         unsafe {
             restore_context_asm(&(*next_ptr).context as *const ThreadContext);
         }
@@ -383,6 +391,7 @@ pub fn exit() -> ! {
     let current = Thread::current();
     let current_id = current.id;
 
+    #[cfg(feature = "trace_scheduler")]
     println!("Thread {} exiting", current_id);
 
     // Remove from thread table

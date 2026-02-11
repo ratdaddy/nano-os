@@ -73,6 +73,17 @@ static `InodeOps` and `FileOps` tables assigned at inode creation time.
 - `InodeOps` methods need an explicit `&'static Inode` parameter since
   they're no longer trait methods on the inode itself
 
+## Inode numbering
+
+`inode_id()` currently returns the kernel heap address of the inode,
+which is used internally for mount-crossing comparisons. This value
+must not be exposed to userspace (e.g., via `fstat` `st_ino`) because
+it leaks kernel address layout. When moving to a concrete `Inode`
+struct, add an explicit `ino: u64` field assigned by the filesystem at
+inode creation time (e.g., a per-superblock counter). Use that for
+`st_ino` in syscalls while keeping the pointer-based identity check
+internal to the VFS.
+
 ## Files affected
 
 | File | Change |

@@ -77,7 +77,10 @@ pub fn kernel_main() -> ! {
 /// Spawn the init process as a kernel thread and start the scheduler.
 fn run_process_as_kthread() -> ! {
     match kthread::user_process::spawn_process("/prog_example") {
-        Ok(tid) => println!("Process spawned as thread {}, starting scheduler...", tid),
+        Ok(_tid) => {
+            #[cfg(feature = "trace_process")]
+            println!("Process spawned as thread {}, starting scheduler...", _tid);
+        }
         Err(e) => {
             println!("Failed to spawn process: {}", e);
             loop { unsafe { core::arch::asm!("wfi"); } }
@@ -90,7 +93,10 @@ fn run_process_as_kthread() -> ! {
 /// Spawn two processes to test multi-process scheduling with yield.
 fn run_two_processes() -> ! {
     match kthread::user_process::spawn_process("/prog_example") {
-        Ok(tid) => println!("Process 1 spawned as thread {}", tid),
+        Ok(_tid) => {
+            #[cfg(feature = "trace_process")]
+            println!("Process 1 spawned as thread {}", _tid);
+        }
         Err(e) => {
             println!("Failed to spawn process 1: {}", e);
             loop { unsafe { core::arch::asm!("wfi"); } }
@@ -98,13 +104,17 @@ fn run_two_processes() -> ! {
     }
 
     match kthread::user_process::spawn_process("/prog_example") {
-        Ok(tid) => println!("Process 2 spawned as thread {}", tid),
+        Ok(_tid) => {
+            #[cfg(feature = "trace_process")]
+            println!("Process 2 spawned as thread {}", _tid);
+        }
         Err(e) => {
             println!("Failed to spawn process 2: {}", e);
             loop { unsafe { core::arch::asm!("wfi"); } }
         }
     }
 
+    #[cfg(feature = "trace_process")]
     println!("Starting scheduler with two processes...");
     thread::start_scheduler()
 }

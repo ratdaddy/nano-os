@@ -27,6 +27,11 @@ path = "src/main.rs"
 [features]
 print_dtb = []
 page_allocator_debug = []
+trace_syscalls = []
+trace_traps = []
+trace_scheduler = []
+trace_process = []
+trace_amo = []
 
 [build-dependencies]
 memoffset = "0.9.1"

@@ -9,7 +9,7 @@ INITRAMFS_DIR := bootdata/initramfs
 INITRAMFS_IMAGE := initramfs-builder
 INIT_ELF := prog_example/target/riscv64gc-unknown-linux-musl/release/prog_example
 
-#FEATURES := --features print_dtb
+#FEATURES := --features print_dtb,trace_syscalls,trace_trap,trace_scheduler,trace_process
 FEATURES :=
 
 SD_MOUNT=/Volumes/KERNEL

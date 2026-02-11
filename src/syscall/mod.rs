@@ -9,6 +9,7 @@ mod file;
 mod memory;
 mod process;
 mod signal;
+pub mod uaccess;
 
 /// Handle a syscall coming from user mode.
 ///
@@ -18,6 +19,7 @@ mod signal;
 /// `ecall` instruction.
 pub fn handle(tf: &mut types::ProcessTrapFrame) {
     let syscall_number = tf.registers.a7;
+    #[cfg(feature = "trace_syscalls")]
     println!("User ecall: syscall number: {}", syscall_number);
     match syscall_number {
         // ppoll, rt_sigaction, sigaltstack, rt_sigprocmask
@@ -27,6 +29,11 @@ pub fn handle(tf: &mut types::ProcessTrapFrame) {
         222 => memory::mmap(tf),
         214 => memory::brk(tf),
         64 => file::write(tf),
+        56 => file::openat(tf),
+        25 => file::fcntl(tf),
+        80 => file::newfstat(tf),
+        63 => file::read(tf),
+        57 => file::close(tf),
         _ => {
             println!("Unhandled syscall");
             loop {

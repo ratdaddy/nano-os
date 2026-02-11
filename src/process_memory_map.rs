@@ -26,6 +26,7 @@ pub fn init_from_elf(elf_handle: &mut File, context: &mut process::Context) {
         load_elf(elf_handle, &header).expect("Failed to load ELF file");
 
     context.trap_frame.pc = header.e_entry as usize;
+    #[cfg(feature = "trace_process")]
     println!("Setting heap address to {:#x} in context at {:#x}", heap_start, context as *const _ as usize);
     context.heap_begin = heap_start;
     context.heap_end = heap_start;
@@ -45,6 +46,7 @@ pub fn init_from_elf(elf_handle: &mut File, context: &mut process::Context) {
 
     // Map first page of process stack
     let process_stack_end = PROCESS_STACK_START - memory::PAGE_SIZE;
+    #[cfg(feature = "trace_process")]
     println!(
         "Mapping first page of process stack: virt: {:#x} - {:#x}",
         process_stack_end, PROCESS_STACK_START
@@ -121,6 +123,7 @@ pub fn init_from_elf(elf_handle: &mut File, context: &mut process::Context) {
 
     // Map the remaining process stack segment
     let remaining_process_stack_end = process_stack_end - (PROCESS_STACK_STARTING_SIZE - memory::PAGE_SIZE);
+    #[cfg(feature = "trace_process")]
     println!(
         "Mapping remaining process stack segment: virt: {:#x} - {:#x}",
         remaining_process_stack_end, process_stack_end
@@ -158,7 +161,7 @@ fn load_elf(
         if ph.p_type == read_elf::PT_LOAD {
             let offset = ph.p_offset as usize;
             let virt_addr = ph.p_vaddr as usize;
-            let phys_addr = ph.p_paddr as usize;
+            let _phys_addr = ph.p_paddr as usize;
             let mem_size = ph.p_memsz as usize;
             let file_size = ph.p_filesz as usize;
 
@@ -175,11 +178,12 @@ fn load_elf(
                 heap_start = virt_addr_end;
             }
 
+            #[cfg(feature = "trace_process")]
             println!(
                 "Mapping ELF segment: virt: {:#x} - {:#x} to phys: {:#x}",
                 virt_addr_load_start,
                 virt_addr_load_end,
-                phys_addr
+                _phys_addr
             );
 
             kernel_memory_map::allocate_and_map_process_load_area_range(
@@ -191,11 +195,13 @@ fn load_elf(
             vfs::vfs_seek(elf_handle, crate::file::SeekFrom::Start(offset))
                 .map_err(|_| "Failed to seek to program header offset")?;
 
+            #[cfg(feature = "trace_process")]
             println!("Loading from {:#x}", virt_addr_start);
             let buffer = unsafe { slice::from_raw_parts_mut(virt_addr_start as *mut u8, file_size) };
             vfs::vfs_read_exact(elf_handle, buffer)
                 .map_err(|_| "Failed to read ELF segment data")?;
 
+            #[cfg(feature = "trace_process")]
             println!("Zeroing out {:#x} remaining bytes in ELF segment: virt: {:#x}", mem_size - file_size, virt_addr_start + file_size);
             unsafe {
                 core::ptr::write_bytes((virt_addr_start + file_size) as *mut u8, 0, mem_size - file_size);

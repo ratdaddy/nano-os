@@ -42,9 +42,10 @@ pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
     // Initialize from ELF (writes entry point, stack, etc. to trap_frame)
     process_memory_map::init_from_elf(&mut file, &mut process_ctx);
 
-    // Set up file descriptors
-    process_ctx.files.push(None);                                                      // fd 0 (stdin)
+    // Set up file descriptors: stdin, stdout, stderr all open to /dev/console
+    process_ctx.files.push(Some(vfs::vfs_open("/dev/console").expect("no console")));  // fd 0 (stdin)
     process_ctx.files.push(Some(vfs::vfs_open("/dev/console").expect("no console")));  // fd 1 (stdout)
+    process_ctx.files.push(Some(vfs::vfs_open("/dev/console").expect("no console")));  // fd 2 (stderr)
 
     thread.process = Some(process_ctx);
 

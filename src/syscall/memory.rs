@@ -6,8 +6,9 @@ pub fn mmap(tf: &mut types::ProcessTrapFrame) {
     let prot = tf.registers.a2;
     let flags = tf.registers.a3;
 
+    #[cfg(feature = "trace_syscalls")]
     println!(
-        "[mmap] addr: {:#x}, length: {:#x}, prot: {:#x}, flags: {:#x}, fd: {}, offset: {:#x}",
+        "[mmap]: addr: {:#x}, length: {:#x}, prot: {:#x}, flags: {:#x}, fd: {}, offset: {:#x}",
         addr_hint,
         len,
         prot,
@@ -29,7 +30,8 @@ pub fn mmap(tf: &mut types::ProcessTrapFrame) {
     let ctx = process::Context::current();
     let size = memory::align_up(len);
     let virt_addr = ctx.mmap_next;
-    println!("mmap at {:#x}, size: {:#x}", virt_addr, size);
+    #[cfg(feature = "trace_syscalls")]
+    println!("[mmap]: at {:#x}, size: {:#x}", virt_addr, size);
 
     // MAP_ANONYMOUS requires zeroed memory (POSIX requirement)
     // Use zeroed variant to zero pages via physical address (identity-mapped in kernel)
@@ -69,7 +71,8 @@ pub fn brk(tf: &mut types::ProcessTrapFrame) {
         ctx.heap_end += size;
     }
 
-    println!("[brk] size: {:#x}, heap_end: {:#x}", size, ctx.heap_end);
+    #[cfg(feature = "trace_syscalls")]
+    println!("[brk]: size: {:#x}, heap_end: {:#x}", size, ctx.heap_end);
 
     tf.registers.a0 = ctx.heap_end;
 }

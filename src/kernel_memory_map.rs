@@ -363,6 +363,7 @@ fn map_last_l1_pte() {
 }
 
 pub fn allocate_and_map_process_load_area_range(start: usize, size: usize, flags: PageFlags) {
+    #[cfg(feature = "trace_process")]
     println!("Allocating and mapping process load range: virt: {:#x} - {:#x}", start, start + size);
 
     with_page_mapper(|mapper| {
@@ -409,6 +410,7 @@ pub fn switch_to_kernel_map() {
 }
 
 pub fn grow_kernel_heap(size: usize) -> Option<(usize, usize)> {
+    #[cfg(feature = "trace_process")]
     println!("Growing kernel heap: {:#x}", size);
     let size = memory::align_up(size);
 

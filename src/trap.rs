@@ -150,6 +150,7 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
     let scause = tf.scause;
     let stval = tf.stval;
 
+    #[cfg(feature = "trace_traps")]
     println!(
         "Trap handler called: scause: {:#x}, stval: {:#x}, sepc: {:#x}",
         scause, stval, sepc
