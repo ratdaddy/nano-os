@@ -16,7 +16,7 @@ const HIGH_HALF_PHYS_START: usize = 0xffff_ffff_0000_0000;
 #[no_mangle]
 pub static KERNEL_STACK_START: usize = HIGH_HALF_PHYS_START + 0xffe0_0000;
 
-const KERNEL_STACK_STARTING_SIZE: usize = 0x4000;
+const KERNEL_STACK_STARTING_SIZE: usize = 0x10000; // 64 KB
 #[no_mangle]
 pub static TRAMPOLINE_TRAP_FRAME: usize = HIGH_HALF_PHYS_START + 0xffe0_0000;
 const TRAP_FRAME_SIZE: usize = 0x1000;
@@ -95,6 +95,22 @@ pub fn init(memory: memory::Region) {
                     0x7000_0000,
                     0x7000_0000,
                     0x7040_0000,  // Map 4MB for NanoRV PLIC
+                    PageFlags::READ
+                        | PageFlags::WRITE
+                        | PageFlags::ACCESSED
+                        | PageFlags::DIRTY
+                        | thead_flags,
+                    page_mapper::PageSize::Size4K,
+                );
+            });
+
+            println!("Mapping NanoRV SD controller at {:#x} - {:#x}", 0x0431_0000usize, 0x0431_0000 + memory::PAGE_SIZE);
+
+            with_page_mapper(|mapper| {
+                mapper.map_range(
+                    0x0431_0000,
+                    0x0431_0000,
+                    0x0431_0000 + memory::PAGE_SIZE,
                     PageFlags::READ
                         | PageFlags::WRITE
                         | PageFlags::ACCESSED

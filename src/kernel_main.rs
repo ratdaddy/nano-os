@@ -53,6 +53,9 @@ pub fn kernel_main() -> ! {
         println!("    8) ELF headers");
         println!("    9) Procfs contents");
         println!();
+        println!("  Hardware:");
+        println!("    s) SD card controller registers");
+        println!();
         print!("Select: ");
 
         let ch = console::getchar();
@@ -69,6 +72,7 @@ pub fn kernel_main() -> ! {
             b'7' => crate::demos::vfs_inspect::inspect_vfs(),
             b'8' => crate::demos::elf_inspect::inspect_elf(),
             b'9' => crate::demos::procfs_inspect::inspect_procfs(),
+            b's' => crate::demos::sd_read::sd_read_demo(),
             _ => println!("Invalid selection"),
         }
     }
