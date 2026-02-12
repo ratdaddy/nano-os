@@ -6,3 +6,4 @@ pub mod threading;
 pub mod uart;
 pub mod uart_flood;
 pub mod vfs_inspect;
+pub mod virtio_blk;

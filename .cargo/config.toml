@@ -5,7 +5,7 @@ target = "riscv64imac-unknown-none-elf"
 dev = "run --features print_dtb"
 
 [target.riscv64imac-unknown-none-elf]
-runner = "qemu-system-riscv64 -machine virt -nographic -bios default -initrd target/riscv64imac-unknown-none-elf/debug/initramfs.cpio -m 256M -kernel"
+runner = "qemu-system-riscv64 -machine virt -nographic -bios default -initrd target/riscv64imac-unknown-none-elf/debug/initramfs.cpio -m 256M -global virtio-mmio.force-legacy=false -drive file=target/riscv64imac-unknown-none-elf/debug/sd.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0 -kernel"
 rustflags = ["-C", "link-arg=-Tlink.ld"]
 linker = "riscv64-unknown-elf-ld"
 

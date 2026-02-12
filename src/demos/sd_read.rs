@@ -286,11 +286,10 @@ fn detect_card_type() {
     let acmd41_arg: u32 = if sd_v2 { 0x40FF8000 } else { 0x00FF8000 };
     println!("ACMD41 (SD_SEND_OP_COND, HCS={})...", if sd_v2 { 1 } else { 0 });
 
-    let mut ocr = 0u32;
     let mut attempts = 0u32;
     let max_attempts = 100;
 
-    loop {
+    let ocr = loop {
         // CMD55: APP_CMD — next command is an application command
         // RCA = 0 (card not yet identified)
         match send_command(55, 0, ResponseType::R1) {
@@ -304,11 +303,11 @@ fn detect_card_type() {
         // ACMD41: SD_SEND_OP_COND
         match send_command(41, acmd41_arg, ResponseType::R3) {
             Ok(resp) => {
-                ocr = resp[0];
+                let ocr = resp[0];
                 attempts += 1;
                 if ocr & (1 << 31) != 0 {
                     // Card is ready (busy bit set = NOT busy)
-                    break;
+                    break ocr;
                 }
                 if attempts >= max_attempts {
                     println!("  Card not ready after {} attempts (OCR: {:#010x})", attempts, ocr);
@@ -324,7 +323,7 @@ fn detect_card_type() {
                 return;
             }
         }
-    }
+    };
 
     println!("  Card ready after {} attempt(s)", attempts);
     println!("  OCR: {:#010x}", ocr);
@@ -594,37 +593,6 @@ fn read_block(sector: u32) -> Result<[u8; 512], SdError> {
     Ok(buf)
 }
 
-/// Print a hex dump of a byte buffer, 16 bytes per line.
-fn hex_dump(buf: &[u8]) {
-    for line_start in (0..buf.len()).step_by(16) {
-        // Offset
-        print!("{:08x}: ", line_start);
-
-        // Hex bytes, two groups of 8
-        for i in 0..16 {
-            if i == 8 { print!(" "); }
-            if line_start + i < buf.len() {
-                print!(" {:02x}", buf[line_start + i]);
-            } else {
-                print!("   ");
-            }
-        }
-
-        // ASCII
-        print!("  |");
-        for i in 0..16 {
-            if line_start + i < buf.len() {
-                let b = buf[line_start + i];
-                if b >= 0x20 && b < 0x7F {
-                    print!("{}", b as char);
-                } else {
-                    print!(".");
-                }
-            }
-        }
-        println!("|");
-    }
-}
 
 /// Read a little-endian u16 from a byte slice at the given offset.
 fn le_u16(buf: &[u8], off: usize) -> u16 {

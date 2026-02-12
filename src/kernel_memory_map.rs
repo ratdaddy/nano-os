@@ -37,13 +37,14 @@ pub fn init(memory: memory::Region) {
     // Map hardware-specific MMIO regions based on CPU type
     match dtb::get_cpu_type() {
         dtb::CpuType::Qemu => {
-            println!("Mapping QEMU UART at {:#x} - {:#x}", 0x1000_0000, 0x1000_0000 + memory::PAGE_SIZE);
+            println!("Mapping QEMU UART and virtio-mmio region at {:#x} - {:#x}",
+                0x1000_0000, 0x1000_a000);
 
             with_page_mapper(|mapper| {
                 mapper.map_range(
                     0x1000_0000,
                     0x1000_0000,
-                    0x1000_0000 + memory::PAGE_SIZE,
+                    0x1000_a000, // Cover UART + 8 virtio-mmio devices
                     PageFlags::READ
                         | PageFlags::WRITE
                         | PageFlags::ACCESSED

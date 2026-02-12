@@ -7,6 +7,8 @@ BOOT_ITS := $(BUILD_DIR)/boot.its
 INITRAMFS := $(BUILD_DIR)/initramfs.cpio
 INITRAMFS_DIR := bootdata/initramfs
 INITRAMFS_IMAGE := initramfs-builder
+SDIMG := $(BUILD_DIR)/sd.img
+SDIMG_IMAGE := sdimg-builder
 INIT_ELF := prog_example/target/riscv64gc-unknown-linux-musl/release/prog_example
 
 #FEATURES := --features print_dtb,trace_syscalls,trace_trap,trace_scheduler,trace_process
@@ -18,7 +20,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker $(INIT_ELF)
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker sdimg sdimg-docker $(INIT_ELF)
 
 all: $(BOOT_SD)
 
@@ -56,10 +58,28 @@ $(INITRAMFS): $(shell find $(INITRAMFS_DIR)) $(INIT_ELF)
 initramfs-docker:
 	docker build -t $(INITRAMFS_IMAGE) initramfs/
 
+sdimg: $(SDIMG)
+
+$(SDIMG): $(BOOT_SD) sdimg/Dockerfile
+	@echo "Creating sd.img..."
+	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)/sdimg_input
+	@cp $(BOOT_SD) $(BUILD_DIR)/sdimg_input/boot.sd
+	@cp bootdata/fip.bin $(BUILD_DIR)/sdimg_input/fip.bin
+	@docker run --rm --privileged \
+		-v $$(pwd)/$(BUILD_DIR)/sdimg_input:/input \
+		-v $$(pwd)/$(BUILD_DIR):/output \
+		$(SDIMG_IMAGE) > /dev/null 2>&1
+	@rm -rf $(BUILD_DIR)/sdimg_input
+	@echo "Done."
+
+sdimg-docker:
+	docker build -t $(SDIMG_IMAGE) sdimg/
+
 $(INIT_ELF):
 	make -C prog_example
 
-run: initramfs
+run: initramfs $(SDIMG)
 	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
 test: initramfs
@@ -71,7 +91,7 @@ lint:
 format:
 	cargo fmt
 
-qemu-debug: initramfs
+qemu-debug: initramfs $(SDIMG)
 	cargo -Z build-std=core,alloc run -- -S -gdb tcp::1234
 
 gdb:
