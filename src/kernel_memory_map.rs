@@ -486,6 +486,14 @@ pub fn init_page_mapper() {
     }
 }
 
+/// Convert a kernel virtual address to its physical address.
+///
+/// Uses page table walking to find the actual physical address, not simple offset arithmetic.
+/// Returns None if the virtual address is not mapped.
+pub fn kernel_virt_to_phys(virt: usize) -> Option<usize> {
+    kernel_page_mapper_ref().virt_to_phys(virt)
+}
+
 fn kernel_page_mapper_ref() -> &'static page_mapper::PageMapper {
     unsafe { KERNEL_PAGE_MAPPER.assume_init_ref() }
 }

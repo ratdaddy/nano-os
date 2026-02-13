@@ -1,3 +1,5 @@
+pub mod block_device;
+pub mod disk_inspect;
 pub mod elf_inspect;
 pub mod mount_inspect;
 pub mod procfs_inspect;
