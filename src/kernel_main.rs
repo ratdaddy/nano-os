@@ -54,7 +54,8 @@ pub fn kernel_main() -> ! {
         println!("    9) Procfs contents");
         println!();
         println!("  Hardware:");
-        println!("    s) SD card controller registers (NanoRV)");
+        println!("    s) SD card (PIO mode) (NanoRV)");
+        println!("    a) SD card (ADMA2 mode) (NanoRV)");
         println!("    v) virtio-blk device (QEMU)");
         println!();
         print!("Select: ");
@@ -74,6 +75,7 @@ pub fn kernel_main() -> ! {
             b'8' => crate::demos::elf_inspect::inspect_elf(),
             b'9' => crate::demos::procfs_inspect::inspect_procfs(),
             b's' => crate::demos::sd_read::sd_read_demo(),
+            b'a' => crate::demos::sd_adma::sd_adma_demo(),
             b'v' => crate::demos::virtio_blk::virtio_blk_demo(),
             _ => println!("Invalid selection"),
         }

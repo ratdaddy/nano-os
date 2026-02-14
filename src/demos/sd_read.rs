@@ -18,6 +18,8 @@ const REG_NORMAL_INT_STATUS: usize = 0x30;
 const REG_ERROR_INT_STATUS: usize = 0x32;
 const REG_NORMAL_INT_STATUS_EN: usize = 0x34;
 const REG_ERROR_INT_STATUS_EN: usize = 0x36;
+const REG_CAPABILITIES: usize = 0x40;
+const REG_CAPABILITIES_HI: usize = 0x44;
 
 // Present State bits
 const PRESENT_CMD_INHIBIT: u32 = 1 << 0;
@@ -178,8 +180,49 @@ fn write8(offset: usize, val: u8) {
     unsafe { addr.write_volatile(val) }
 }
 
+fn print_capabilities() {
+    let cap = read32(REG_CAPABILITIES);
+    let cap_hi = read32(REG_CAPABILITIES_HI);
+
+    println!("SDHCI Capabilities:");
+    println!("  Lower (0x40): {:#010x}", cap);
+    println!("  Upper (0x44): {:#010x}", cap_hi);
+    println!();
+
+    // Parse key capability bits from lower register
+    println!("  DMA Support:");
+    println!("    SDMA:      {}", if cap & (1 << 22) != 0 { "yes" } else { "no" });
+    println!("    ADMA1:     {}", if cap & (1 << 18) != 0 { "yes" } else { "no" });
+    println!("    ADMA2:     {}", if cap & (1 << 19) != 0 { "yes" } else { "no" });
+    println!();
+
+    println!("  Other Features:");
+    println!("    64-bit bus: {}", if cap & (1 << 28) != 0 { "yes" } else { "no" });
+    println!("    High Speed: {}", if cap & (1 << 21) != 0 { "yes" } else { "no" });
+    println!("    3.3V:       {}", if cap & (1 << 24) != 0 { "yes" } else { "no" });
+    println!("    3.0V:       {}", if cap & (1 << 25) != 0 { "yes" } else { "no" });
+    println!("    1.8V:       {}", if cap & (1 << 26) != 0 { "yes" } else { "no" });
+
+    // Base clock frequency (bits 15-8, in MHz)
+    let base_clock = (cap >> 8) & 0xFF;
+    println!("    Base clock: {} MHz", base_clock);
+
+    // Max block length (bits 17-16: 0=512, 1=1024, 2=2048, 3=reserved)
+    let max_block = match (cap >> 16) & 0x3 {
+        0 => 512,
+        1 => 1024,
+        2 => 2048,
+        _ => 0,
+    };
+    println!("    Max block:  {} bytes", max_block);
+    println!();
+}
+
 pub fn sd_read_demo() {
     println!("\n=== SD Card Demo ===\n");
+
+    // Print controller capabilities
+    print_capabilities();
 
     // Initialize card
     let mut card = match SdCard::new() {

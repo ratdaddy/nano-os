@@ -124,7 +124,9 @@ impl PageTableEntry {
 
 
     pub fn addr(&self) -> usize {
-        (self.0 >> 10) << 12
+        // Extract PPN from bits [53:10] (44 bits), ignoring reserved bits [63:54]
+        // Mask to 44 bits after shift, then shift left by 12 to get physical address
+        ((self.0 >> 10) & 0x00000fffffffffff) << 12
     }
 
     pub fn flags(&self) -> PageFlags {

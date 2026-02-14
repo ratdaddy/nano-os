@@ -25,6 +25,10 @@ const NANO_UART: UartConfig = UartConfig {
     reg_io_width: 4,
 };
 
+// UART IRQ numbers from DTB (same device node as reg base)
+pub const QEMU_UART_IRQ: u32 = 10;
+pub const NANO_UART_IRQ: u32 = 0x2c;  // 44 decimal
+
 /// 16550 UART TX FIFO size in bytes.
 pub const TX_FIFO_SIZE: usize = 16;
 
@@ -52,11 +56,11 @@ pub fn register_chrdev() {
     chardev::chrdev_register(5, 1, &UART_FILE_OPS);
 }
 
-/// Initialize the UART driver. Must be called after dtb::init().
+/// Initialize the UART driver. Must be called after dtb::init() and plic::init().
 pub fn init() {
-    let config = match dtb::get_cpu_type() {
-        dtb::CpuType::LicheeRVNano => NANO_UART,
-        _ => QEMU_UART,
+    let (config, irq) = match dtb::get_cpu_type() {
+        dtb::CpuType::LicheeRVNano => (NANO_UART, NANO_UART_IRQ),
+        _ => (QEMU_UART, QEMU_UART_IRQ),
     };
     UART_BASE.store(config.base, Ordering::Relaxed);
     UART_REG_SHIFT.store(config.reg_shift, Ordering::Relaxed);
@@ -75,6 +79,9 @@ pub fn init() {
     unsafe {
         uart.write_reg(FCR_OFFSET, FCR_FIFO_ENABLE | FCR_RX_RESET | FCR_TX_RESET);
     }
+
+    // Register UART IRQ handler with PLIC
+    crate::drivers::plic::register_irq(irq, handle_irq);
 }
 
 /// Get a UART handle for performing operations.
@@ -206,7 +213,7 @@ impl Uart {
 
 /// Handle UART interrupt. Called by PLIC dispatch when UART IRQ fires.
 /// Checks IIR to determine interrupt type (RX/TX) and handles accordingly.
-pub fn handle_irq() {
+pub fn handle_irq(_irq: u32) {
     const IIR_OFFSET: usize = 2;
     const IIR_NO_INTERRUPT: u8 = 0x01;
     const IIR_ID_MASK: u8 = 0x0E;
