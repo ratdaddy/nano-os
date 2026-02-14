@@ -27,7 +27,6 @@ const REG_ERROR_INT_STATUS_EN: usize = 0x36;
 const REG_NORMAL_INT_SIGNAL_EN: usize = 0x38;
 const REG_ERROR_INT_SIGNAL_EN: usize = 0x3A;
 const REG_HOST_CONTROL2: usize = 0x3E;
-const REG_ADMA_ERROR: usize = 0x54;
 const REG_ADMA_ADDR_LOW: usize = 0x58;
 const REG_ADMA_ADDR_HIGH: usize = 0x5C;
 
@@ -68,11 +67,6 @@ unsafe fn enable_interrupts() {
 #[inline]
 unsafe fn disable_interrupts() {
     core::arch::asm!("csrci sstatus, {}", const SSTATUS_SIE);
-}
-
-#[inline]
-unsafe fn wfi() {
-    core::arch::asm!("wfi");
 }
 
 #[inline]
@@ -124,17 +118,10 @@ struct DataBuffer([u8; 512]);
 
 static mut DATA_BUF: DataBuffer = DataBuffer([0; 512]);
 
-// 4KB buffer for multi-block demo
-#[repr(C, align(4096))]
-struct LargeBuffer([u8; 4096]);
-
-static mut LARGE_BUF: LargeBuffer = LargeBuffer([0; 4096]);
-
 // Interrupt state machine
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum IrqState {
     Idle,
-    WaitingCommandComplete,
     WaitingTransferComplete,
     Complete,
     Error,
@@ -152,15 +139,11 @@ pub struct SdCardAdma {
 
 impl SdCardAdma {
     pub fn new() -> Result<Self, BlockError> {
-        let desc_table_phys = unsafe {
-            kernel_virt_to_phys(core::ptr::addr_of!(DESC_TABLE) as usize)
-                .expect("Failed to get physical address for descriptor table")
-        };
+        let desc_table_phys = kernel_virt_to_phys(core::ptr::addr_of!(DESC_TABLE) as usize)
+            .expect("Failed to get physical address for descriptor table");
 
-        let data_buf_phys = unsafe {
-            kernel_virt_to_phys(core::ptr::addr_of!(DATA_BUF) as usize)
-                .expect("Failed to get physical address for data buffer")
-        };
+        let data_buf_phys = kernel_virt_to_phys(core::ptr::addr_of!(DATA_BUF) as usize)
+            .expect("Failed to get physical address for data buffer");
 
         // Enable interrupt status bits for polling
         write16(REG_NORMAL_INT_STATUS_EN, 0xFFFF);
@@ -262,7 +245,7 @@ impl BlockDevice for SdCardAdma {
 
             // Invalidate cache so we see DMA-written data
             flush_dcache_for_dma();
-            buf.copy_from_slice(&DATA_BUF.0);
+            buf.copy_from_slice(&*core::ptr::addr_of!(DATA_BUF.0));
             Ok(())
         }
     }
@@ -421,7 +404,7 @@ fn read_blocks_irq(device: &mut SdCardAdma, start_sector: u32, buf: &mut [u8; 51
 
         // Invalidate cache so we see DMA-written data
         flush_dcache_for_dma();
-        buf.copy_from_slice(&DATA_BUF.0);
+        buf.copy_from_slice(&*core::ptr::addr_of!(DATA_BUF.0));
 
         Ok((cycles, microseconds))
     }

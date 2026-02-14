@@ -448,13 +448,10 @@ pub fn virtio_blk_demo() {
     let irq = QEMU_VIRTIO_IRQ_BASE + device_index;
     plic::register_irq(irq, virtio_irq_handler);
 
-    unsafe {
-
-        // Clear any pending interrupts from previous operations
-        let int_status = read32(base, VIRTIO_MMIO_INTERRUPT_STATUS);
-        if int_status != 0 {
-            write32(base, VIRTIO_MMIO_INTERRUPT_ACK, int_status);
-        }
+    // Clear any pending interrupts from previous operations
+    let int_status = read32(base, VIRTIO_MMIO_INTERRUPT_STATUS);
+    if int_status != 0 {
+        write32(base, VIRTIO_MMIO_INTERRUPT_ACK, int_status);
     }
 
     println!("Starting interrupt-driven read of sector 0...");

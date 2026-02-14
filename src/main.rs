@@ -31,6 +31,8 @@ mod collections;
 #[cfg(not(test))]
 mod asm_offsets;
 #[cfg(not(test))]
+mod cpu_info;
+#[cfg(not(test))]
 mod demos;
 #[cfg_attr(test, allow(dead_code))]
 mod dtb;
@@ -119,6 +121,8 @@ fn rust_main(
     }
 
     dtb::detect_cpu_type(dtb_ptr);
+
+    cpu_info::show_cpu_info();
 
     let memory = page_allocator::init(dtb_ptr, image_phys_end);
 

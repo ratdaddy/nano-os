@@ -1,6 +1,5 @@
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::drivers::uart;
 use crate::dtb;
 
 const QEMU_PLIC_BASE: usize = 0x0c00_0000;
