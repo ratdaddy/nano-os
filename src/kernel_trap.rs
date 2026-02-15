@@ -84,7 +84,9 @@ core::arch::global_asm!(
     "csrr t0, sepc",
     "sd t0, KTF_SEPC(sp)",
 
-    // Call Rust handler
+    // Call Rust handler with frame pointer as argument
+    // a0 = pointer to KernelTrapFrame (sp points to it)
+    "mv a0, sp",
     "call kernel_trap_handler",
 
     // Restore sepc
@@ -145,7 +147,7 @@ core::arch::global_asm!(
 );
 
 #[no_mangle]
-pub extern "C" fn kernel_trap_handler() {
+pub extern "C" fn kernel_trap_handler(frame: *mut types::KernelTrapFrame) {
     let scause: usize;
     let sepc: usize;
 
@@ -163,6 +165,29 @@ pub extern "C" fn kernel_trap_handler() {
         match cause {
             riscv::interrupt::code::EXTERNAL => {
                 plic::dispatch_irq();
+
+                // If sepc points to a wfi instruction, skip it to avoid re-executing
+                // Modify the saved sepc in the trap frame so the trap exit restores the new value
+                unsafe {
+                    // RISC-V instructions are at least 2-byte aligned
+                    // Standard 32-bit instructions can be at 2-byte boundaries (not just 4-byte)
+                    if sepc % 2 == 0 {
+                        // Read instruction - handle both 4-byte and 2-byte alignment
+                        let instr = if sepc % 4 == 0 {
+                            // 4-byte aligned - can read directly as u32
+                            core::ptr::read_volatile(sepc as *const u32)
+                        } else {
+                            // 2-byte aligned - read as two u16 and combine
+                            let low = core::ptr::read_volatile(sepc as *const u16) as u32;
+                            let high = core::ptr::read_volatile((sepc + 2) as *const u16) as u32;
+                            low | (high << 16)
+                        };
+
+                        if instr == riscv::INSTR_WFI {
+                            (*frame).sepc = sepc + 4;
+                        }
+                    }
+                }
             }
             _ => {
                 panic!("Unexpected interrupt: scause={:#x}", scause);

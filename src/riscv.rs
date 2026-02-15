@@ -107,3 +107,10 @@ pub const fn is_interrupt(scause: usize) -> bool {
 pub const fn is_exception(scause: usize) -> bool {
     scause & SCAUSE_INTERRUPT_BIT == 0
 }
+
+// ============================================================================
+// Instruction encodings
+// ============================================================================
+
+/// WFI (Wait For Interrupt) instruction encoding
+pub const INSTR_WFI: u32 = 0x10500073;

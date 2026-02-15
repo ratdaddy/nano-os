@@ -64,6 +64,7 @@ $(SDIMG): $(BOOT_SD) sdimg/Dockerfile
 	@echo "Creating sd.img..."
 	@mkdir -p $(BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)/sdimg_input
+	@touch $(BUILD_DIR)/sd.img
 	@cp $(BOOT_SD) $(BUILD_DIR)/sdimg_input/boot.sd
 	@cp bootdata/fip.bin $(BUILD_DIR)/sdimg_input/fip.bin
 	@docker run --rm --privileged \

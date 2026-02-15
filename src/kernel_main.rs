@@ -58,6 +58,9 @@ pub fn kernel_main() -> ! {
         println!("    a) SD card (ADMA2 mode) (NanoRV)");
         println!("    v) virtio-blk device (QEMU)");
         println!();
+        println!("  Block Layer:");
+        println!("    d) Start block dispatcher thread");
+        println!();
         print!("Select: ");
 
         let ch = console::getchar();
@@ -77,8 +80,16 @@ pub fn kernel_main() -> ! {
             b's' => crate::demos::sd_read::sd_read_demo(),
             b'a' => crate::demos::sd_adma::sd_adma_demo(),
             b'v' => crate::demos::virtio_blk::virtio_blk_demo(),
+            b'd' => spawn_block_dispatcher(),
             _ => println!("Invalid selection"),
         }
+
+        // Wait for keypress before redisplaying menu
+        // (menu items that don't return, like options 1 & 2, never reach here)
+        println!();
+        print!("Press any key to continue...");
+        console::getchar();
+        println!();
     }
 }
 
@@ -125,4 +136,22 @@ fn run_two_processes() -> ! {
     #[cfg(feature = "trace_process")]
     println!("Starting scheduler with two processes...");
     thread::start_scheduler()
+}
+
+/// Spawn the block dispatcher thread
+fn spawn_block_dispatcher() {
+    match crate::block::dispatcher::spawn_dispatcher() {
+        Ok(tid) => {
+            println!("Block dispatcher spawned as thread {}", tid);
+        }
+        Err(e) => {
+            println!("Failed to spawn block dispatcher: {}", e);
+        }
+    }
+
+    thread::start_scheduler();
+
+    // Fallback wfi loop - should never reach here since scheduler never returns
+    #[allow(unreachable_code)]
+    loop { unsafe { core::arch::asm!("wfi"); } }
 }

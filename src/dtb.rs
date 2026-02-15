@@ -1,5 +1,5 @@
 use core::ptr;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use crate::memory;
 
@@ -34,6 +34,7 @@ pub enum CpuType {
 }
 
 static CPU_TYPE: AtomicU8 = AtomicU8::new(CpuType::Unknown as u8);
+static TIMEBASE_FREQ: AtomicU64 = AtomicU64::new(0);
 pub static INITRD_START: AtomicUsize = AtomicUsize::new(0);
 pub static INITRD_END: AtomicUsize = AtomicUsize::new(0);
 
@@ -197,6 +198,17 @@ pub fn get_cpu_type() -> CpuType {
     }
 }
 
+#[inline]
+pub fn get_timebase_frequency() -> u64 {
+    let freq = TIMEBASE_FREQ.load(Ordering::Relaxed);
+    if freq == 0 {
+        // Return reasonable default if not set
+        10_000_000 // 10 MHz default (QEMU)
+    } else {
+        freq
+    }
+}
+
 pub fn detect_cpu_type(dtb: *const u8) {
     if get_cpu_type() != CpuType::Unknown {
         return;
@@ -226,6 +238,41 @@ pub fn detect_cpu_type(dtb: *const u8) {
 
     if !found {
         CPU_TYPE.store(CpuType::Qemu as u8, Ordering::Relaxed);
+    }
+}
+
+pub fn parse_timebase_frequency(dtb: *const u8) {
+    if TIMEBASE_FREQ.load(Ordering::Relaxed) != 0 {
+        return;
+    }
+
+    let ctx = unsafe { parse_dtb(dtb) };
+    let mut cpus_active = false;
+
+    unsafe {
+        traverse_dtb(&ctx, |token, depth, name_opt, prop_opt| {
+            match token {
+                DtbToken::BeginNode if depth == 1 => {
+                    if let Some(name) = name_opt {
+                        if name == "cpus" {
+                            cpus_active = true;
+                        }
+                    }
+                }
+                DtbToken::EndNode if depth == 1 => {
+                    cpus_active = false;
+                }
+                DtbToken::Prop if cpus_active => {
+                    if let Some((prop_name, data, len)) = prop_opt {
+                        if prop_name == "timebase-frequency" && len == 4 {
+                            let freq = read_be32(data) as u64;
+                            TIMEBASE_FREQ.store(freq, Ordering::Relaxed);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
     }
 }
 

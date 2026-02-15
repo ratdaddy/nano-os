@@ -27,6 +27,8 @@ mod kthread;
 #[cfg(not(test))]
 mod amo;
 #[cfg(not(test))]
+mod block;
+#[cfg(not(test))]
 mod collections;
 #[cfg(not(test))]
 mod asm_offsets;
@@ -121,6 +123,7 @@ fn rust_main(
     }
 
     dtb::detect_cpu_type(dtb_ptr);
+    dtb::parse_timebase_frequency(dtb_ptr);
 
     cpu_info::show_cpu_info();
 
