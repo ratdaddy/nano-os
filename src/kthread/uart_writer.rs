@@ -90,9 +90,10 @@ pub fn send_write(buf: &[u8]) {
     let sender = thread::Thread::current().id;
     let msg = WriterMessage::WriteData(buf.to_vec());
     let ptr = Box::into_raw(Box::new(msg));
-    unsafe {
-        thread::send_message_urgent(target, sender, ptr as usize);
-    }
+    thread::send_message_urgent(target, thread::Message {
+        sender,
+        data: ptr as usize,
+    });
 }
 
 /// Writer thread entry point.

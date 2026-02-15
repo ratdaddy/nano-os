@@ -6,6 +6,9 @@ use crate::kprint;
 use crate::kthread;
 use crate::thread;
 use crate::vfs;
+use crate::block::{dispatcher, partition};
+use crate::{demos, procfs, ramfs};
+use alloc::boxed::Box;
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");
@@ -22,8 +25,8 @@ pub fn kernel_main() -> ! {
     uart::init();
 
     // Register filesystem drivers
-    vfs::register_filesystem(&crate::ramfs::RAMFS_TYPE);
-    vfs::register_filesystem(&crate::procfs::PROCFS_TYPE);
+    vfs::register_filesystem(&ramfs::RAMFS_TYPE);
+    vfs::register_filesystem(&procfs::PROCFS_TYPE);
 
     // Mount initramfs as root filesystem
     vfs::init(initramfs::new());
@@ -70,16 +73,16 @@ pub fn kernel_main() -> ! {
         match ch {
             b'1' => run_process_as_kthread(),
             b'2' => run_two_processes(),
-            b'3' => crate::demos::threading::test_message_passing(),
-            b'4' => crate::demos::uart::uart_demo(),
-            b'5' => crate::demos::uart_flood::run(),
-            b'6' => crate::demos::mount_inspect::inspect_mounts(),
-            b'7' => crate::demos::vfs_inspect::inspect_vfs(),
-            b'8' => crate::demos::elf_inspect::inspect_elf(),
-            b'9' => crate::demos::procfs_inspect::inspect_procfs(),
-            b's' => crate::demos::sd_read::sd_read_demo(),
-            b'a' => crate::demos::sd_adma::sd_adma_demo(),
-            b'v' => crate::demos::virtio_blk::virtio_blk_demo(),
+            b'3' => demos::threading::test_message_passing(),
+            b'4' => demos::uart::uart_demo(),
+            b'5' => demos::uart_flood::run(),
+            b'6' => demos::mount_inspect::inspect_mounts(),
+            b'7' => demos::vfs_inspect::inspect_vfs(),
+            b'8' => demos::elf_inspect::inspect_elf(),
+            b'9' => demos::procfs_inspect::inspect_procfs(),
+            b's' => demos::sd_read::sd_read_demo(),
+            b'a' => demos::sd_adma::sd_adma_demo(),
+            b'v' => demos::virtio_blk::virtio_blk_demo(),
             b'd' => spawn_block_dispatcher(),
             _ => println!("Invalid selection"),
         }
@@ -138,14 +141,26 @@ fn run_two_processes() -> ! {
     thread::start_scheduler()
 }
 
-/// Spawn the block dispatcher thread
+/// Spawn the block dispatcher thread and a reader thread
 fn spawn_block_dispatcher() {
-    match crate::block::dispatcher::spawn_dispatcher() {
+    match dispatcher::spawn_dispatcher() {
         Ok(tid) => {
             println!("Block dispatcher spawned as thread {}", tid);
         }
         Err(e) => {
             println!("Failed to spawn block dispatcher: {}", e);
+            loop { unsafe { core::arch::asm!("wfi"); } }
+        }
+    }
+
+    // Spawn a reader thread that will make block requests
+    match spawn_block_reader() {
+        Ok(tid) => {
+            println!("Block reader spawned as thread {}", tid);
+        }
+        Err(e) => {
+            println!("Failed to spawn block reader: {}", e);
+            loop { unsafe { core::arch::asm!("wfi"); } }
         }
     }
 
@@ -154,4 +169,60 @@ fn spawn_block_dispatcher() {
     // Fallback wfi loop - should never reach here since scheduler never returns
     #[allow(unreachable_code)]
     loop { unsafe { core::arch::asm!("wfi"); } }
+}
+
+/// Spawn a block reader thread
+fn spawn_block_reader() -> Result<usize, &'static str> {
+    let t = thread::Thread::new(block_reader_main);
+    let tid = t.id;
+    thread::add(t);
+    Ok(tid)
+}
+
+// Static buffer for block reader - must be properly aligned for DMA
+#[repr(C, align(512))]
+struct ReaderBuffer([u8; 512]);
+
+static mut READER_BUFFER: ReaderBuffer = ReaderBuffer([0; 512]);
+
+/// Block reader thread main loop
+fn block_reader_main() {
+    let tid = thread::Thread::current().id;
+    kprintln!("Block reader thread started (tid={})", tid);
+
+    unsafe {
+        let buf = &raw mut READER_BUFFER.0;
+        let buf = &mut *buf;
+
+        kprintln!("Block reader: Requesting read of sector 0...");
+
+        // Request block read from dispatcher
+        dispatcher::request_read_block(0, buf);
+
+        kprintln!("Block reader: Waiting for completion...");
+
+        // Wait for response message from dispatcher
+        let msg = thread::receive_message();
+        let response = *Box::from_raw(msg.data as *mut dispatcher::BlockMessage);
+
+        // Check response status
+        if let dispatcher::BlockMessage::ReadResponse { status } = response {
+            match status {
+                Ok(()) => {
+                    kprintln!("Block reader: Read completed successfully!");
+
+                    // Parse and display partition table
+                    partition::parse_mbr(buf);
+                }
+                Err(e) => {
+                    kprintln!("Block reader: Read failed: {:?}", e);
+                }
+            }
+        } else {
+            kprintln!("Block reader: Unexpected message type!");
+        }
+    }
+
+    kprintln!("Block reader: Done, exiting...");
+    thread::exit();
 }

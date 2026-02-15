@@ -4,12 +4,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
-use types::ThreadContext;
 
 use crate::kernel_memory_map::TRAMPOLINE_TRAP_FRAME;
 use crate::kernel_trap;
 use crate::process;
 use crate::trap;
+use crate::types::ThreadContext;
 
 /// Thread execution state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,10 +455,16 @@ pub fn wake_thread(target_id: usize) {
 /// The target is placed at the front of the ready queue, and the sender
 /// yields so the target runs next. Use this for latency-sensitive receivers
 /// like the UART writer or future interrupt handler threads.
-///
+pub fn send_message_urgent(target_id: usize, msg: Message) {
+    unsafe {
+        send_message_urgent_internal(target_id, msg.sender, msg.data);
+    }
+}
+
+/// Internal naked function for send_message_urgent.
 /// Must be called as a naked function to save the caller's context before yielding.
 #[naked]
-pub unsafe extern "C" fn send_message_urgent(target_id: usize, msg_sender: usize, msg_data: usize) {
+unsafe extern "C" fn send_message_urgent_internal(target_id: usize, msg_sender: usize, msg_data: usize) {
     core::arch::naked_asm!(
         "mv t1, ra",
         "call {save_helper}",

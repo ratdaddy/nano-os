@@ -2,22 +2,21 @@
 //!
 //! Currently supports MBR (Master Boot Record) partition tables.
 
-use crate::println;
 
 /// Parse and display MBR partition table from block 0
 pub fn parse_mbr(block0: &[u8; 512]) {
-    println!("\n=== Partition Table (MBR) ===");
+    kprintln!("\n=== Partition Table (MBR) ===");
 
     // Check boot signature
     let signature = u16::from_le_bytes([block0[510], block0[511]]);
     if signature != 0xAA55 {
-        println!("Invalid MBR signature: {:#06x} (expected 0xAA55)", signature);
-        println!("This may not be a valid MBR partition table.\n");
+        kprintln!("Invalid MBR signature: {:#06x} (expected 0xAA55)", signature);
+        kprintln!("This may not be a valid MBR partition table.\n");
         return;
     }
 
-    println!("Valid MBR signature found (0xAA55)");
-    println!("\nPartitions:");
+    kprintln!("Valid MBR signature found (0xAA55)");
+    kprintln!("\nPartitions:");
 
     // Parse partition entries
     for i in 0..4 {
@@ -44,20 +43,20 @@ pub fn parse_mbr(block0: &[u8; 512]) {
             continue;
         }
 
-        println!("  Partition {}:", i + 1);
-        println!("    Status:      {:#04x} {}",
+        kprintln!("  Partition {}:", i + 1);
+        kprintln!("    Status:      {:#04x} {}",
                  status,
                  if status == 0x80 { "(bootable)" } else { "" });
-        println!("    Type:        {:#04x} ({})",
+        kprintln!("    Type:        {:#04x} ({})",
                  partition_type,
                  partition_type_name(partition_type));
-        println!("    First LBA:   {} ({:#010x})", lba_first, lba_first);
-        println!("    Sectors:     {} ({} MB)",
+        kprintln!("    First LBA:   {} ({:#010x})", lba_first, lba_first);
+        kprintln!("    Sectors:     {} ({} MB)",
                  num_sectors,
                  (num_sectors as u64 * 512) / (1024 * 1024));
     }
 
-    println!();
+    kprintln!();
 }
 
 /// Get human-readable partition type name

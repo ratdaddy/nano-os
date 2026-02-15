@@ -2,7 +2,8 @@
 //!
 //! Fully interrupt-driven implementation for the LicheeRV Nano (SG2002).
 
-use crate::block::{BlockDevice, BlockError};
+use crate::block::{dispatcher, BlockDevice, BlockError};
+use crate::drivers::plic;
 use crate::dtb;
 use crate::kernel_memory_map::kernel_virt_to_phys;
 
@@ -186,7 +187,7 @@ fn sd_irq_handler(_irq: u32) {
     // Check for errors
     if err != 0 {
         write16(REG_ERROR_INT_STATUS, 0xFFFF);
-        crate::block::dispatcher::send_read_completion(Err(BlockError::IoError));
+        dispatcher::send_read_completion(Err(BlockError::IoError));
         return;
     }
 
@@ -197,7 +198,7 @@ fn sd_irq_handler(_irq: u32) {
         // Invalidate cache so CPU sees DMA-written data
         flush_dcache_for_dma();
 
-        crate::block::dispatcher::send_read_completion(Ok(()));
+        dispatcher::send_read_completion(Ok(()));
     }
 
     // Clear any other status bits
@@ -222,14 +223,13 @@ fn flush_dcache_for_dma() {
 
 /// Initialize SD ADMA device and register interrupt handler
 pub fn init() -> Result<SdCardAdma, BlockError> {
-    use crate::println;
 
     let device = SdCardAdma::new()?;
 
-    println!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
+    kprintln!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
 
     // Register interrupt handler with PLIC
-    crate::drivers::plic::register_irq(SD_IRQ, sd_irq_handler);
+    plic::register_irq(SD_IRQ, sd_irq_handler);
 
     Ok(device)
 }

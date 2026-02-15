@@ -1,6 +1,9 @@
 //! VirtIO block device driver
 
-use crate::block::{BlockDevice, BlockError};
+use crate::block::{dispatcher, BlockDevice, BlockError};
+use crate::drivers::plic;
+use crate::kernel_memory_map::kernel_virt_to_phys;
+use crate::kernel_trap;
 
 const VIRTIO_BASE: usize = 0x10001000;
 const VIRTIO_STRIDE: usize = 0x1000;
@@ -105,9 +108,8 @@ pub struct VirtioBlk {
 impl VirtioBlk {
     /// Probe for a VirtIO block device
     fn probe() -> Option<usize> {
-        use crate::println;
 
-        println!("VirtIO: Probing for block device...");
+        kprintln!("VirtIO: Probing for block device...");
         for i in 0..VIRTIO_COUNT {
             let base = VIRTIO_BASE + i * VIRTIO_STRIDE;
             let magic = read32(base, VIRTIO_MMIO_MAGIC_VALUE);
@@ -121,21 +123,19 @@ impl VirtioBlk {
             }
 
             let device_id = read32(base, VIRTIO_MMIO_DEVICE_ID);
-            println!("VirtIO: Found device at {:#x}, id={}", base, device_id);
+            kprintln!("VirtIO: Found device at {:#x}, id={}", base, device_id);
 
             if device_id == VIRTIO_DEVICE_ID_BLOCK {
-                println!("VirtIO: Block device found at {:#x}", base);
+                kprintln!("VirtIO: Block device found at {:#x}", base);
                 return Some(base);
             }
         }
-        println!("VirtIO: No block device found");
+        kprintln!("VirtIO: No block device found");
         None
     }
 
     /// Create and initialize a new VirtIO block device
     pub fn new() -> Result<Self, BlockError> {
-        use crate::kernel_memory_map::kernel_virt_to_phys;
-        use crate::println;
 
         let base = Self::probe().ok_or(BlockError::IoError)?;
 
@@ -147,7 +147,7 @@ impl VirtioBlk {
 
         // Read and accept features
         let features = read32(base, VIRTIO_MMIO_DEVICE_FEATURES);
-        println!("VirtIO: device features = {:#x}", features);
+        kprintln!("VirtIO: device features = {:#x}", features);
         write32(base, VIRTIO_MMIO_DRIVER_FEATURES, 0);
 
         // Features OK
@@ -156,18 +156,18 @@ impl VirtioBlk {
 
         // Check features OK was accepted
         let status = read32(base, VIRTIO_MMIO_STATUS);
-        println!("VirtIO: status after features = {:#x}", status);
+        kprintln!("VirtIO: status after features = {:#x}", status);
         if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-            println!("VirtIO: FEATURES_OK not accepted!");
+            kprintln!("VirtIO: FEATURES_OK not accepted!");
             return Err(BlockError::IoError);
         }
 
         // Set up virtqueue 0
         write32(base, VIRTIO_MMIO_QUEUE_SEL, 0);
         let max_size = read32(base, VIRTIO_MMIO_QUEUE_NUM_MAX);
-        println!("VirtIO: queue max size = {}", max_size);
+        kprintln!("VirtIO: queue max size = {}", max_size);
         if max_size == 0 {
-            println!("VirtIO: queue max size is 0!");
+            kprintln!("VirtIO: queue max size is 0!");
             return Err(BlockError::IoError);
         }
         write32(base, VIRTIO_MMIO_QUEUE_NUM, VIRTIO_QUEUE_SIZE);
@@ -175,21 +175,21 @@ impl VirtioBlk {
         // Get physical addresses for queue structures
         let desc_phys = kernel_virt_to_phys(core::ptr::addr_of!(DESC) as usize)
             .ok_or_else(|| {
-                println!("VirtIO: Failed to get physical address for DESC");
+                kprintln!("VirtIO: Failed to get physical address for DESC");
                 BlockError::IoError
             })?;
         let avail_phys = kernel_virt_to_phys(core::ptr::addr_of!(AVAIL) as usize)
             .ok_or_else(|| {
-                println!("VirtIO: Failed to get physical address for AVAIL");
+                kprintln!("VirtIO: Failed to get physical address for AVAIL");
                 BlockError::IoError
             })?;
         let used_phys = kernel_virt_to_phys(core::ptr::addr_of!(USED) as usize)
             .ok_or_else(|| {
-                println!("VirtIO: Failed to get physical address for USED");
+                kprintln!("VirtIO: Failed to get physical address for USED");
                 BlockError::IoError
             })?;
 
-        println!("VirtIO: queue physical addresses: desc={:#x}, avail={:#x}, used={:#x}",
+        kprintln!("VirtIO: queue physical addresses: desc={:#x}, avail={:#x}, used={:#x}",
                  desc_phys, avail_phys, used_phys);
 
         // Tell device where the queues are
@@ -224,7 +224,6 @@ impl VirtioBlk {
 
 impl BlockDevice for VirtioBlk {
     fn read_block(&mut self, sector: u32, buf: &mut [u8; 512]) -> Result<(), BlockError> {
-        use crate::kernel_memory_map::kernel_virt_to_phys;
 
         unsafe {
             // Get physical address of caller's buffer
@@ -261,7 +260,7 @@ impl BlockDevice for VirtioBlk {
             AVAIL.0[1] = avail_idx.wrapping_add(1);
 
             // Set up trap stack for interrupt handling
-            let trap_stack = crate::kernel_trap::trap_stack_top();
+            let trap_stack = kernel_trap::trap_stack_top();
             core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
 
             // Notify device - interrupt will fire when idle thread enables interrupts
@@ -290,13 +289,12 @@ fn virtio_irq_handler(_irq: u32) {
         write32(base, VIRTIO_MMIO_INTERRUPT_ACK, int_status);
 
         // Send completion message to dispatcher
-        crate::block::dispatcher::send_read_completion(Ok(()));
+        dispatcher::send_read_completion(Ok(()));
     }
 }
 
 /// Initialize VirtIO block device and register interrupt handler
 pub fn init() -> Result<VirtioBlk, BlockError> {
-    use crate::println;
     use core::sync::atomic::Ordering;
 
     let device = VirtioBlk::new()?;
@@ -308,10 +306,10 @@ pub fn init() -> Result<VirtioBlk, BlockError> {
     let device_index = ((device.base - VIRTIO_BASE) / VIRTIO_STRIDE) as u32;
     let irq = VIRTIO_IRQ_BASE + device_index;
 
-    println!("VirtIO: Registering IRQ {} for device at {:#x}", irq, device.base);
+    kprintln!("VirtIO: Registering IRQ {} for device at {:#x}", irq, device.base);
 
     // Register interrupt handler with PLIC
-    crate::drivers::plic::register_irq(irq, virtio_irq_handler);
+    plic::register_irq(irq, virtio_irq_handler);
 
     Ok(device)
 }
