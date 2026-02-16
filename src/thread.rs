@@ -4,12 +4,12 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
+use types::ThreadContext;
 
 use crate::kernel_memory_map::TRAMPOLINE_TRAP_FRAME;
 use crate::kernel_trap;
 use crate::process;
 use crate::trap;
-use crate::types::ThreadContext;
 
 /// Thread execution state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

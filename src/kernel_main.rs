@@ -1,14 +1,17 @@
+use alloc::boxed::Box;
+
+use crate::block::disk::{self, BlockMessage};
+use crate::block::{partition, BlockDisk};
 use crate::console;
-use crate::drivers::{plic, uart};
+use crate::drivers::{plic, sd, uart, virtio_blk};
+use crate::dtb;
 use crate::initramfs;
 use crate::kernel_trap;
 use crate::kprint;
 use crate::kthread;
 use crate::thread;
 use crate::vfs;
-use crate::block::{dispatcher, partition};
 use crate::{demos, procfs, ramfs};
-use alloc::boxed::Box;
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");
@@ -143,15 +146,20 @@ fn run_two_processes() -> ! {
 
 /// Spawn the block dispatcher thread and a reader thread
 fn spawn_block_dispatcher() {
-    match dispatcher::spawn_dispatcher() {
-        Ok(tid) => {
-            println!("Block dispatcher spawned as thread {}", tid);
+    // Probe hardware and initialize appropriate driver
+    let disk = match dtb::get_cpu_type() {
+        dtb::CpuType::Qemu => {
+            let driver = virtio_blk::init().expect("VirtIO init");
+            BlockDisk::new(driver)
         }
-        Err(e) => {
-            println!("Failed to spawn block dispatcher: {}", e);
-            loop { unsafe { core::arch::asm!("wfi"); } }
+        dtb::CpuType::LicheeRVNano => {
+            let driver = sd::init().expect("SD init");
+            BlockDisk::new(driver)
         }
-    }
+        _ => panic!("Unknown CPU type"),
+    }.expect("Failed to create BlockDisk");
+
+    println!("Block dispatcher started (tid={})", disk.dispatcher_tid());
 
     // Spawn a reader thread that will make block requests
     match spawn_block_reader() {
@@ -197,16 +205,16 @@ fn block_reader_main() {
         kprintln!("Block reader: Requesting read of sector 0...");
 
         // Request block read from dispatcher
-        dispatcher::request_read_block(0, buf);
+        disk::request_read_block(0, buf);
 
         kprintln!("Block reader: Waiting for completion...");
 
         // Wait for response message from dispatcher
         let msg = thread::receive_message();
-        let response = *Box::from_raw(msg.data as *mut dispatcher::BlockMessage);
+        let response = *Box::from_raw(msg.data as *mut BlockMessage);
 
         // Check response status
-        if let dispatcher::BlockMessage::ReadResponse { status } = response {
+        if let BlockMessage::ReadResponse { status } = response {
             match status {
                 Ok(()) => {
                     kprintln!("Block reader: Read completed successfully!");

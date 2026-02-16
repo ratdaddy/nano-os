@@ -2,8 +2,8 @@
 //!
 //! Fully interrupt-driven implementation for the LicheeRV Nano (SG2002).
 
-use crate::block::{dispatcher, BlockDevice, BlockError};
-use crate::drivers::plic;
+use crate::block::disk;
+use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::dtb;
 use crate::kernel_memory_map::kernel_virt_to_phys;
 
@@ -122,8 +122,12 @@ impl SdCardAdma {
     }
 }
 
-impl BlockDevice for SdCardAdma {
-    fn read_block(&mut self, sector: u32, buf: &mut [u8; 512]) -> Result<(), BlockError> {
+impl BlockDriver for SdCardAdma {
+    fn name(&self) -> &'static str {
+        "sd0"
+    }
+
+    fn start_read(&mut self, sector: u32, buf: &mut [u8; 512]) -> Result<(), BlockError> {
         unsafe {
             // Get physical address of caller's buffer
             let buf_virt = buf.as_ptr() as usize;
@@ -187,7 +191,7 @@ fn sd_irq_handler(_irq: u32) {
     // Check for errors
     if err != 0 {
         write16(REG_ERROR_INT_STATUS, 0xFFFF);
-        dispatcher::send_read_completion(Err(BlockError::IoError));
+        disk::send_read_completion(Err(BlockError::IoError));
         return;
     }
 
@@ -198,7 +202,7 @@ fn sd_irq_handler(_irq: u32) {
         // Invalidate cache so CPU sees DMA-written data
         flush_dcache_for_dma();
 
-        dispatcher::send_read_completion(Ok(()));
+        disk::send_read_completion(Ok(()));
     }
 
     // Clear any other status bits
@@ -226,7 +230,7 @@ pub fn init() -> Result<SdCardAdma, BlockError> {
 
     let device = SdCardAdma::new()?;
 
-    kprintln!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
+    println!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
 
     // Register interrupt handler with PLIC
     plic::register_irq(SD_IRQ, sd_irq_handler);
