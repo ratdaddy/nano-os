@@ -25,7 +25,7 @@ pub struct Message {
     pub data: usize,
 }
 
-const STACK_SIZE: usize = 16 * 1024; // 16 KB stack
+const STACK_SIZE: usize = 32 * 1024; // 32 KB stack
 
 /// Kernel thread structure
 pub struct Thread {

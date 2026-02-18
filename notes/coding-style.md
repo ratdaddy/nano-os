@@ -141,6 +141,87 @@ Use method names that clearly indicate whether operations are asynchronous (non-
 
 - Keep plural names even if current implementation only supports single operations, if the design intends to support multiple items in the future
 
+## Magic Numbers and Named Constants
+
+**Principle:** Replace magic numbers with appropriately named constants.
+
+Magic numbers make code harder to understand and maintain. Use named constants that convey meaning and context.
+
+### What to Replace
+
+- **Sizes and counts:** Block sizes, buffer sizes, array lengths, iteration limits
+- **Offsets:** Structure field offsets, header positions, table locations
+- **Signatures and magic values:** File format identifiers, checksums, special markers
+- **Hardware values:** Register addresses, device IDs, timing constants
+
+### Choosing Constant Names
+
+Match the constant name to its specific use, not just its numeric value:
+
+```rust
+// Bad - ambiguous names
+const SIZE: usize = 512;
+const OFFSET: usize = 446;
+
+// Good - names reflect meaning and context
+const BLOCK_SIZE: usize = 512;  // When referring to block I/O
+const SECTOR_SIZE: u64 = 512;   // When referring to disk geometry
+const MBR_PARTITION_TABLE_OFFSET: usize = 446;
+const MBR_SIGNATURE: u16 = 0xAA55;
+const BYTES_PER_MB: u64 = 1024 * 1024;
+```
+
+### Examples
+
+```rust
+// Bad - what do these numbers mean?
+if block0[510] == 0x55 && block0[511] == 0xAA {
+    for i in 0..4 {
+        let offset = 446 + i * 16;
+        let size_mb = num_sectors * 512 / (1024 * 1024);
+    }
+}
+
+// Good - clear and self-documenting
+const MBR_SIGNATURE: u16 = 0xAA55;
+const MBR_SIGNATURE_OFFSET: usize = 510;
+const MBR_PARTITION_TABLE_OFFSET: usize = 446;
+const MBR_PARTITION_ENTRY_SIZE: usize = 16;
+const SECTOR_SIZE: u64 = 512;
+const BYTES_PER_MB: u64 = 1024 * 1024;
+
+let signature = u16::from_le_bytes(
+    block0[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + 2]
+        .try_into().unwrap()
+);
+if signature == MBR_SIGNATURE {
+    for i in 0..4 {
+        let offset = MBR_PARTITION_TABLE_OFFSET + i * MBR_PARTITION_ENTRY_SIZE;
+        let size_mb = num_sectors * SECTOR_SIZE / BYTES_PER_MB;
+    }
+}
+```
+
+### Scope and Placement
+
+- Module-level constants for values used within that module
+- Public constants (via re-export or pub const) for values shared across modules
+- Group related constants together with comments
+
+```rust
+// MBR partition table layout
+const MBR_SIGNATURE: u16 = 0xAA55;
+const MBR_SIGNATURE_OFFSET: usize = 510;
+const MBR_PARTITION_TABLE_OFFSET: usize = 446;
+const MBR_PARTITION_ENTRY_SIZE: usize = 16;
+
+// Boot sector detection
+const BOOT_SIGNATURE: u16 = 0xAA55;
+const BOOT_SIGNATURE_OFFSET: usize = 510;
+const FAT32_FILESYSTEM_TYPE_OFFSET: usize = 82;
+const FAT32_VOLUME_LABEL_OFFSET: usize = 71;
+```
+
 ## File Organization
 
 ### Modified Files Policy
@@ -162,4 +243,5 @@ Before committing:
 - [ ] Mutable statics use `&raw mut` pattern
 - [ ] No unnecessary nested `unsafe` blocks
 - [ ] Method names clearly indicate async vs sync behavior
+- [ ] Magic numbers replaced with appropriately named constants
 - [ ] All modified files follow consistent style

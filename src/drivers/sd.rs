@@ -230,7 +230,7 @@ pub fn init() -> Result<SdCardAdma, BlockError> {
 
     let device = SdCardAdma::new()?;
 
-    println!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
+    kprintln!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
 
     // Register interrupt handler with PLIC
     plic::register_irq(SD_IRQ, sd_irq_handler);

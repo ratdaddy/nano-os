@@ -2,7 +2,10 @@
 //!
 //! Represents a physical block device with request serialization.
 
-use crate::drivers::{BlockDriver, BlockError};
+use alloc::boxed::Box;
+
+use crate::drivers::{BlockDriver, BlockError, BLOCK_SIZE};
+use crate::thread;
 
 mod dispatcher;
 pub use dispatcher::{BlockMessage, request_read_block, send_read_completion};
@@ -30,16 +33,28 @@ impl BlockDisk {
         })
     }
 
-    /// Request a block read (sends message to dispatcher).
-    #[allow(dead_code)] // Will be used by BlockVolume in Step 1.4
-    pub fn read_blocks(&self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BlockError> {
+    /// Read a block from the disk.
+    ///
+    /// Sends a read request to the dispatcher and waits for completion.
+    pub fn read_blocks(&self, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), BlockError> {
+        // Send read request to dispatcher
         request_read_block(lba as u32, buf);
-        Ok(())
+
+        // Wait for response from dispatcher
+        let msg = thread::receive_message();
+        let response = unsafe { *Box::from_raw(msg.data as *mut BlockMessage) };
+
+        // Check response status
+        if let BlockMessage::ReadResponse { status } = response {
+            status
+        } else {
+            Err(BlockError::IoError)
+        }
     }
 
-    #[allow(dead_code)] // Will be used by BlockVolume in Step 1.4
+    #[allow(dead_code)]
     pub fn block_size(&self) -> u32 {
-        512 // All current drivers use 512
+        BLOCK_SIZE as u32
     }
 
     pub fn dispatcher_tid(&self) -> usize {

@@ -5,4 +5,4 @@ pub mod uart;
 pub mod virtio_blk;
 
 // Re-export block driver types for convenience
-pub use block::{BlockDriver, BlockError};
+pub use block::{BlockDriver, BlockError, BLOCK_SIZE};

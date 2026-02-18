@@ -109,7 +109,7 @@ impl VirtioBlk {
     /// Probe for a VirtIO block device
     fn probe() -> Option<usize> {
 
-        println!("VirtIO: Probing for block device...");
+        kprintln!("VirtIO: Probing for block device...");
         for i in 0..VIRTIO_COUNT {
             let base = VIRTIO_BASE + i * VIRTIO_STRIDE;
             let magic = read32(base, VIRTIO_MMIO_MAGIC_VALUE);
@@ -123,14 +123,14 @@ impl VirtioBlk {
             }
 
             let device_id = read32(base, VIRTIO_MMIO_DEVICE_ID);
-            println!("VirtIO: Found device at {:#x}, id={}", base, device_id);
+            kprintln!("VirtIO: Found device at {:#x}, id={}", base, device_id);
 
             if device_id == VIRTIO_DEVICE_ID_BLOCK {
-                println!("VirtIO: Block device found at {:#x}", base);
+                kprintln!("VirtIO: Block device found at {:#x}", base);
                 return Some(base);
             }
         }
-        println!("VirtIO: No block device found");
+        kprintln!("VirtIO: No block device found");
         None
     }
 
@@ -147,7 +147,7 @@ impl VirtioBlk {
 
         // Read and accept features
         let features = read32(base, VIRTIO_MMIO_DEVICE_FEATURES);
-        println!("VirtIO: device features = {:#x}", features);
+        kprintln!("VirtIO: device features = {:#x}", features);
         write32(base, VIRTIO_MMIO_DRIVER_FEATURES, 0);
 
         // Features OK
@@ -156,18 +156,18 @@ impl VirtioBlk {
 
         // Check features OK was accepted
         let status = read32(base, VIRTIO_MMIO_STATUS);
-        println!("VirtIO: status after features = {:#x}", status);
+        kprintln!("VirtIO: status after features = {:#x}", status);
         if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-            println!("VirtIO: FEATURES_OK not accepted!");
+            kprintln!("VirtIO: FEATURES_OK not accepted!");
             return Err(BlockError::IoError);
         }
 
         // Set up virtqueue 0
         write32(base, VIRTIO_MMIO_QUEUE_SEL, 0);
         let max_size = read32(base, VIRTIO_MMIO_QUEUE_NUM_MAX);
-        println!("VirtIO: queue max size = {}", max_size);
+        kprintln!("VirtIO: queue max size = {}", max_size);
         if max_size == 0 {
-            println!("VirtIO: queue max size is 0!");
+            kprintln!("VirtIO: queue max size is 0!");
             return Err(BlockError::IoError);
         }
         write32(base, VIRTIO_MMIO_QUEUE_NUM, VIRTIO_QUEUE_SIZE);
@@ -175,21 +175,21 @@ impl VirtioBlk {
         // Get physical addresses for queue structures
         let desc_phys = kernel_virt_to_phys(core::ptr::addr_of!(DESC) as usize)
             .ok_or_else(|| {
-                println!("VirtIO: Failed to get physical address for DESC");
+                kprintln!("VirtIO: Failed to get physical address for DESC");
                 BlockError::IoError
             })?;
         let avail_phys = kernel_virt_to_phys(core::ptr::addr_of!(AVAIL) as usize)
             .ok_or_else(|| {
-                println!("VirtIO: Failed to get physical address for AVAIL");
+                kprintln!("VirtIO: Failed to get physical address for AVAIL");
                 BlockError::IoError
             })?;
         let used_phys = kernel_virt_to_phys(core::ptr::addr_of!(USED) as usize)
             .ok_or_else(|| {
-                println!("VirtIO: Failed to get physical address for USED");
+                kprintln!("VirtIO: Failed to get physical address for USED");
                 BlockError::IoError
             })?;
 
-        println!("VirtIO: queue physical addresses: desc={:#x}, avail={:#x}, used={:#x}",
+        kprintln!("VirtIO: queue physical addresses: desc={:#x}, avail={:#x}, used={:#x}",
                  desc_phys, avail_phys, used_phys);
 
         // Tell device where the queues are
@@ -321,7 +321,7 @@ pub fn init() -> Result<VirtioBlk, BlockError> {
     let device_index = ((device.base - VIRTIO_BASE) / VIRTIO_STRIDE) as u32;
     let irq = VIRTIO_IRQ_BASE + device_index;
 
-    println!("VirtIO: Registering IRQ {} for device at {:#x}", irq, device.base);
+    kprintln!("VirtIO: Registering IRQ {} for device at {:#x}", irq, device.base);
 
     // Register interrupt handler with PLIC
     plic::register_irq(irq, virtio_irq_handler);

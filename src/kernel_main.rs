@@ -1,10 +1,6 @@
-use alloc::boxed::Box;
-
-use crate::block::disk::{self, BlockMessage};
-use crate::block::{partition, BlockDisk};
+use crate::block;
 use crate::console;
-use crate::drivers::{plic, sd, uart, virtio_blk};
-use crate::dtb;
+use crate::drivers::{plic, uart};
 use crate::initramfs;
 use crate::kernel_trap;
 use crate::kprint;
@@ -144,93 +140,8 @@ fn run_two_processes() -> ! {
     thread::start_scheduler()
 }
 
-/// Spawn the block dispatcher thread and a reader thread
+/// Initialize block subsystem
 fn spawn_block_dispatcher() {
-    // Probe hardware and initialize appropriate driver
-    let disk = match dtb::get_cpu_type() {
-        dtb::CpuType::Qemu => {
-            let driver = virtio_blk::init().expect("VirtIO init");
-            BlockDisk::new(driver)
-        }
-        dtb::CpuType::LicheeRVNano => {
-            let driver = sd::init().expect("SD init");
-            BlockDisk::new(driver)
-        }
-        _ => panic!("Unknown CPU type"),
-    }.expect("Failed to create BlockDisk");
-
-    println!("Block dispatcher started (tid={})", disk.dispatcher_tid());
-
-    // Spawn a reader thread that will make block requests
-    match spawn_block_reader() {
-        Ok(tid) => {
-            println!("Block reader spawned as thread {}", tid);
-        }
-        Err(e) => {
-            println!("Failed to spawn block reader: {}", e);
-            loop { unsafe { core::arch::asm!("wfi"); } }
-        }
-    }
-
+    block::init().expect("Failed to spawn block init thread");
     thread::start_scheduler();
-
-    // Fallback wfi loop - should never reach here since scheduler never returns
-    #[allow(unreachable_code)]
-    loop { unsafe { core::arch::asm!("wfi"); } }
-}
-
-/// Spawn a block reader thread
-fn spawn_block_reader() -> Result<usize, &'static str> {
-    let t = thread::Thread::new(block_reader_main);
-    let tid = t.id;
-    thread::add(t);
-    Ok(tid)
-}
-
-// Static buffer for block reader - must be properly aligned for DMA
-#[repr(C, align(512))]
-struct ReaderBuffer([u8; 512]);
-
-static mut READER_BUFFER: ReaderBuffer = ReaderBuffer([0; 512]);
-
-/// Block reader thread main loop
-fn block_reader_main() {
-    let tid = thread::Thread::current().id;
-    kprintln!("Block reader thread started (tid={})", tid);
-
-    unsafe {
-        let buf = &raw mut READER_BUFFER.0;
-        let buf = &mut *buf;
-
-        kprintln!("Block reader: Requesting read of sector 0...");
-
-        // Request block read from dispatcher
-        disk::request_read_block(0, buf);
-
-        kprintln!("Block reader: Waiting for completion...");
-
-        // Wait for response message from dispatcher
-        let msg = thread::receive_message();
-        let response = *Box::from_raw(msg.data as *mut BlockMessage);
-
-        // Check response status
-        if let BlockMessage::ReadResponse { status } = response {
-            match status {
-                Ok(()) => {
-                    kprintln!("Block reader: Read completed successfully!");
-
-                    // Parse and display partition table
-                    partition::parse_mbr(buf);
-                }
-                Err(e) => {
-                    kprintln!("Block reader: Read failed: {:?}", e);
-                }
-            }
-        } else {
-            kprintln!("Block reader: Unexpected message type!");
-        }
-    }
-
-    kprintln!("Block reader: Done, exiting...");
-    thread::exit();
 }
