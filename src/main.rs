@@ -41,10 +41,8 @@ mod dtb;
 #[cfg_attr(test, allow(dead_code))]
 mod file;
 mod chardev;
-mod procfs;
+mod fs;
 mod vfs;
-#[cfg_attr(test, allow(dead_code))]
-mod initramfs;
 #[cfg_attr(test, allow(dead_code))]
 mod kernel_allocator;
 #[cfg(not(test))]
@@ -67,7 +65,6 @@ mod process;
 mod process_memory_map;
 #[cfg(not(test))]
 mod process_trampoline;
-mod ramfs;
 #[cfg(not(test))]
 mod read_elf;
 #[cfg(not(test))]

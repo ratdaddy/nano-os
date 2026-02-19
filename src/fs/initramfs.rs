@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
-use crate::ramfs::Ramfs;
+use crate::fs::ramfs::Ramfs;
 use crate::file::SuperBlock;
 
 /// Create a ramfs populated from the DTB-specified initramfs location.
@@ -79,7 +79,7 @@ mod tests {
     use alloc::format;
     use alloc::vec::Vec;
     use super::*;
-    use crate::ramfs::Ramfs;
+    use crate::fs::ramfs::Ramfs;
     use crate::vfs;
 
     /// Build a CPIO "newc" archive from a list of (name, data, mode, rdevmajor, rdevminor) entries.

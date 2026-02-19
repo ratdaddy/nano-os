@@ -1,13 +1,13 @@
 use crate::block;
 use crate::console;
 use crate::drivers::{plic, uart};
-use crate::initramfs;
+use crate::fs::{initramfs, procfs, ramfs};
 use crate::kernel_trap;
 use crate::kprint;
 use crate::kthread;
 use crate::thread;
 use crate::vfs;
-use crate::{demos, procfs, ramfs};
+use crate::demos;
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");

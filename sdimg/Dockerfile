@@ -1,10 +1,9 @@
 FROM ubuntu:latest
-RUN apt-get update && apt-get install -y dosfstools mtools parted bc exfat-fuse exfatprogs && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y dosfstools mtools parted bc e2fsprogs && rm -rf /var/lib/apt/lists/*
 
 # Build an SD card image with MBR partition table and two partitions.
-# Mirrors the layout of the real NanoRV SD card:
 #   Partition 1: FAT32, 64 MiB, starts at sector 2048, label "KERNEL"
-#   Partition 2: exFAT, 256 MiB, label "DATA"
+#   Partition 2: ext2, 256 MiB, label "BOOT" (with test files: hello.txt, subdir/test.txt)
 #
 # Input:  files to copy mounted at /input (optional)
 # Output: sd.img written to /output
@@ -19,7 +18,7 @@ CMD set -e && \
     parted -s $IMG mklabel msdos && \
     parted -s $IMG mkpart primary fat32 1MiB 65MiB && \
     parted -s $IMG set 1 lba on && \
-    parted -s $IMG mkpart primary ntfs 65MiB 100% && \
+    parted -s $IMG mkpart primary ext2 65MiB 100% && \
     \
     # Set up loop device for the whole image
     LOOP=$(losetup --show -f $IMG) && \
@@ -33,8 +32,16 @@ CMD set -e && \
     PART2_SIZE=$((IMG_SIZE - PART2_OFFSET)) && \
     LOOP2=$(losetup --show -f --offset $PART2_OFFSET --sizelimit $PART2_SIZE $IMG) && \
     \
-    # Format partition 2 (exFAT)
-    mkfs.exfat -n DATA --pack-bitmap $LOOP2 && \
+    # Format partition 2 (ext2)
+    mkfs.ext2 -L BOOT $LOOP2 && \
+    \
+    # Mount ext2 partition and add test files
+    mkdir -p /mnt/ext2 && \
+    mount $LOOP2 /mnt/ext2 && \
+    echo "Hello from ext2 filesystem!" > /mnt/ext2/hello.txt && \
+    mkdir -p /mnt/ext2/subdir && \
+    echo "File in subdirectory" > /mnt/ext2/subdir/test.txt && \
+    umount /mnt/ext2 && \
     \
     # Clean up second loop device
     losetup -d $LOOP2 && \
@@ -50,4 +57,6 @@ CMD set -e && \
     losetup -d $LOOP && \
     echo "Created $IMG ($(stat -c%s $IMG) bytes)" && \
     echo "  Partition 1: FAT32, 64 MiB, label KERNEL" && \
-    echo "  Partition 2: exFAT, ~256 MiB, label DATA"
+    echo "  Partition 2: ext2, ~256 MiB, label BOOT" && \
+    echo "    - /hello.txt" && \
+    echo "    - /subdir/test.txt"

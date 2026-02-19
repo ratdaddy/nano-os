@@ -36,6 +36,7 @@ pub trait BlockVolume {
     fn read_blocks(&self, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), BlockError>;
 
     /// Get the volume size in blocks
+    #[allow(dead_code)]
     fn size_blocks(&self) -> u64;
 
     /// Get the block size

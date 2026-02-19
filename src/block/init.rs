@@ -3,7 +3,6 @@
 //! Handles hardware probing, driver initialization, partition discovery,
 //! and volume registration for the block layer.
 
-use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -12,6 +11,7 @@ use crate::block::partition;
 use crate::block::volume::{BlockVolume, PartitionVolume, WholeDiskVolume};
 use crate::drivers::{sd, virtio_blk};
 use crate::dtb;
+use crate::fs::ext2;
 use crate::thread;
 
 // Boot sector constants
@@ -19,29 +19,18 @@ const BOOT_SIGNATURE: u16 = 0xAA55;
 const BOOT_SIGNATURE_OFFSET: usize = 510;
 const SECTOR_SIZE: usize = 512;
 
-// exFAT boot sector offsets
-const EXFAT_FILESYSTEM_NAME_OFFSET: usize = 3;
-const EXFAT_FILESYSTEM_NAME_LEN: usize = 8;
-const EXFAT_CLUSTER_HEAP_OFFSET: usize = 88;
-const EXFAT_ROOT_DIR_CLUSTER_OFFSET: usize = 96;
-const EXFAT_SECTORS_PER_CLUSTER_SHIFT_OFFSET: usize = 109;
-const EXFAT_MAX_CLUSTER_SHIFT: u8 = 25;
-
-// exFAT directory entry constants
-const EXFAT_DIR_ENTRY_SIZE: usize = 32;
-const EXFAT_ENTRIES_PER_SECTOR: usize = SECTOR_SIZE / EXFAT_DIR_ENTRY_SIZE;
-const EXFAT_VOLUME_LABEL_ENTRY_TYPE: u8 = 0x83;
-const EXFAT_END_OF_DIRECTORY_MARKER: u8 = 0x00;
-const EXFAT_LABEL_CHAR_COUNT_OFFSET: usize = 1;
-const EXFAT_LABEL_OFFSET: usize = 2;
-const EXFAT_MAX_LABEL_LENGTH: usize = 11;
-const UTF16_CHAR_SIZE: usize = 2;
-
 // FAT32 boot sector offsets
 const FAT32_FILESYSTEM_TYPE_OFFSET: usize = 82;
 const FAT32_FILESYSTEM_TYPE_LEN: usize = 8;
 const FAT32_VOLUME_LABEL_OFFSET: usize = 71;
 const FAT32_VOLUME_LABEL_LEN: usize = 11;
+
+// ext2 superblock offsets (superblock starts at byte 1024 = sector 2)
+const EXT2_SUPERBLOCK_SECTOR: u64 = 2;
+const EXT2_MAGIC_OFFSET: usize = 56;
+const EXT2_MAGIC: u16 = 0xEF53;
+const EXT2_VOLUME_LABEL_OFFSET: usize = 120;
+const EXT2_VOLUME_LABEL_LEN: usize = 16;
 
 // Generic boot sector offsets
 const OEM_NAME_OFFSET: usize = 3;
@@ -69,90 +58,6 @@ pub fn init() -> Result<usize, &'static str> {
 struct SectorBuffer([u8; SECTOR_SIZE]);
 
 static mut MBR_BUFFER: SectorBuffer = SectorBuffer([0; SECTOR_SIZE]);
-static mut SECTOR_BUFFER: SectorBuffer = SectorBuffer([0; SECTOR_SIZE]);
-
-/// Read exFAT volume label by parsing root directory entries
-///
-/// # Arguments
-/// * `volume` - The partition volume to read from
-/// * `boot_sector` - The exFAT boot sector (already read)
-///
-/// # Returns
-/// * `Some(label)` if volume label was found
-/// * `None` if no label or error reading directory
-fn read_exfat_volume_label(volume: &PartitionVolume, boot_sector: &[u8; 512]) -> Option<String> {
-    // Parse boot sector fields
-    let cluster_heap_offset = u32::from_le_bytes(
-        boot_sector[EXFAT_CLUSTER_HEAP_OFFSET..EXFAT_CLUSTER_HEAP_OFFSET + 4].try_into().unwrap()
-    );
-    let root_dir_cluster = u32::from_le_bytes(
-        boot_sector[EXFAT_ROOT_DIR_CLUSTER_OFFSET..EXFAT_ROOT_DIR_CLUSTER_OFFSET + 4].try_into().unwrap()
-    );
-    let sectors_per_cluster_shift = boot_sector[EXFAT_SECTORS_PER_CLUSTER_SHIFT_OFFSET];
-
-    // Validate cluster shift (should be reasonable, e.g., 0-8 for 1-256 sectors/cluster)
-    if sectors_per_cluster_shift > EXFAT_MAX_CLUSTER_SHIFT {
-        return None;
-    }
-
-    let sectors_per_cluster = 1u32 << sectors_per_cluster_shift;
-
-    // Calculate root directory LBA
-    // Clusters start at 2, so subtract 2 from cluster number
-    let cluster_offset = (root_dir_cluster.checked_sub(2)? as u64)
-        .checked_mul(sectors_per_cluster as u64)?;
-    let root_dir_lba = (cluster_heap_offset as u64).checked_add(cluster_offset)?;
-
-    // Validate LBA is within partition bounds
-    if root_dir_lba >= volume.size_blocks() {
-        return None;
-    }
-
-    // Read first sector of root directory
-    let dir_buf = unsafe {
-        let buf = &raw mut SECTOR_BUFFER.0;
-        &mut *buf
-    };
-
-    volume.read_blocks(root_dir_lba, dir_buf).ok()?;
-
-    // Parse directory entries
-    for i in 0..EXFAT_ENTRIES_PER_SECTOR {
-        let entry_offset = i * EXFAT_DIR_ENTRY_SIZE;
-        let entry_type = dir_buf[entry_offset];
-
-        // Volume Label entry type
-        if entry_type == EXFAT_VOLUME_LABEL_ENTRY_TYPE {
-            let char_count = dir_buf[entry_offset + EXFAT_LABEL_CHAR_COUNT_OFFSET] as usize;
-            if char_count > EXFAT_MAX_LABEL_LENGTH {
-                continue;  // Invalid label length
-            }
-
-            // Volume label is UTF-16 encoded
-            let mut label = String::new();
-            for j in 0..char_count {
-                let utf16_offset = entry_offset + EXFAT_LABEL_OFFSET + (j * UTF16_CHAR_SIZE);
-                let code_unit = u16::from_le_bytes(
-                    dir_buf[utf16_offset..utf16_offset + UTF16_CHAR_SIZE].try_into().unwrap()
-                );
-
-                // Simple UTF-16 to char conversion (handles BMP only)
-                if let Some(ch) = char::from_u32(code_unit as u32) {
-                    label.push(ch);
-                }
-            }
-
-            return Some(label);
-        }
-
-        // Stop at end of directory marker
-        if entry_type == EXFAT_END_OF_DIRECTORY_MARKER {
-            break;
-        }
-    }
-
-    None
-}
 
 /// Block subsystem initialization thread
 fn init_thread() {
@@ -249,45 +154,59 @@ fn init_thread() {
                     let boot_sig = u16::from_le_bytes(
                         buf[BOOT_SIGNATURE_OFFSET..BOOT_SIGNATURE_OFFSET + 2].try_into().unwrap()
                     );
-                    kprintln!("  Boot signature: {:#06x}", boot_sig);
 
                     // Try to identify filesystem
                     if boot_sig == BOOT_SIGNATURE {
-                        // Check for exFAT
-                        let fs_name = core::str::from_utf8(
-                            &buf[EXFAT_FILESYSTEM_NAME_OFFSET..EXFAT_FILESYSTEM_NAME_OFFSET + EXFAT_FILESYSTEM_NAME_LEN]
-                        ).unwrap_or("");
-                        if fs_name == "EXFAT   " {
-                            kprintln!("  Filesystem: exFAT");
+                        kprintln!("  Boot signature: {:#06x}", boot_sig);
 
-                            // Read volume label from root directory
-                            if let Some(label) = read_exfat_volume_label(&volume, buf) {
-                                if !label.is_empty() {
-                                    kprintln!("  Volume label: {}", label);
-                                }
+                        // Check for FAT32
+                        let fat32_type = core::str::from_utf8(
+                            &buf[FAT32_FILESYSTEM_TYPE_OFFSET..FAT32_FILESYSTEM_TYPE_OFFSET + FAT32_FILESYSTEM_TYPE_LEN]
+                        ).unwrap_or("");
+                        if fat32_type.starts_with("FAT32") {
+                            // Try to read volume label
+                            let label = core::str::from_utf8(
+                                &buf[FAT32_VOLUME_LABEL_OFFSET..FAT32_VOLUME_LABEL_OFFSET + FAT32_VOLUME_LABEL_LEN]
+                            ).unwrap_or("").trim_end();
+                            kprintln!("  Filesystem: FAT32");
+                            if !label.is_empty() && label != "NO NAME" {
+                                kprintln!("  Volume label: {}", label);
                             }
                         } else {
-                            // Check for FAT32
-                            let fat32_type = core::str::from_utf8(
-                                &buf[FAT32_FILESYSTEM_TYPE_OFFSET..FAT32_FILESYSTEM_TYPE_OFFSET + FAT32_FILESYSTEM_TYPE_LEN]
-                            ).unwrap_or("");
-                            if fat32_type.starts_with("FAT32") {
-                                // Try to read volume label
-                                let label = core::str::from_utf8(
-                                    &buf[FAT32_VOLUME_LABEL_OFFSET..FAT32_VOLUME_LABEL_OFFSET + FAT32_VOLUME_LABEL_LEN]
-                                ).unwrap_or("").trim_end();
-                                kprintln!("  Filesystem: FAT32");
-                                if !label.is_empty() && label != "NO NAME" {
-                                    kprintln!("  Volume label: {}", label);
+                            // Generic OEM name
+                            let oem = core::str::from_utf8(
+                                &buf[OEM_NAME_OFFSET..OEM_NAME_OFFSET + OEM_NAME_LEN]
+                            ).unwrap_or("").trim_end();
+                            if !oem.is_empty() {
+                                kprintln!("  OEM/Filesystem: {}", oem);
+                            }
+                        }
+                    } else {
+                        // No boot signature - might be ext2 or other filesystem
+                        // Try reading ext2 superblock at sector 2 (byte offset 1024)
+                        match volume.read_blocks(EXT2_SUPERBLOCK_SECTOR, buf) {
+                            Ok(()) => {
+                                let ext2_magic = u16::from_le_bytes(
+                                    buf[EXT2_MAGIC_OFFSET..EXT2_MAGIC_OFFSET + 2].try_into().unwrap()
+                                );
+                                if ext2_magic == EXT2_MAGIC {
+                                    kprintln!("  Filesystem: ext2");
+
+                                    // Read volume label (null-terminated, up to 16 bytes)
+                                    let label_bytes = &buf[EXT2_VOLUME_LABEL_OFFSET..EXT2_VOLUME_LABEL_OFFSET + EXT2_VOLUME_LABEL_LEN];
+                                    if let Some(null_pos) = label_bytes.iter().position(|&b| b == 0) {
+                                        if null_pos > 0 {
+                                            if let Ok(label) = core::str::from_utf8(&label_bytes[..null_pos]) {
+                                                kprintln!("  Volume label: {}", label);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    kprintln!("  Unknown filesystem (no boot sig, ext2 magic not found)");
                                 }
-                            } else {
-                                // Generic OEM name
-                                let oem = core::str::from_utf8(
-                                    &buf[OEM_NAME_OFFSET..OEM_NAME_OFFSET + OEM_NAME_LEN]
-                                ).unwrap_or("").trim_end();
-                                if !oem.is_empty() {
-                                    kprintln!("  OEM/Filesystem: {}", oem);
-                                }
+                            }
+                            Err(e) => {
+                                kprintln!("  Failed to read ext2 superblock: {:?}", e);
                             }
                         }
                     }
@@ -305,6 +224,11 @@ fn init_thread() {
 
     // TODO: Register volumes as devices
 
-    kprintln!("Block subsystem initialization complete");
+    // Test ext2 reading on partition 2 (index 1)
+    if volumes.len() >= 2 {
+        ext2::test_ext2_detect(&volumes[1]);
+    }
+
+    kprintln!("\nBlock subsystem initialization complete");
     thread::exit();
 }

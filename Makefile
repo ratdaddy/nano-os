@@ -9,6 +9,8 @@ INITRAMFS_DIR := bootdata/initramfs
 INITRAMFS_IMAGE := initramfs-builder
 SDIMG := $(BUILD_DIR)/sd.img
 SDIMG_IMAGE := sdimg-builder
+EXT2IMG := $(BUILD_DIR)/ext2.img
+EXT2IMG_IMAGE := ext2img-builder
 INIT_ELF := prog_example/target/riscv64gc-unknown-linux-musl/release/prog_example
 
 #FEATURES := --features print_dtb,trace_syscalls,trace_trap,trace_scheduler,trace_process
@@ -20,7 +22,7 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker sdimg sdimg-docker $(INIT_ELF)
+.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker sdimg sdimg-docker ext2img ext2img-docker $(INIT_ELF)
 
 all: $(BOOT_SD)
 
@@ -33,13 +35,22 @@ $(BOOT_SD): $(KERNEL_BIN) bootdata/boot.its $(INITRAMFS)
 	cp bootdata/sg2002.dtb $(BUILD_DIR)
 	mkimage -f $(BOOT_ITS) $(BOOT_SD) > /dev/null 2>&1
 
-copy: all
-	@echo "Copying $(KERNEL_BIN) to $(SD_MOUNT)..."
+copy: all $(EXT2IMG)
+	@echo "Copying files to SD card..."
+	@# Copy to FAT32 partition (partition 1)
+	@echo "  - Copying boot files to $(SD_MOUNT)..."
 	cp $(BOOT_SD) $(SD_MOUNT)/
 	cp bootdata/fip.bin $(SD_MOUNT)/
 	sync
-	@diskutil eject "$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//')"
-	@echo "Done."
+	@# Get the raw disk device (e.g., /dev/disk4 from /dev/disk4s1)
+	@DISK_DEV=$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//') && \
+	echo "  - Unmounting partition 2 (if mounted)..." && \
+	diskutil unmount $${DISK_DEV}s2 2>/dev/null || true && \
+	echo "  - Writing ext2 filesystem to $${DISK_DEV}s2 (partition 2)..." && \
+	sudo dd if=$(EXT2IMG) of=$${DISK_DEV}s2 bs=1048576 && \
+	sync && \
+	diskutil eject $$DISK_DEV
+	@echo "Done. SD card ejected."
 
 initramfs: $(INITRAMFS)
 
@@ -76,6 +87,19 @@ $(SDIMG): $(BOOT_SD) sdimg/Dockerfile
 
 sdimg-docker:
 	docker build -t $(SDIMG_IMAGE) sdimg/
+
+ext2img: $(EXT2IMG)
+
+$(EXT2IMG): ext2img/Dockerfile
+	@echo "Creating ext2.img..."
+	@mkdir -p $(BUILD_DIR)
+	@docker run --rm --privileged \
+		-v $$(pwd)/$(BUILD_DIR):/output \
+		$(EXT2IMG_IMAGE)
+	@echo "Done."
+
+ext2img-docker:
+	docker build -t $(EXT2IMG_IMAGE) ext2img/
 
 $(INIT_ELF):
 	make -C prog_example
