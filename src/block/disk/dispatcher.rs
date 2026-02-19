@@ -21,7 +21,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 
-use crate::drivers::{BlockDriver, BlockError, BLOCK_SIZE};
+use crate::drivers::{BlockDriver, BlockError};
 use crate::dtb;
 use crate::thread;
 
@@ -48,7 +48,7 @@ static PENDING_DRIVER: Mutex<Option<Box<dyn BlockDriver>>> = Mutex::new(None);
 pub enum BlockMessage {
     ReadRequest {
         sector: u32,
-        buffer: *mut [u8; BLOCK_SIZE],
+        buffer: *mut [u8],  // Fat pointer (ptr + len)
         requester_tid: usize,
     },
     ReadComplete {
@@ -65,13 +65,17 @@ unsafe impl Send for BlockMessage {}
 ///
 /// The caller must provide a buffer that will be filled with the block data.
 /// The buffer must remain valid until the read completes.
-pub fn request_read_block(sector: u32, buffer: &mut [u8; BLOCK_SIZE]) {
+///
+/// # Requirements
+/// * Buffer length must be a multiple of BLOCK_SIZE (512 bytes)
+/// * Buffer must meet DMA alignment requirements (see validate_read_buffer)
+pub fn request_read_block(sector: u32, buffer: &mut [u8]) {
     let dispatcher_tid = DISPATCHER_TID.load(Ordering::Relaxed);
     if dispatcher_tid != 0 {
         let requester_tid = thread::Thread::current().id;
         let msg = BlockMessage::ReadRequest {
             sector,
-            buffer: buffer as *mut [u8; BLOCK_SIZE],
+            buffer: buffer as *mut [u8],  // Fat pointer (ptr + len)
             requester_tid,
         };
         let ptr = Box::into_raw(Box::new(msg));

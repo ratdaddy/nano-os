@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 
 use crate::block::disk::BlockDisk;
 use crate::block::volume::BlockVolume;
-use crate::drivers::{BlockError, BLOCK_SIZE};
+use crate::drivers::BlockError;
 
 /// A volume representing the entire physical disk
 ///
@@ -25,7 +25,7 @@ impl WholeDiskVolume {
 }
 
 impl BlockVolume for WholeDiskVolume {
-    fn read_blocks(&self, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), BlockError> {
+    fn read_blocks(&self, lba: u64, buf: &mut [u8]) -> Result<(), BlockError> {
         // Direct pass-through - no LBA translation needed
         self.disk.read_blocks(lba, buf)
     }

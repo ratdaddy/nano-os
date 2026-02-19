@@ -24,16 +24,20 @@ pub use whole_disk::WholeDiskVolume;
 /// Volumes translate logical block addresses (LBA) within the volume
 /// to physical addresses on underlying block devices.
 pub trait BlockVolume {
-    /// Read blocks from the volume.
+    /// Read one or more blocks from the volume.
     ///
     /// # Arguments
     /// * `lba` - Logical block address within this volume (0-based)
-    /// * `buf` - Buffer to read into (must be BLOCK_SIZE bytes)
+    /// * `buf` - Buffer to read into (length must be multiple of BLOCK_SIZE)
+    ///
+    /// # Buffer Requirements
+    /// * Length must be a multiple of BLOCK_SIZE (512 bytes)
+    /// * Must meet DMA alignment requirements (see validate_read_buffer)
     ///
     /// # Returns
     /// * `Ok(())` - Read completed successfully
     /// * `Err(BlockError)` - Read failed
-    fn read_blocks(&self, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), BlockError>;
+    fn read_blocks(&self, lba: u64, buf: &mut [u8]) -> Result<(), BlockError>;
 
     /// Get the volume size in blocks
     #[allow(dead_code)]

@@ -47,23 +47,25 @@ impl Ext2Superblock {
     }
 }
 
-// Static buffer for superblock I/O - must be properly aligned for DMA
-#[repr(C, align(512))]
-struct SectorBuffer([u8; BLOCK_SIZE]);
+// Static buffer for ext2 block I/O (4KB) - must be page-aligned for DMA
+// Page alignment (4096) ensures buffer doesn't cross physical page boundaries
+#[repr(C, align(4096))]
+struct Ext2BlockBuffer([u8; 4096]);
 
-static mut SUPERBLOCK_BUFFER: SectorBuffer = SectorBuffer([0; BLOCK_SIZE]);
+static mut SUPERBLOCK_BUFFER: Ext2BlockBuffer = Ext2BlockBuffer([0; 4096]);
 
 /// Read and parse the ext2 superblock from a volume
 ///
 /// The ext2 superblock is always 1024 bytes starting at byte offset 1024.
-/// With 512-byte blocks, this means reading sector 2 (and sector 3 for the full superblock).
-/// For now, we only read sector 2 since all the fields we need are in the first 512 bytes.
+/// With 512-byte blocks, this means sectors 2-3 contain the superblock.
+/// We read 8 sectors (4096 bytes) starting at sector 2, which includes the
+/// full superblock plus additional data we can ignore.
 pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2Superblock, BlockError> {
     // Verify our assumption about block size
     assert_eq!(volume.block_size(), BLOCK_SIZE as u32, "Volume block size mismatch");
 
-    // Read sector 2 which contains the start of the superblock (bytes 1024-1535)
-    // The superblock fields we need (magic, volume label) are all within the first 512 bytes
+    // Read 8 sectors (4096 bytes) starting at sector 2
+    // This gives us the full superblock (1024 bytes at start of buffer)
     let buf = unsafe {
         let buf = &raw mut SUPERBLOCK_BUFFER.0;
         let buf = &mut *buf;

@@ -1,6 +1,7 @@
 //! VirtIO block device driver
 
 use crate::block::disk;
+use crate::drivers::block::validate_read_buffer;
 use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::kernel_memory_map::kernel_virt_to_phys;
 use crate::kernel_trap;
@@ -22,7 +23,6 @@ const VIRTIO_AVAIL_RING_OFFSET: usize = 2;
 
 // VirtIO block request/response sizes
 const VIRTIO_BLK_REQ_HEADER_SIZE: u32 = 16;
-const VIRTIO_BLK_SECTOR_SIZE: u32 = 512;
 const VIRTIO_BLK_STATUS_SIZE: u32 = 1;
 
 // VirtIO interrupt status/ack registers
@@ -238,7 +238,9 @@ impl BlockDriver for VirtioBlk {
         }
     }
 
-    fn start_read(&mut self, sector: u32, buf: &mut [u8; 512]) -> Result<(), BlockError> {
+    fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError> {
+        // Validate buffer meets DMA requirements
+        let _sector_count = validate_read_buffer(buf)?;
 
         unsafe {
             // Get physical address of caller's buffer
@@ -258,9 +260,9 @@ impl BlockDriver for VirtioBlk {
             DESC.0[0].flags = VIRTQ_DESC_F_NEXT;
             DESC.0[0].next = 1;
 
-            // Use caller's buffer for DMA
+            // Use caller's buffer for DMA (supports multi-sector reads)
             DESC.0[1].addr = buf_phys as u64;
-            DESC.0[1].len = VIRTIO_BLK_SECTOR_SIZE;
+            DESC.0[1].len = buf.len() as u32;
             DESC.0[1].flags = VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT;
             DESC.0[1].next = 2;
 

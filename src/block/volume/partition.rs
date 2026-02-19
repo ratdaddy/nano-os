@@ -36,14 +36,17 @@ impl PartitionVolume {
 }
 
 impl BlockVolume for PartitionVolume {
-    fn read_blocks(&self, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), BlockError> {
-        // Translate volume LBA to disk LBA by adding partition offset
-        let disk_lba = self.partition.lba_start as u64 + lba;
+    fn read_blocks(&self, lba: u64, buf: &mut [u8]) -> Result<(), BlockError> {
+        // Calculate number of sectors being read
+        let sectors = buf.len() / BLOCK_SIZE;
 
-        // Bounds check
-        if lba >= self.partition.num_sectors as u64 {
+        // Bounds check - ensure read doesn't exceed partition size
+        if lba + sectors as u64 > self.partition.num_sectors as u64 {
             return Err(BlockError::InvalidInput);
         }
+
+        // Translate volume LBA to disk LBA by adding partition offset
+        let disk_lba = self.partition.lba_start as u64 + lba;
 
         self.disk.read_blocks(disk_lba, buf)
     }

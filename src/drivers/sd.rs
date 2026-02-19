@@ -3,6 +3,7 @@
 //! Fully interrupt-driven implementation for the LicheeRV Nano (SG2002).
 
 use crate::block::disk;
+use crate::drivers::block::validate_read_buffer;
 use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::dtb;
 use crate::kernel_memory_map::kernel_virt_to_phys;
@@ -31,8 +32,11 @@ const REG_ADMA_ADDR_HIGH: usize = 0x5C;
 const DATA_TIMEOUT_VALUE: u8 = 0x0E;
 
 // Transfer Mode register bits (organized high to low)
-const XFER_MODE_DATA_DIR_READ: u16 = 1 << 4;
 const XFER_MODE_DMA_ENABLE: u16 = 1 << 0;
+const XFER_MODE_BLOCK_COUNT_EN: u16 = 1 << 1;
+const XFER_MODE_AUTO_CMD12_EN: u16 = 1 << 2;
+const XFER_MODE_DATA_DIR_READ: u16 = 1 << 4;
+const XFER_MODE_MULTI_BLOCK: u16 = 1 << 5;
 
 // Command register bits (organized high to low)
 const CMD_INDEX_SHIFT: u16 = 8;
@@ -43,6 +47,7 @@ const CMD_RESP_TYPE_R1: u16 = 1 << 1;
 
 // SD commands
 const SD_CMD17_READ_SINGLE: u16 = 17;
+const SD_CMD18_READ_MULTIPLE: u16 = 18;
 
 // Normal Interrupt Status bits
 const INT_TRANSFER_COMPLETE: u16 = 1 << 1;
@@ -127,15 +132,18 @@ impl BlockDriver for SdCardAdma {
         "sd0"
     }
 
-    fn start_read(&mut self, sector: u32, buf: &mut [u8; 512]) -> Result<(), BlockError> {
+    fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError> {
+        // Validate buffer meets DMA requirements
+        let sector_count = validate_read_buffer(buf)?;
+
         unsafe {
             // Get physical address of caller's buffer
             let buf_virt = buf.as_ptr() as usize;
             let buf_phys = kernel_virt_to_phys(buf_virt)
                 .ok_or(BlockError::IoError)?;
 
-            // Build ADMA2 descriptor for caller's buffer
-            DESC_TABLE.0[0] = Adma2Desc::new(buf_phys as u64, 512, true);
+            // Build ADMA2 descriptor for caller's buffer (supports multi-sector)
+            DESC_TABLE.0[0] = Adma2Desc::new(buf_phys as u64, buf.len() as u16, true);
 
             // Flush cache so DMA engine can see the descriptor
             flush_dcache_for_dma();
@@ -150,7 +158,7 @@ impl BlockDriver for SdCardAdma {
 
             // Set block size and count
             write16(REG_BLOCK_SIZE, 512);
-            write16(REG_BLOCK_COUNT, 1);
+            write16(REG_BLOCK_COUNT, sector_count as u16);
             write8(REG_DATA_TIMEOUT, DATA_TIMEOUT_VALUE);
 
             // Write sector argument
@@ -160,11 +168,20 @@ impl BlockDriver for SdCardAdma {
             write16(REG_NORMAL_INT_SIGNAL_EN, INT_TRANSFER_COMPLETE);
             write16(REG_ERROR_INT_SIGNAL_EN, 0xFFFF);
 
-            // Transfer Mode: DMA enable, Read direction
-            let xfer_mode: u16 = XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE;
+            // Transfer Mode and Command: Different for single vs multi-block
+            let (xfer_mode, cmd_index) = if sector_count == 1 {
+                // Single block: CMD17, no block count or multi-block flags
+                (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE, SD_CMD17_READ_SINGLE)
+            } else {
+                // Multi-block: CMD18, with block count, multi-block, and auto-CMD12 to stop
+                (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE
+                    | XFER_MODE_BLOCK_COUNT_EN | XFER_MODE_MULTI_BLOCK
+                    | XFER_MODE_AUTO_CMD12_EN,
+                 SD_CMD18_READ_MULTIPLE)
+            };
 
-            // Command: CMD17 (READ_SINGLE), R1 response, data present, CRC + index check
-            let cmd: u16 = (SD_CMD17_READ_SINGLE << CMD_INDEX_SHIFT)
+            // Command: R1 response, data present, CRC + index check
+            let cmd: u16 = (cmd_index << CMD_INDEX_SHIFT)
                 | CMD_DATA_PRESENT
                 | CMD_CRC_CHECK
                 | CMD_INDEX_CHECK

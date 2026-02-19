@@ -33,10 +33,18 @@ impl BlockDisk {
         })
     }
 
-    /// Read a block from the disk.
+    /// Read one or more blocks from the disk.
     ///
     /// Sends a read request to the dispatcher and waits for completion.
-    pub fn read_blocks(&self, lba: u64, buf: &mut [u8; BLOCK_SIZE]) -> Result<(), BlockError> {
+    ///
+    /// # Arguments
+    /// * `lba` - Logical block address to start reading from
+    /// * `buf` - Buffer to read into (length must be multiple of BLOCK_SIZE)
+    ///
+    /// # Requirements
+    /// * Buffer length must be a multiple of BLOCK_SIZE (512 bytes)
+    /// * Buffer must meet DMA alignment requirements (see validate_read_buffer)
+    pub fn read_blocks(&self, lba: u64, buf: &mut [u8]) -> Result<(), BlockError> {
         // Send read request to dispatcher
         request_read_block(lba as u32, buf);
 
