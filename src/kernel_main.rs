@@ -24,8 +24,8 @@ pub fn kernel_main() -> ! {
     uart::init();
 
     // Register filesystem drivers
-    vfs::register_filesystem(&ramfs::RAMFS_TYPE);
-    vfs::register_filesystem(&procfs::PROCFS_TYPE);
+    vfs::register_filesystem(&ramfs::RAMFS_FS);
+    vfs::register_filesystem(&procfs::PROCFS_FS);
 
     // Mount initramfs as root filesystem
     vfs::init(initramfs::new());

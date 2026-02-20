@@ -163,9 +163,9 @@ static RAMFS_FILE_OPS: RamfsFileOps = RamfsFileOps;
 // Filesystem driver
 // =============================================================================
 
-pub struct RamfsType;
+pub struct RamfsFileSystem;
 
-impl crate::vfs::FileSystem for RamfsType {
+impl crate::vfs::FileSystem for RamfsFileSystem {
     fn name(&self) -> &'static str { "ramfs" }
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
@@ -174,7 +174,7 @@ impl crate::vfs::FileSystem for RamfsType {
 }
 
 #[cfg_attr(test, allow(dead_code))]
-pub static RAMFS_TYPE: RamfsType = RamfsType;
+pub static RAMFS_FS: RamfsFileSystem = RamfsFileSystem;
 
 // =============================================================================
 // SuperBlock

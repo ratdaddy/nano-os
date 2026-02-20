@@ -17,32 +17,42 @@ const EXT2_MAGIC_OFFSET: usize = 56;
 const EXT2_VOLUME_LABEL_OFFSET: usize = 120;
 const EXT2_VOLUME_LABEL_LEN: usize = 16;
 
-/// ext2 superblock structure (simplified)
+/// ext2 superblock structure (in-memory, parsed from disk)
 ///
 /// Only includes the fields we need for basic read operations.
-#[repr(C)]
 #[derive(Debug)]
-pub struct Ext2Superblock {
+pub struct Ext2SuperBlock {
     pub s_inodes_count: u32,
     pub s_blocks_count: u32,
+    #[allow(dead_code)]
     pub s_r_blocks_count: u32,
+    #[allow(dead_code)]
     pub s_free_blocks_count: u32,
+    #[allow(dead_code)]
     pub s_free_inodes_count: u32,
+    #[allow(dead_code)]
     pub s_first_data_block: u32,
     pub s_log_block_size: u32,
+    #[allow(dead_code)]
     pub s_log_frag_size: u32,
     pub s_blocks_per_group: u32,
+    #[allow(dead_code)]
     pub s_frags_per_group: u32,
     pub s_inodes_per_group: u32,
+    #[allow(dead_code)]
     pub s_mtime: u32,
+    #[allow(dead_code)]
     pub s_wtime: u32,
+    #[allow(dead_code)]
     pub s_mnt_count: u16,
+    #[allow(dead_code)]
     pub s_max_mnt_count: u16,
+    #[allow(dead_code)]
     pub s_magic: u16,
     // ... remaining fields omitted for now
 }
 
-impl Ext2Superblock {
+impl Ext2SuperBlock {
     /// Calculate the actual block size from the log value
     pub fn block_size(&self) -> u32 {
         1024 << self.s_log_block_size
@@ -54,11 +64,10 @@ impl Ext2Superblock {
     }
 }
 
-/// ext2 block group descriptor structure
+/// ext2 block group descriptor structure (in-memory, parsed from disk)
 ///
 /// Each block group has a descriptor that locates the block bitmap,
 /// inode bitmap, and inode table for that group.
-#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Ext2GroupDesc {
     pub bg_block_bitmap: u32,      // Block number of block bitmap
@@ -67,7 +76,9 @@ pub struct Ext2GroupDesc {
     pub bg_free_blocks_count: u16, // Free blocks in group
     pub bg_free_inodes_count: u16, // Free inodes in group
     pub bg_used_dirs_count: u16,   // Number of directories in group
+    #[allow(dead_code)]
     pub bg_pad: u16,               // Padding
+    #[allow(dead_code)]
     pub bg_reserved: [u32; 3],     // Reserved for future use
 }
 
@@ -84,7 +95,7 @@ static mut SUPERBLOCK_BUFFER: Ext2BlockBuffer = Ext2BlockBuffer([0; 4096]);
 /// With 512-byte blocks, this means sectors 2-3 contain the superblock.
 /// We read 8 sectors (4096 bytes) starting at sector 2, which includes the
 /// full superblock plus additional data we can ignore.
-pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2Superblock, BlockError> {
+pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2SuperBlock, BlockError> {
     // Verify our assumption about block size
     assert_eq!(volume.block_size(), BLOCK_SIZE as u32, "Volume block size mismatch");
 
@@ -124,7 +135,7 @@ pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2Superblock, Block
     let s_mnt_count = u16::from_le_bytes(buf[52..54].try_into().unwrap());
     let s_max_mnt_count = u16::from_le_bytes(buf[54..56].try_into().unwrap());
 
-    let sb = Ext2Superblock {
+    let sb = Ext2SuperBlock {
         s_inodes_count,
         s_blocks_count,
         s_r_blocks_count,
@@ -177,7 +188,7 @@ pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2Superblock, Block
 /// Each group descriptor is 32 bytes. Our 4KB buffer can hold 128 descriptors.
 ///
 /// Currently returns an error if the GDT doesn't fit in our buffer.
-pub fn read_group_descriptors(sb: &Ext2Superblock, volume: &dyn BlockVolume) -> Result<Vec<Ext2GroupDesc>, BlockError> {
+pub fn read_group_descriptors(sb: &Ext2SuperBlock, volume: &dyn BlockVolume) -> Result<Vec<Ext2GroupDesc>, BlockError> {
     let num_groups = sb.num_groups();
     const GROUP_DESC_SIZE: usize = 32;
     const MAX_GROUPS_IN_BUFFER: usize = 4096 / GROUP_DESC_SIZE; // = 128

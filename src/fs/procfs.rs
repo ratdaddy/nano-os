@@ -171,9 +171,9 @@ impl SuperBlock for ProcfsSuperBlock {
 // Filesystem driver
 // =============================================================================
 
-pub struct ProcfsType;
+pub struct ProcfsFileSystem;
 
-impl FileSystem for ProcfsType {
+impl FileSystem for ProcfsFileSystem {
     fn name(&self) -> &'static str { "proc" }
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
         unsafe {
@@ -205,4 +205,4 @@ impl FileSystem for ProcfsType {
 }
 
 #[cfg_attr(test, allow(dead_code))]
-pub static PROCFS_TYPE: ProcfsType = ProcfsType;
+pub static PROCFS_FS: ProcfsFileSystem = ProcfsFileSystem;
