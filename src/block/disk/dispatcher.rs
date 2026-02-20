@@ -163,11 +163,11 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
 
         match block_msg {
             BlockMessage::ReadRequest { sector, buffer, requester_tid } => {
-                kprintln!("Dispatcher [{}]: ReadRequest from tid={}, sector={}",
-                         name, requester_tid, sector);
-
                 // Get caller's buffer
                 let buf = unsafe { &mut *buffer };
+
+                kprintln!("Dispatcher [{}]: ReadRequest from tid={}, sector={}, buffer_len={}",
+                         name, requester_tid, sector, buf.len());
 
                 // Issue read to device
                 let start_time = read_time();

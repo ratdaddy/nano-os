@@ -2,6 +2,8 @@
 //!
 //! Read-only ext2 filesystem driver.
 
+use alloc::vec::Vec;
+
 use crate::block::volume::BlockVolume;
 use crate::drivers::{BlockError, BLOCK_SIZE};
 
@@ -45,6 +47,28 @@ impl Ext2Superblock {
     pub fn block_size(&self) -> u32 {
         1024 << self.s_log_block_size
     }
+
+    /// Calculate number of block groups in the filesystem
+    pub fn num_groups(&self) -> u32 {
+        (self.s_blocks_count + self.s_blocks_per_group - 1) / self.s_blocks_per_group
+    }
+}
+
+/// ext2 block group descriptor structure
+///
+/// Each block group has a descriptor that locates the block bitmap,
+/// inode bitmap, and inode table for that group.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Ext2GroupDesc {
+    pub bg_block_bitmap: u32,      // Block number of block bitmap
+    pub bg_inode_bitmap: u32,      // Block number of inode bitmap
+    pub bg_inode_table: u32,       // Block number of first inode table block
+    pub bg_free_blocks_count: u16, // Free blocks in group
+    pub bg_free_inodes_count: u16, // Free inodes in group
+    pub bg_used_dirs_count: u16,   // Number of directories in group
+    pub bg_pad: u16,               // Padding
+    pub bg_reserved: [u32; 3],     // Reserved for future use
 }
 
 // Static buffer for ext2 block I/O (4KB) - must be page-aligned for DMA
@@ -139,20 +163,124 @@ pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2Superblock, Block
     Ok(sb)
 }
 
-/// Test function to verify ext2 filesystem detection
-pub fn test_ext2_detect(volume: &dyn BlockVolume) {
-    kprintln!("\n=== ext2 Detection Test ===");
+/// Read and parse block group descriptors
+///
+/// The GDT location depends on the filesystem block size:
+/// - **1KB blocks**: Superblock at block 1, GDT at block 2 (byte 2048)
+/// - **2KB+ blocks**: Superblock at block 0 (offset 1024), GDT at block 1 (byte block_size)
+///
+/// # Arguments
+/// * `sb` - The superblock (needed to know block size and group count)
+/// * `volume` - The volume to read from
+///
+/// # Limitations
+/// Each group descriptor is 32 bytes. Our 4KB buffer can hold 128 descriptors.
+///
+/// Currently returns an error if the GDT doesn't fit in our buffer.
+pub fn read_group_descriptors(sb: &Ext2Superblock, volume: &dyn BlockVolume) -> Result<Vec<Ext2GroupDesc>, BlockError> {
+    let num_groups = sb.num_groups();
+    const GROUP_DESC_SIZE: usize = 32;
+    const MAX_GROUPS_IN_BUFFER: usize = 4096 / GROUP_DESC_SIZE; // = 128
 
-    match read_superblock(volume) {
-        Ok(sb) => {
-            kprintln!("ext2: Superblock read successfully");
-            kprintln!("  Magic: {:#x}", sb.s_magic);
-            kprintln!("  Blocks: {}", sb.s_blocks_count);
-            kprintln!("  Inodes: {}", sb.s_inodes_count);
-            kprintln!("  Block size: {}", sb.block_size());
-        }
+    // Check if GDT fits in our 4KB buffer
+    if num_groups as usize > MAX_GROUPS_IN_BUFFER {
+        kprintln!("ext2: ERROR - Filesystem has {} groups, but our 4KB buffer can only hold {} group descriptors",
+                  num_groups, MAX_GROUPS_IN_BUFFER);
+        return Err(BlockError::InvalidInput);
+    }
+
+    // Calculate GDT location based on block size
+    // - 1KB blocks: superblock at block 1, GDT at block 2 (byte 2048)
+    // - 2KB+ blocks: superblock at block 0, GDT at block 1 (byte block_size)
+    let block_size = sb.block_size();
+    let gdt_byte_offset = if block_size == 1024 {
+        2048  // Block 2 for 1KB blocks
+    } else {
+        block_size as u64  // Block 1 for larger blocks
+    };
+
+    // Convert to sector number (512-byte sectors)
+    let gdt_sector = gdt_byte_offset / BLOCK_SIZE as u64;
+
+    kprintln!("ext2: Reading {} block group descriptor(s) from sector {} (byte {})",
+              num_groups, gdt_sector, gdt_byte_offset);
+
+    // Read GDT into buffer
+    let buf = unsafe {
+        let buf = &raw mut SUPERBLOCK_BUFFER.0;
+        let buf = &mut *buf;
+        volume.read_blocks(gdt_sector, buf)?;
+        buf as &[u8]
+    };
+
+    let mut groups = Vec::new();
+    for i in 0..num_groups {
+        let offset = i as usize * GROUP_DESC_SIZE;
+
+        // Parse group descriptor fields (all little-endian)
+        // (Buffer overflow checked above - we know all groups fit)
+        let bg_block_bitmap = u32::from_le_bytes(buf[offset..offset+4].try_into().unwrap());
+        let bg_inode_bitmap = u32::from_le_bytes(buf[offset+4..offset+8].try_into().unwrap());
+        let bg_inode_table = u32::from_le_bytes(buf[offset+8..offset+12].try_into().unwrap());
+        let bg_free_blocks_count = u16::from_le_bytes(buf[offset+12..offset+14].try_into().unwrap());
+        let bg_free_inodes_count = u16::from_le_bytes(buf[offset+14..offset+16].try_into().unwrap());
+        let bg_used_dirs_count = u16::from_le_bytes(buf[offset+16..offset+18].try_into().unwrap());
+        let bg_pad = u16::from_le_bytes(buf[offset+18..offset+20].try_into().unwrap());
+        let bg_reserved = [
+            u32::from_le_bytes(buf[offset+20..offset+24].try_into().unwrap()),
+            u32::from_le_bytes(buf[offset+24..offset+28].try_into().unwrap()),
+            u32::from_le_bytes(buf[offset+28..offset+32].try_into().unwrap()),
+        ];
+
+        groups.push(Ext2GroupDesc {
+            bg_block_bitmap,
+            bg_inode_bitmap,
+            bg_inode_table,
+            bg_free_blocks_count,
+            bg_free_inodes_count,
+            bg_used_dirs_count,
+            bg_pad,
+            bg_reserved,
+        });
+    }
+
+    Ok(groups)
+}
+
+/// Test function to verify ext2 filesystem detection and structure
+///
+/// This function serves as an inspection vehicle for ext2 filesystem development.
+/// It reads the superblock and group descriptors, displaying key information.
+pub fn test_ext2_detect(volume: &dyn BlockVolume) {
+    kprintln!("\n=== ext2 Filesystem Inspection ===");
+
+    // Step 1: Read superblock
+    let sb = match read_superblock(volume) {
+        Ok(sb) => sb,
         Err(e) => {
             kprintln!("ext2: Failed to read superblock: {:?}", e);
+            return;
+        }
+    };
+
+    // Superblock details are already printed by read_superblock()
+
+    // Step 2: Read block group descriptors
+    match read_group_descriptors(&sb, volume) {
+        Ok(groups) => {
+            kprintln!("\next2: Block Group Descriptors:");
+            for (i, group) in groups.iter().enumerate() {
+                kprintln!("  Group {}:", i);
+                kprintln!("    Block bitmap at block: {}", group.bg_block_bitmap);
+                kprintln!("    Inode bitmap at block: {}", group.bg_inode_bitmap);
+                kprintln!("    Inode table at block:  {}", group.bg_inode_table);
+                kprintln!("    Free blocks: {}", group.bg_free_blocks_count);
+                kprintln!("    Free inodes: {}", group.bg_free_inodes_count);
+                kprintln!("    Directories: {}", group.bg_used_dirs_count);
+            }
+        }
+        Err(e) => {
+            kprintln!("\next2: Failed to read group descriptors: {:?}", e);
         }
     }
 }
