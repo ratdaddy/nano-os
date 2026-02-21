@@ -29,8 +29,6 @@ const FAT32_VOLUME_LABEL_LEN: usize = 11;
 const EXT2_SUPERBLOCK_SECTOR: u64 = 2;
 const EXT2_MAGIC_OFFSET: usize = 56;
 const EXT2_MAGIC: u16 = 0xEF53;
-const EXT2_VOLUME_LABEL_OFFSET: usize = 120;
-const EXT2_VOLUME_LABEL_LEN: usize = 16;
 
 // Generic boot sector offsets
 const OEM_NAME_OFFSET: usize = 3;
@@ -191,16 +189,6 @@ fn init_thread() {
                                 );
                                 if ext2_magic == EXT2_MAGIC {
                                     kprintln!("  Filesystem: ext2");
-
-                                    // Read volume label (null-terminated, up to 16 bytes)
-                                    let label_bytes = &buf[EXT2_VOLUME_LABEL_OFFSET..EXT2_VOLUME_LABEL_OFFSET + EXT2_VOLUME_LABEL_LEN];
-                                    if let Some(null_pos) = label_bytes.iter().position(|&b| b == 0) {
-                                        if null_pos > 0 {
-                                            if let Ok(label) = core::str::from_utf8(&label_bytes[..null_pos]) {
-                                                kprintln!("  Volume label: {}", label);
-                                            }
-                                        }
-                                    }
                                 } else {
                                     kprintln!("  Unknown filesystem (no boot sig, ext2 magic not found)");
                                 }

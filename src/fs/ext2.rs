@@ -4,93 +4,103 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::str::from_utf8;
 
 use crate::block::volume::BlockVolume;
+use crate::bytes::ReadIntLe;
 use crate::drivers::{BlockError, BLOCK_SIZE};
 
-// ext2 superblock constants
+// Superblock constants
 const SUPERBLOCK_OFFSET: u64 = 1024;  // Superblock always starts at byte 1024
 #[allow(dead_code)]
 const SUPERBLOCK_SIZE: usize = 1024;  // Superblock is 1024 bytes
 const SUPERBLOCK_SECTOR: u64 = SUPERBLOCK_OFFSET / BLOCK_SIZE as u64;  // Sector 2 for 512-byte blocks
-const EXT2_MAGIC: u16 = 0xEF53;
-const EXT2_MAGIC_OFFSET: usize = 56;
-const EXT2_VOLUME_LABEL_OFFSET: usize = 120;
-const EXT2_VOLUME_LABEL_LEN: usize = 16;
+const SUPER_MAGIC: u16 = 0xEF53;
+
+// Superblock field offsets (within superblock data)
+const SB_INODES_COUNT_OFFSET: usize = 0;
+const SB_BLOCKS_COUNT_OFFSET: usize = 4;
+const SB_LOG_BLOCK_SIZE_OFFSET: usize = 24;
+const SB_BLOCKS_PER_GROUP_OFFSET: usize = 32;
+const SB_INODES_PER_GROUP_OFFSET: usize = 40;
+const MAGIC_OFFSET: usize = 56;
+const SB_INODE_SIZE_OFFSET: usize = 88;
+const VOLUME_LABEL_OFFSET: usize = 120;
+const VOLUME_LABEL_LEN: usize = 16;
+
+// Block and inode constants
+const MIN_BLOCK_SIZE: u32 = 1024;  // Minimum block size
+const GOOD_OLD_INODE_SIZE: u16 = 128;  // Default inode size for revision 0
+const NDIR_BLOCKS: usize = 12;  // Number of direct block pointers
+const IO_BUFFER_SIZE: usize = 4096;  // Size of I/O buffer (page-aligned for DMA)
+
+// Group descriptor constants
+const GROUP_DESC_SIZE: usize = 32;  // Size of group descriptor structure
+const GDT_1K_OFFSET: u64 = 2048;  // GDT location for 1KB block filesystems
+const GD_INODE_TABLE_OFFSET: usize = 8;  // Inode table block number offset
+
+// File type masks (mode field)
+const S_IFMT: u16 = 0xF000;   // File type mask
+const S_IFDIR: u16 = 0x4000;  // Directory
+const S_IFREG: u16 = 0x8000;  // Regular file
+#[allow(dead_code)]
+const S_IFCHR: u16 = 0x2000;  // Character device
+#[allow(dead_code)]
+const S_IFBLK: u16 = 0x6000;  // Block device
+
+// Inode structure offsets (within inode data)
+const INODE_MODE_OFFSET: usize = 0;
+const INODE_SIZE_OFFSET: usize = 4;
+const INODE_BLOCKS_OFFSET: usize = 40;
+
+// Directory entry structure offsets
+const DIR_ENTRY_INODE_OFFSET: usize = 0;
+const DIR_ENTRY_REC_LEN_OFFSET: usize = 4;
+const DIR_ENTRY_NAME_LEN_OFFSET: usize = 6;
+#[allow(dead_code)]
+const DIR_ENTRY_FILE_TYPE_OFFSET: usize = 7;
+const DIR_ENTRY_NAME_OFFSET: usize = 8;
 
 /// ext2 superblock structure (in-memory, parsed from disk)
 ///
-/// Only includes the fields we need for basic read operations.
+/// Only includes the fields we actually use.
 #[derive(Debug)]
 pub struct Ext2SuperBlock {
-    pub s_inodes_count: u32,
-    pub s_blocks_count: u32,
-    #[allow(dead_code)]
-    pub s_r_blocks_count: u32,
-    #[allow(dead_code)]
-    pub s_free_blocks_count: u32,
-    #[allow(dead_code)]
-    pub s_free_inodes_count: u32,
-    #[allow(dead_code)]
-    pub s_first_data_block: u32,
-    pub s_log_block_size: u32,
-    #[allow(dead_code)]
-    pub s_log_frag_size: u32,
-    pub s_blocks_per_group: u32,
-    #[allow(dead_code)]
-    pub s_frags_per_group: u32,
-    pub s_inodes_per_group: u32,
-    #[allow(dead_code)]
-    pub s_mtime: u32,
-    #[allow(dead_code)]
-    pub s_wtime: u32,
-    #[allow(dead_code)]
-    pub s_mnt_count: u16,
-    #[allow(dead_code)]
-    pub s_max_mnt_count: u16,
-    #[allow(dead_code)]
-    pub s_magic: u16,
-    pub s_inode_size: u16,  // Size of inode structure (128 or 256 typically)
-    // ... remaining fields omitted for now
+    pub inodes_count: u32,      // Total inodes (used in printout)
+    pub blocks_count: u32,      // Total blocks (used in num_groups(), printout)
+    pub log_block_size: u32,    // Block size calculation (used in block_size())
+    pub blocks_per_group: u32,  // Blocks per group (used in num_groups(), printout)
+    pub inodes_per_group: u32,  // Inodes per group (used in read_inode(), printout)
+    pub inode_size: u16,        // Inode size (used in read_inode(), printout)
 }
 
 impl Ext2SuperBlock {
     /// Calculate the actual block size from the log value
     pub fn block_size(&self) -> u32 {
-        1024 << self.s_log_block_size
+        MIN_BLOCK_SIZE << self.log_block_size
     }
 
     /// Calculate number of block groups in the filesystem
     pub fn num_groups(&self) -> u32 {
-        (self.s_blocks_count + self.s_blocks_per_group - 1) / self.s_blocks_per_group
+        (self.blocks_count + self.blocks_per_group - 1) / self.blocks_per_group
     }
 }
 
 /// ext2 block group descriptor structure (in-memory, parsed from disk)
 ///
-/// Each block group has a descriptor that locates the block bitmap,
-/// inode bitmap, and inode table for that group.
+/// Only includes the field we actually use.
 #[derive(Debug, Clone, Copy)]
 pub struct Ext2GroupDesc {
-    pub bg_block_bitmap: u32,      // Block number of block bitmap
-    pub bg_inode_bitmap: u32,      // Block number of inode bitmap
-    pub bg_inode_table: u32,       // Block number of first inode table block
-    pub bg_free_blocks_count: u16, // Free blocks in group
-    pub bg_free_inodes_count: u16, // Free inodes in group
-    pub bg_used_dirs_count: u16,   // Number of directories in group
-    #[allow(dead_code)]
-    pub bg_pad: u16,               // Padding
-    #[allow(dead_code)]
-    pub bg_reserved: [u32; 3],     // Reserved for future use
+    pub inode_table: u32,  // Block number of first inode table block (used in read_inode)
 }
 
 // Static buffer for ext2 block I/O (4KB) - must be page-aligned for DMA
 // Page alignment (4096) ensures buffer doesn't cross physical page boundaries
 // Used for reading superblock, group descriptors, inodes, and directory entries
 #[repr(C, align(4096))]
-struct Ext2BlockBuffer([u8; 4096]);
+struct Ext2BlockBuffer([u8; IO_BUFFER_SIZE]);
 
-static mut EXT2_IO_BUFFER: Ext2BlockBuffer = Ext2BlockBuffer([0; 4096]);
+static mut IO_BUFFER: Ext2BlockBuffer = Ext2BlockBuffer([0; IO_BUFFER_SIZE]);
 
 /// Read and parse the ext2 superblock from a volume
 ///
@@ -105,79 +115,58 @@ pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2SuperBlock, Block
     // Read 8 sectors (4096 bytes) starting at sector 2
     // This gives us the full superblock (1024 bytes at start of buffer)
     let buf = unsafe {
-        let buf = &raw mut EXT2_IO_BUFFER.0;
+        let buf = &raw mut IO_BUFFER.0;
         let buf = &mut *buf;
         volume.read_blocks(SUPERBLOCK_SECTOR, buf)?;
         buf
     };
 
     // Check magic number first
-    let magic = u16::from_le_bytes(
-        buf[EXT2_MAGIC_OFFSET..EXT2_MAGIC_OFFSET + 2].try_into().unwrap()
-    );
+    let magic = buf.read_u16_le(MAGIC_OFFSET);
 
-    if magic != EXT2_MAGIC {
-        kprintln!("ext2: Invalid magic number {:#x} (expected {:#x})", magic, EXT2_MAGIC);
+    if magic != SUPER_MAGIC {
+        kprintln!("ext2: Invalid magic number {:#x} (expected {:#x})", magic, SUPER_MAGIC);
         return Err(BlockError::InvalidInput);
     }
 
-    // Parse superblock fields (all little-endian)
-    let s_inodes_count = u32::from_le_bytes(buf[0..4].try_into().unwrap());
-    let s_blocks_count = u32::from_le_bytes(buf[4..8].try_into().unwrap());
-    let s_r_blocks_count = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-    let s_free_blocks_count = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-    let s_free_inodes_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-    let s_first_data_block = u32::from_le_bytes(buf[20..24].try_into().unwrap());
-    let s_log_block_size = u32::from_le_bytes(buf[24..28].try_into().unwrap());
-    let s_log_frag_size = u32::from_le_bytes(buf[28..32].try_into().unwrap());
-    let s_blocks_per_group = u32::from_le_bytes(buf[32..36].try_into().unwrap());
-    let s_frags_per_group = u32::from_le_bytes(buf[36..40].try_into().unwrap());
-    let s_inodes_per_group = u32::from_le_bytes(buf[40..44].try_into().unwrap());
-    let s_mtime = u32::from_le_bytes(buf[44..48].try_into().unwrap());
-    let s_wtime = u32::from_le_bytes(buf[48..52].try_into().unwrap());
-    let s_mnt_count = u16::from_le_bytes(buf[52..54].try_into().unwrap());
-    let s_max_mnt_count = u16::from_le_bytes(buf[54..56].try_into().unwrap());
-    // s_inode_size is at offset 88 (only valid for revision >= 1)
-    let s_inode_size = u16::from_le_bytes(buf[88..90].try_into().unwrap());
+    // Parse only the fields we actually use
+    let inodes_count = buf.read_u32_le(SB_INODES_COUNT_OFFSET);
+    let blocks_count = buf.read_u32_le(SB_BLOCKS_COUNT_OFFSET);
+    let log_block_size = buf.read_u32_le(SB_LOG_BLOCK_SIZE_OFFSET);
+    let blocks_per_group = buf.read_u32_le(SB_BLOCKS_PER_GROUP_OFFSET);
+    let inodes_per_group = buf.read_u32_le(SB_INODES_PER_GROUP_OFFSET);
+    let inode_size = buf.read_u16_le(SB_INODE_SIZE_OFFSET);
     // Default to 128 if zero (revision 0 always uses 128-byte inodes)
-    let s_inode_size = if s_inode_size == 0 { 128 } else { s_inode_size };
+    let inode_size = if inode_size == 0 { GOOD_OLD_INODE_SIZE } else { inode_size };
 
     let sb = Ext2SuperBlock {
-        s_inodes_count,
-        s_blocks_count,
-        s_r_blocks_count,
-        s_free_blocks_count,
-        s_free_inodes_count,
-        s_first_data_block,
-        s_log_block_size,
-        s_log_frag_size,
-        s_blocks_per_group,
-        s_frags_per_group,
-        s_inodes_per_group,
-        s_mtime,
-        s_wtime,
-        s_mnt_count,
-        s_max_mnt_count,
-        s_magic: magic,
-        s_inode_size,
+        inodes_count,
+        blocks_count,
+        log_block_size,
+        blocks_per_group,
+        inodes_per_group,
+        inode_size,
     };
 
-    kprintln!("ext2: Superblock parsed successfully");
-    kprintln!("  Inodes: {}", sb.s_inodes_count);
-    kprintln!("  Blocks: {}", sb.s_blocks_count);
-    kprintln!("  Block size: {} bytes", sb.block_size());
-    kprintln!("  Inode size: {} bytes", sb.s_inode_size);
-    kprintln!("  Inodes per group: {}", sb.s_inodes_per_group);
-    kprintln!("  Blocks per group: {}", sb.s_blocks_per_group);
-
     // Read volume label
-    let label_bytes = &buf[EXT2_VOLUME_LABEL_OFFSET..EXT2_VOLUME_LABEL_OFFSET + EXT2_VOLUME_LABEL_LEN];
-    if let Some(null_pos) = label_bytes.iter().position(|&b| b == 0) {
+    let label_bytes = &buf[VOLUME_LABEL_OFFSET..VOLUME_LABEL_OFFSET + VOLUME_LABEL_LEN];
+    let label = if let Some(null_pos) = label_bytes.iter().position(|&b| b == 0) {
         if null_pos > 0 {
-            if let Ok(label) = core::str::from_utf8(&label_bytes[..null_pos]) {
-                kprintln!("  Volume label: '{}'", label);
-            }
+            from_utf8(&label_bytes[..null_pos]).ok()
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    // Condensed output: key facts on one line
+    if let Some(label) = label {
+        kprintln!("ext2: {} blocks ({} bytes), {} inodes, {} groups ('{}')",
+                 sb.blocks_count, sb.block_size(), sb.inodes_count, sb.num_groups(), label);
+    } else {
+        kprintln!("ext2: {} blocks ({} bytes), {} inodes, {} groups",
+                 sb.blocks_count, sb.block_size(), sb.inodes_count, sb.num_groups());
     }
 
     Ok(sb)
@@ -199,8 +188,7 @@ pub fn read_superblock(volume: &dyn BlockVolume) -> Result<Ext2SuperBlock, Block
 /// Currently returns an error if the GDT doesn't fit in our buffer.
 pub fn read_group_descriptors(sb: &Ext2SuperBlock, volume: &dyn BlockVolume) -> Result<Vec<Ext2GroupDesc>, BlockError> {
     let num_groups = sb.num_groups();
-    const GROUP_DESC_SIZE: usize = 32;
-    const MAX_GROUPS_IN_BUFFER: usize = 4096 / GROUP_DESC_SIZE; // = 128
+    const MAX_GROUPS_IN_BUFFER: usize = IO_BUFFER_SIZE / GROUP_DESC_SIZE; // = 128
 
     // Check if GDT fits in our 4KB buffer
     if num_groups as usize > MAX_GROUPS_IN_BUFFER {
@@ -213,8 +201,8 @@ pub fn read_group_descriptors(sb: &Ext2SuperBlock, volume: &dyn BlockVolume) -> 
     // - 1KB blocks: superblock at block 1, GDT at block 2 (byte 2048)
     // - 2KB+ blocks: superblock at block 0, GDT at block 1 (byte block_size)
     let block_size = sb.block_size();
-    let gdt_byte_offset = if block_size == 1024 {
-        2048  // Block 2 for 1KB blocks
+    let gdt_byte_offset = if block_size == MIN_BLOCK_SIZE {
+        GDT_1K_OFFSET  // Block 2 for 1KB blocks
     } else {
         block_size as u64  // Block 1 for larger blocks
     };
@@ -227,7 +215,7 @@ pub fn read_group_descriptors(sb: &Ext2SuperBlock, volume: &dyn BlockVolume) -> 
 
     // Read GDT into buffer
     let buf = unsafe {
-        let buf = &raw mut EXT2_IO_BUFFER.0;
+        let buf = &raw mut IO_BUFFER.0;
         let buf = &mut *buf;
         volume.read_blocks(gdt_sector, buf)?;
         buf as &[u8]
@@ -237,30 +225,11 @@ pub fn read_group_descriptors(sb: &Ext2SuperBlock, volume: &dyn BlockVolume) -> 
     for i in 0..num_groups {
         let offset = i as usize * GROUP_DESC_SIZE;
 
-        // Parse group descriptor fields (all little-endian)
-        // (Buffer overflow checked above - we know all groups fit)
-        let bg_block_bitmap = u32::from_le_bytes(buf[offset..offset+4].try_into().unwrap());
-        let bg_inode_bitmap = u32::from_le_bytes(buf[offset+4..offset+8].try_into().unwrap());
-        let bg_inode_table = u32::from_le_bytes(buf[offset+8..offset+12].try_into().unwrap());
-        let bg_free_blocks_count = u16::from_le_bytes(buf[offset+12..offset+14].try_into().unwrap());
-        let bg_free_inodes_count = u16::from_le_bytes(buf[offset+14..offset+16].try_into().unwrap());
-        let bg_used_dirs_count = u16::from_le_bytes(buf[offset+16..offset+18].try_into().unwrap());
-        let bg_pad = u16::from_le_bytes(buf[offset+18..offset+20].try_into().unwrap());
-        let bg_reserved = [
-            u32::from_le_bytes(buf[offset+20..offset+24].try_into().unwrap()),
-            u32::from_le_bytes(buf[offset+24..offset+28].try_into().unwrap()),
-            u32::from_le_bytes(buf[offset+28..offset+32].try_into().unwrap()),
-        ];
+        // Parse only the field we actually use
+        let inode_table = buf.read_u32_le(offset + GD_INODE_TABLE_OFFSET);
 
         groups.push(Ext2GroupDesc {
-            bg_block_bitmap,
-            bg_inode_bitmap,
-            bg_inode_table,
-            bg_free_blocks_count,
-            bg_free_inodes_count,
-            bg_used_dirs_count,
-            bg_pad,
-            bg_reserved,
+            inode_table,
         });
     }
 
@@ -269,39 +238,29 @@ pub fn read_group_descriptors(sb: &Ext2SuperBlock, volume: &dyn BlockVolume) -> 
 
 /// ext2 inode structure (in-memory, parsed from disk)
 ///
-/// Standard ext2 inode is 128 bytes. Contains file metadata and block pointers.
+/// Only includes the fields we actually use.
 #[derive(Debug)]
 pub struct Ext2Inode {
-    pub i_mode: u16,           // File type and permissions
-    pub i_size: u32,           // File size in bytes
-    pub i_block: [u32; 15],    // Block pointers (12 direct + 3 indirect)
-    #[allow(dead_code)]
-    pub i_uid: u16,            // User ID
-    #[allow(dead_code)]
-    pub i_gid: u16,            // Group ID
-    #[allow(dead_code)]
-    pub i_links_count: u16,    // Hard link count
-    #[allow(dead_code)]
-    pub i_blocks: u32,         // Number of 512-byte blocks allocated
+    pub mode: u16,          // File type and permissions (used in is_dir, is_reg)
+    pub size: u32,          // File size in bytes (used in len, read_dir_entries)
+    pub blocks: [u32; 15],  // Block pointers (used in read_dir_entries)
 }
 
 impl Ext2Inode {
     /// Get file size in bytes
     pub fn len(&self) -> usize {
-        self.i_size as usize
+        self.size as usize
     }
 
     /// Check if this inode represents a directory
     pub fn is_dir(&self) -> bool {
-        const S_IFDIR: u16 = 0x4000;
-        (self.i_mode & 0xF000) == S_IFDIR
+        (self.mode & S_IFMT) == S_IFDIR
     }
 
     /// Check if this inode represents a regular file
     #[allow(dead_code)]
     pub fn is_reg(&self) -> bool {
-        const S_IFREG: u16 = 0x8000;
-        (self.i_mode & 0xF000) == S_IFREG
+        (self.mode & S_IFMT) == S_IFREG
     }
 }
 
@@ -327,18 +286,18 @@ pub fn read_inode(
     }
 
     // Calculate which group contains this inode
-    let group = ((inode_num - 1) / sb.s_inodes_per_group) as usize;
-    let local_index = (inode_num - 1) % sb.s_inodes_per_group;
+    let group = ((inode_num - 1) / sb.inodes_per_group) as usize;
+    let local_index = (inode_num - 1) % sb.inodes_per_group;
 
     if group >= groups.len() {
         return Err(BlockError::InvalidInput);
     }
 
     // Get inode table location from group descriptor
-    let inode_table_block = groups[group].bg_inode_table;
+    let inode_table_block = groups[group].inode_table;
 
     // Get inode size from superblock (128 or 256 typically)
-    let inode_size = sb.s_inode_size as u32;
+    let inode_size = sb.inode_size as u32;
 
     // Calculate which ext2 block contains this inode
     let block_size = sb.block_size();
@@ -355,7 +314,7 @@ pub fn read_inode(
     // Read the full ext2 block containing the inode using static page-aligned buffer
     // (DMA requires 4KB-aligned buffers)
     let buf = unsafe {
-        let buf = &raw mut EXT2_IO_BUFFER.0;
+        let buf = &raw mut IO_BUFFER.0;
         let buf = &mut *buf;
         volume.read_blocks(sector, buf)?;
         buf as &[u8]
@@ -364,38 +323,27 @@ pub fn read_inode(
     // Calculate offset within the block
     let offset_in_block = (inode_index_in_block * inode_size) as usize;
 
-    // Parse inode fields (all little-endian)
-    let i_mode = u16::from_le_bytes(buf[offset_in_block..offset_in_block+2].try_into().unwrap());
-    let i_uid = u16::from_le_bytes(buf[offset_in_block+2..offset_in_block+4].try_into().unwrap());
-    let i_size = u32::from_le_bytes(buf[offset_in_block+4..offset_in_block+8].try_into().unwrap());
-    // Skip atime, ctime, mtime, dtime (offsets 8-24)
-    let i_gid = u16::from_le_bytes(buf[offset_in_block+24..offset_in_block+26].try_into().unwrap());
-    let i_links_count = u16::from_le_bytes(buf[offset_in_block+26..offset_in_block+28].try_into().unwrap());
-    let i_blocks = u32::from_le_bytes(buf[offset_in_block+28..offset_in_block+32].try_into().unwrap());
-    // Skip flags and osd1 (offsets 32-40)
+    // Parse only the fields we actually use
+    let mode = buf.read_u16_le(offset_in_block + INODE_MODE_OFFSET);
+    let size = buf.read_u32_le(offset_in_block + INODE_SIZE_OFFSET);
 
     // Parse block pointers (15 u32 values at offset 40)
-    let mut i_block = [0u32; 15];
+    let mut blocks = [0u32; 15];
     for i in 0..15 {
-        let offset = offset_in_block + 40 + i * 4;
-        i_block[i] = u32::from_le_bytes(buf[offset..offset+4].try_into().unwrap());
+        blocks[i] = buf.read_u32_le(offset_in_block + INODE_BLOCKS_OFFSET + i * 4);
     }
 
     Ok(Ext2Inode {
-        i_mode,
-        i_size,
-        i_block,
-        i_uid,
-        i_gid,
-        i_links_count,
-        i_blocks,
+        mode,
+        size,
+        blocks,
     })
 }
 
 /// Parse directory entries from a directory inode
 ///
 /// Returns a list of (inode_num, name) pairs for all entries in the directory.
-/// Directory entries are stored in the data blocks pointed to by the inode's i_block array.
+/// Directory entries are stored in the data blocks pointed to by the inode's blocks array.
 ///
 /// # Arguments
 /// * `volume` - The volume to read from
@@ -419,12 +367,12 @@ pub fn read_dir_entries(
     let mut bytes_read = 0u32;
 
     // Read entries from each direct block (we only support direct blocks for now)
-    for block_ptr in inode.i_block.iter().take(12) {
+    for block_ptr in inode.blocks.iter().take(NDIR_BLOCKS) {
         if *block_ptr == 0 {
             break; // No more blocks
         }
 
-        if bytes_read >= inode.i_size {
+        if bytes_read >= inode.size {
             break; // Read all directory data
         }
 
@@ -433,7 +381,7 @@ pub fn read_dir_entries(
         let sector = block_byte_offset / BLOCK_SIZE as u64;
 
         let block_buf = unsafe {
-            let buf = &raw mut EXT2_IO_BUFFER.0;
+            let buf = &raw mut IO_BUFFER.0;
             let buf = &mut *buf;
             volume.read_blocks(sector, buf)?;
             buf as &[u8]
@@ -441,16 +389,16 @@ pub fn read_dir_entries(
 
         // Parse directory entries from this block
         let mut offset = 0;
-        while offset < block_size as usize && bytes_read < inode.i_size {
+        while offset < block_size as usize && bytes_read < inode.size {
             // Each entry is: inode(4) + rec_len(2) + name_len(1) + file_type(1) + name(variable)
-            if offset + 8 > block_buf.len() {
+            if offset + DIR_ENTRY_NAME_OFFSET > block_buf.len() {
                 break;
             }
 
-            let entry_inode = u32::from_le_bytes(block_buf[offset..offset+4].try_into().unwrap());
-            let rec_len = u16::from_le_bytes(block_buf[offset+4..offset+6].try_into().unwrap());
-            let name_len = block_buf[offset + 6];
-            // file_type at offset+7 (not used yet)
+            let entry_inode = block_buf.read_u32_le(offset + DIR_ENTRY_INODE_OFFSET);
+            let rec_len = block_buf.read_u16_le(offset + DIR_ENTRY_REC_LEN_OFFSET);
+            let name_len = block_buf[offset + DIR_ENTRY_NAME_LEN_OFFSET];
+            // file_type at DIR_ENTRY_FILE_TYPE_OFFSET (not used yet)
 
             // rec_len of 0 is invalid, stop processing
             if rec_len == 0 {
@@ -459,7 +407,7 @@ pub fn read_dir_entries(
 
             // If inode is non-zero, this is a valid entry
             if entry_inode != 0 && name_len > 0 {
-                let name_start = offset + 8;
+                let name_start = offset + DIR_ENTRY_NAME_OFFSET;
                 let name_end = name_start + name_len as usize;
 
                 if name_end <= block_buf.len() {
@@ -511,7 +459,7 @@ pub fn lookup_entry(
 /// This function serves as an inspection vehicle for ext2 filesystem development.
 /// It reads the superblock and group descriptors, displaying key information.
 pub fn test_ext2_detect(volume: &dyn BlockVolume) {
-    kprintln!("\n=== ext2 Filesystem Inspection ===");
+    kprintln!("\nReading ext2 filesystem\n");
 
     // Step 1: Read superblock
     let sb = match read_superblock(volume) {
@@ -527,38 +475,22 @@ pub fn test_ext2_detect(volume: &dyn BlockVolume) {
     // Step 2: Read block group descriptors
     let groups = match read_group_descriptors(&sb, volume) {
         Ok(groups) => {
-            kprintln!("\next2: Block Group Descriptors:");
             for (i, group) in groups.iter().enumerate() {
-                kprintln!("  Group {}:", i);
-                kprintln!("    Block bitmap at block: {}", group.bg_block_bitmap);
-                kprintln!("    Inode bitmap at block: {}", group.bg_inode_bitmap);
-                kprintln!("    Inode table at block:  {}", group.bg_inode_table);
-                kprintln!("    Free blocks: {}", group.bg_free_blocks_count);
-                kprintln!("    Free inodes: {}", group.bg_free_inodes_count);
-                kprintln!("    Directories: {}", group.bg_used_dirs_count);
+                kprintln!("  Group {}: inode_table={}", i, group.inode_table);
             }
             groups
         }
         Err(e) => {
-            kprintln!("\next2: Failed to read group descriptors: {:?}", e);
+            kprintln!("ext2: Failed to read group descriptors: {:?}", e);
             return;
         }
     };
 
     // Step 3: Read root inode (inode #2 is always the root directory)
     let root_inode = match read_inode(volume, &sb, &groups, 2) {
-        Ok(root_inode) => {
-            kprintln!("\next2: Root Inode (inode #2):");
-            kprintln!("  Mode: {:#06x} ({})", root_inode.i_mode,
-                     if root_inode.is_dir() { "directory" } else { "file" });
-            kprintln!("  Size: {} bytes", root_inode.len());
-            kprintln!("  Links: {}", root_inode.i_links_count);
-            kprintln!("  Blocks: {}", root_inode.i_blocks);
-            kprintln!("  First block pointer: {}", root_inode.i_block[0]);
-            root_inode
-        }
+        Ok(root_inode) => root_inode,
         Err(e) => {
-            kprintln!("\next2: Failed to read root inode: {:?}", e);
+            kprintln!("ext2: Failed to read root inode: {:?}", e);
             return;
         }
     };
@@ -566,59 +498,31 @@ pub fn test_ext2_detect(volume: &dyn BlockVolume) {
     // Step 4: List root directory contents
     let entries = match read_dir_entries(volume, &sb, &root_inode) {
         Ok(entries) => {
-            kprintln!("\next2: Root Directory Contents:");
+            kprintln!("ext2: Root directory (inode 2): {} bytes, {} entries",
+                     root_inode.len(), entries.len());
             for (inode_num, name) in &entries {
                 kprintln!("  {} (inode {})", name, inode_num);
             }
-            kprintln!("  Total entries: {}", entries.len());
             entries
         }
         Err(e) => {
-            kprintln!("\next2: Failed to read directory entries: {:?}", e);
+            kprintln!("ext2: Failed to read directory entries: {:?}", e);
             return;
         }
     };
 
     // Step 5: Test lookup functionality
-    kprintln!("\next2: VFS Function Verification:");
-    kprintln!("  ✓ read_superblock() - parsed superblock");
-    kprintln!("  ✓ read_group_descriptors() - read {} groups", groups.len());
-    kprintln!("  ✓ read_inode() - read root inode #2");
-    kprintln!("  ✓ read_dir_entries() - listed {} entries", entries.len());
-
-    // Try to lookup a known entry (skip "." and "..")
     if let Some((target_ino, target_name)) = entries.iter()
         .find(|(_, name)| name != "." && name != "..") {
 
-        kprintln!("\next2: Testing lookup_entry():");
-        kprintln!("  Looking up '{}'...", target_name);
-
-        match lookup_entry(volume, &sb, &root_inode, target_name) {
-            Ok(found_ino) => {
-                if found_ino == *target_ino {
-                    kprintln!("  ✓ lookup_entry() - found inode {} (correct!)", found_ino);
-
-                    // Read the looked-up inode to verify
-                    match read_inode(volume, &sb, &groups, found_ino) {
-                        Ok(inode) => {
-                            kprintln!("  ✓ Successfully read inode:");
-                            kprintln!("      Type: {}", if inode.is_dir() { "directory" } else { "file" });
-                            kprintln!("      Size: {} bytes", inode.len());
-                        }
-                        Err(e) => {
-                            kprintln!("  ✗ Failed to read inode: {:?}", e);
-                        }
-                    }
-                } else {
-                    kprintln!("  ✗ lookup_entry() returned wrong inode {} (expected {})",
-                             found_ino, target_ino);
+        if let Ok(found_ino) = lookup_entry(volume, &sb, &root_inode, target_name) {
+            if found_ino == *target_ino {
+                if let Ok(inode) = read_inode(volume, &sb, &groups, found_ino) {
+                    let file_type = if inode.is_dir() { "directory" } else { "file" };
+                    kprintln!("ext2: '{}' lookup: inode {}, {}, {} bytes",
+                             target_name, found_ino, file_type, inode.len());
                 }
-            }
-            Err(e) => {
-                kprintln!("  ✗ lookup_entry() failed: {:?}", e);
             }
         }
     }
-
-    kprintln!("\n=== ext2 Inspection Complete ===");
 }

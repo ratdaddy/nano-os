@@ -36,6 +36,46 @@ pub struct ProcfsInode { ... }       // implements Inode
 - `Ext2SuperBlock` (capital 'B' in SuperBlock)
 - `Ext2Inode` (capital 'I' in Inode)
 
+### Field Naming in In-Memory Types
+
+**Use clean, Rust-friendly names without specification prefixes.**
+
+❌ **Don't use spec prefixes:**
+```rust
+pub struct Ext2SuperBlock {
+    pub s_inodes_count: u32,      // NO - spec prefix in memory
+    pub s_blocks_count: u32,
+    pub s_log_block_size: u32,
+}
+
+pub struct Ext2Inode {
+    pub i_mode: u16,              // NO - spec prefix in memory
+    pub i_size: u32,
+    pub i_block: [u32; 15],
+}
+```
+
+✅ **Do use clean names:**
+```rust
+pub struct Ext2SuperBlock {
+    pub inodes_count: u32,        // YES - clear, Rust-friendly
+    pub blocks_count: u32,
+    pub log_block_size: u32,
+}
+
+pub struct Ext2Inode {
+    pub mode: u16,                // YES - clear, concise
+    pub size: u32,
+    pub blocks: [u32; 15],
+}
+```
+
+**Rationale:**
+- In-memory types are used throughout the codebase
+- Specification prefixes (`s_`, `i_`, `bg_`, etc.) add noise without value
+- Rust naming conventions prefer clear, concise names
+- Type context already provides scope (`sb.blocks_count` vs `inode.size`)
+
 ## On-Disk Structures (Raw Byte Layout)
 
 These represent the **exact byte layout** of structures as stored on disk. They use `#[repr(C)]` to match the on-disk format exactly. Only filesystems with persistent on-disk formats need these.
@@ -61,6 +101,35 @@ pub struct Ext2GroupDescDisk { ... }    // 32 bytes of group descriptor
 **Note:** Capitalization matches the VFS type name for consistency:
 - `Ext2SuperBlockDisk` (capital 'B' in SuperBlock)
 - `Ext2InodeDisk` (capital 'I' in Inode)
+
+### Field Naming in On-Disk Types
+
+**Keep specification prefixes to match external documentation.**
+
+✅ **Do use spec field names:**
+```rust
+#[repr(C)]
+pub struct Ext2SuperBlockDisk {
+    pub s_inodes_count: u32,      // YES - matches spec exactly
+    pub s_blocks_count: u32,
+    pub s_log_block_size: u32,
+    // ... exactly as specified
+}
+
+#[repr(C)]
+pub struct Ext2InodeDisk {
+    pub i_mode: u16,              // YES - matches spec exactly
+    pub i_uid: u16,
+    pub i_size: u32,
+    // ... exactly as specified
+}
+```
+
+**Rationale:**
+- On-disk types exist only to match specification byte layout
+- Keeping spec field names makes cross-referencing documentation easier
+- These types are temporary (only during parsing)
+- Consistency with external documentation prevents mistakes
 
 ## Data Flow: Disk to Memory
 

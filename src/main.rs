@@ -27,6 +27,8 @@ mod kthread;
 #[cfg(not(test))]
 mod amo;
 #[cfg(not(test))]
+mod bytes;
+#[cfg(not(test))]
 mod block;
 #[cfg(not(test))]
 mod collections;
