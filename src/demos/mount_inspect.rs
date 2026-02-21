@@ -4,8 +4,8 @@ use crate::vfs;
 
 pub fn inspect_mounts() {
     println!("=== Registered Filesystems ===");
-    for name in vfs::filesystems() {
-        println!("  {}", name);
+    for fs in vfs::filesystems() {
+        println!("  {}", fs.name());
     }
     println!();
     println!("=== Mount Table ===");

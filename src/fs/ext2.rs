@@ -511,9 +511,8 @@ pub struct Ext2FileSystem;
 pub static EXT2_FS: Ext2FileSystem = Ext2FileSystem;
 
 impl FileSystem for Ext2FileSystem {
-    fn name(&self) -> &'static str {
-        "ext2"
-    }
+    fn name(&self) -> &'static str { "ext2" }
+    fn requires_device(&self) -> bool { true }
 
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
         // TODO: Implement proper mount() with device registry (Phase 1.4)

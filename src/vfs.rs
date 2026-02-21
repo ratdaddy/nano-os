@@ -76,6 +76,9 @@ pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
 pub trait FileSystem: Send + Sync {
     fn name(&self) -> &'static str;
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error>;
+    /// Returns true if this filesystem requires a block device to mount.
+    /// Virtual filesystems (proc, ramfs) return false; disk-based return true.
+    fn requires_device(&self) -> bool;
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -104,14 +107,12 @@ pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
     }
 }
 
-/// Return names of all registered filesystems.
+/// Return all registered filesystem drivers.
 #[cfg_attr(test, allow(dead_code))]
-pub fn filesystems() -> Vec<&'static str> {
+pub fn filesystems() -> Vec<&'static dyn FileSystem> {
     unsafe {
         let fss = core::ptr::addr_of!(FILESYSTEMS);
-        (*fss).as_ref().map_or_else(Vec::new, |fss| {
-            fss.iter().map(|fs| fs.name()).collect()
-        })
+        (*fss).as_ref().map_or_else(Vec::new, |fss| fss.clone())
     }
 }
 

@@ -7,7 +7,7 @@ use core::any::Any;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, SuperBlock};
-use crate::vfs::FileSystem;
+use crate::vfs::{self, FileSystem};
 
 // =============================================================================
 // Entries table
@@ -24,15 +24,26 @@ enum ProcContent {
     Dynamic(fn() -> String),
 }
 
-static ENTRIES: [ProcEntry; 2] = [
+static ENTRIES: [ProcEntry; 3] = [
+    ProcEntry { name: "filesystems", content: ProcContent::Dynamic(gen_filesystems), inode: AtomicPtr::new(core::ptr::null_mut()) },
     ProcEntry { name: "mounts", content: ProcContent::Dynamic(gen_mounts), inode: AtomicPtr::new(core::ptr::null_mut()) },
     ProcEntry { name: "version", content: ProcContent::Static(b"Nano OS 0.1.0 (riscv64)\n"), inode: AtomicPtr::new(core::ptr::null_mut()) },
 ];
 
+fn gen_filesystems() -> String {
+    use core::fmt::Write;
+    let mut out = String::new();
+    for fs in vfs::filesystems() {
+        let prefix = if fs.requires_device() { "\t" } else { "nodev\t" };
+        let _ = writeln!(out, "{}{}", prefix, fs.name());
+    }
+    out
+}
+
 fn gen_mounts() -> String {
     use core::fmt::Write;
     let mut out = String::new();
-    for m in crate::vfs::mounts() {
+    for m in vfs::mounts() {
         let _ = writeln!(out, "{} {} {}", m.fs_type, m.mountpoint, m.id);
     }
     out
@@ -175,6 +186,7 @@ pub struct ProcfsFileSystem;
 
 impl FileSystem for ProcfsFileSystem {
     fn name(&self) -> &'static str { "proc" }
+    fn requires_device(&self) -> bool { false }
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
         unsafe {
             let ptr = core::ptr::addr_of!(PROCFS_SB);

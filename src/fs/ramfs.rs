@@ -167,6 +167,7 @@ pub struct RamfsFileSystem;
 
 impl crate::vfs::FileSystem for RamfsFileSystem {
     fn name(&self) -> &'static str { "ramfs" }
+    fn requires_device(&self) -> bool { false }
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
         Ok(ramfs.superblock())
