@@ -1,7 +1,7 @@
 use crate::block;
 use crate::console;
 use crate::drivers::{plic, uart};
-use crate::fs::{initramfs, procfs, ramfs};
+use crate::fs::{ext2, initramfs, procfs, ramfs};
 use crate::kernel_trap;
 use crate::kprint;
 use crate::kthread;
@@ -26,6 +26,7 @@ pub fn kernel_main() -> ! {
     // Register filesystem drivers
     vfs::register_filesystem(&ramfs::RAMFS_FS);
     vfs::register_filesystem(&procfs::PROCFS_FS);
+    vfs::register_filesystem(&ext2::EXT2_FS);
 
     // Mount initramfs as root filesystem
     vfs::init(initramfs::new());

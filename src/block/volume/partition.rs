@@ -13,6 +13,7 @@ use crate::drivers::{BlockError, BLOCK_SIZE};
 ///
 /// Translates volume-relative LBA to disk LBA by adding the partition's
 /// starting offset.
+#[derive(Clone)]
 pub struct PartitionVolume {
     disk: Arc<BlockDisk>,
     partition: Partition,

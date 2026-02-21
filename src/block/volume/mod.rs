@@ -23,7 +23,7 @@ pub use whole_disk::WholeDiskVolume;
 ///
 /// Volumes translate logical block addresses (LBA) within the volume
 /// to physical addresses on underlying block devices.
-pub trait BlockVolume {
+pub trait BlockVolume: Send + Sync {
     /// Read one or more blocks from the volume.
     ///
     /// # Arguments

@@ -234,6 +234,161 @@ git status --short
 
 Apply the same style principles to all files being changed in a commit.
 
+## Smart Pointer Dereferencing
+
+**Principle:** Use explicit methods over implicit dereferencing operators.
+
+When converting smart pointers to references, prefer explicit methods like `as_ref()` over the `&*` pattern for clarity.
+
+```rust
+// Bad - implicit dereference then reference
+let volume_ref: &dyn BlockVolume = &*arc_volume;
+function_call(&*arc_volume);
+
+// Good - explicit conversion
+let volume_ref: &dyn BlockVolume = arc_volume.as_ref();
+function_call(arc_volume.as_ref());
+```
+
+**Exception:** Raw pointer dereferencing (`&*ptr` from `*const T` or `*mut T`) should remain as-is since there's no `as_ref()` alternative.
+
+## Struct Initialization from External Data
+
+**Principle:** When initializing a struct from external data (disk, network, parsing), prefer the mutable builder pattern over large tuple returns.
+
+### Pattern: Mutable Builder
+
+When a constructor needs to populate many fields from external sources, initialize with placeholder values then populate with methods:
+
+```rust
+// Good - mutable builder pattern
+impl MyStruct {
+    pub fn new(source: DataSource) -> Result<Self, Error> {
+        // Initialize with placeholder values
+        let mut obj = Self {
+            source,
+            field1: 0,
+            field2: 0,
+            field3: None,
+            cached_data: Vec::new(),
+        };
+
+        // Populate fields from external data
+        obj.read_metadata()?;
+        obj.read_cached_data()?;
+
+        Ok(obj)
+    }
+
+    fn read_metadata(&mut self) -> Result<(), Error> {
+        // Read from self.source, populate self.field1, self.field2, etc.
+        self.field1 = parse_field1(&data);
+        self.field2 = parse_field2(&data);
+        Ok(())
+    }
+
+    fn read_cached_data(&mut self) -> Result<(), Error> {
+        // Populate self.cached_data
+        Ok(())
+    }
+}
+
+// Bad - large tuple destructuring
+impl MyStruct {
+    pub fn new(source: DataSource) -> Result<Self, Error> {
+        let (field1, field2, field3) = Self::read_metadata(&source)?;
+        let cached_data = Self::read_cached_data(&source, field1, field2)?;
+
+        Ok(Self {
+            source,
+            field1,
+            field2,
+            field3,
+            cached_data,
+        })
+    }
+
+    fn read_metadata(source: &DataSource) -> Result<(u32, u32, Option<String>), Error> {
+        // Awkward tuple return
+        Ok((val1, val2, val3))
+    }
+}
+```
+
+### Advantages
+
+- **No tuple destructuring** - cleaner code, easier to read
+- **Direct field assignment** - clear what's being set where
+- **Methods can call other methods** - use `self.num_groups()`, `self.block_size()` instead of passing parameters
+- **More extensible** - adding fields doesn't change signatures
+
+### Temporary Invalid State
+
+The struct is briefly in an invalid state (zero/empty values) during construction. This is acceptable because:
+- State is **private** to the constructor - never observable externally
+- Common Rust pattern (e.g., `Vec::with_capacity`, `Default` trait)
+- Constructor either succeeds (fully valid) or fails (no object created)
+
+## Function Organization
+
+**Principle:** Helper functions related to a type should be associated functions in that type's impl block.
+
+### When to use associated functions
+
+If a function:
+- Is only called from methods of a specific type
+- Doesn't need `&self` (stateless helper)
+- Logically belongs to that type's implementation
+
+Then it should be an **associated function** in the type's impl block.
+
+### Pattern
+
+```rust
+// Bad - standalone private function
+fn read_data(source: &DataSource) -> Result<Data, Error> {
+    // implementation
+}
+
+impl MyType {
+    pub fn new(source: DataSource) -> Result<Self, Error> {
+        let data = read_data(&source)?;  // Unclear where read_data comes from
+        Ok(Self { data })
+    }
+}
+
+// Good - associated function
+impl MyType {
+    pub fn new(source: DataSource) -> Result<Self, Error> {
+        let data = Self::read_data(&source)?;  // Clear this is a MyType function
+        Ok(Self { data })
+    }
+
+    fn read_data(source: &DataSource) -> Result<Data, Error> {
+        // implementation
+    }
+}
+```
+
+### When standalone functions are appropriate
+
+Keep functions as module-level standalone when:
+- Used by multiple unrelated types in the module
+- Generic utilities not tied to any specific type
+- Required to be standalone (e.g., function pointers in arrays)
+- Part of module's public API but not type-specific
+
+```rust
+// Appropriate standalone - used as function pointer
+fn gen_data() -> String { /* ... */ }
+static GENERATORS: [fn() -> String; 2] = [gen_data, gen_other];
+
+// Appropriate standalone - generic utility
+fn align_up(x: usize, align: usize) -> usize {
+    (x + align - 1) & !(align - 1)
+}
+```
+
 ## Code Review Checklist
 
 Before committing:
@@ -244,4 +399,7 @@ Before committing:
 - [ ] No unnecessary nested `unsafe` blocks
 - [ ] Method names clearly indicate async vs sync behavior
 - [ ] Magic numbers replaced with appropriately named constants
+- [ ] Smart pointer conversions use `as_ref()` not `&*`
+- [ ] Helper functions are associated functions when appropriate
+- [ ] Struct initialization uses mutable builder pattern instead of large tuple returns
 - [ ] All modified files follow consistent style

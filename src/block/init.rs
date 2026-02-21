@@ -212,9 +212,9 @@ fn init_thread() {
 
     // TODO: Register volumes as devices
 
-    // Test ext2 reading on partition 2 (index 1)
+    // Inspect ext2 filesystem on partition 2 (index 1)
     if volumes.len() >= 2 {
-        ext2::test_ext2_detect(&volumes[1]);
+        ext2::inspect_ext2(Arc::new(volumes[1].clone()));
     }
 
     kprintln!("\nBlock subsystem initialization complete");
