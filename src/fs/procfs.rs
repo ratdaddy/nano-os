@@ -216,5 +216,4 @@ impl FileSystem for ProcfsFileSystem {
     }
 }
 
-#[cfg_attr(test, allow(dead_code))]
 pub static PROCFS_FS: ProcfsFileSystem = ProcfsFileSystem;

@@ -174,7 +174,6 @@ impl crate::vfs::FileSystem for RamfsFileSystem {
     }
 }
 
-#[cfg_attr(test, allow(dead_code))]
 pub static RAMFS_FS: RamfsFileSystem = RamfsFileSystem;
 
 // =============================================================================
@@ -215,7 +214,7 @@ impl Ramfs {
     }
 
     /// Get the root inode.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub fn root(&self) -> &'static dyn Inode {
         self.root
     }

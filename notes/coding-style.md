@@ -52,6 +52,31 @@ fn example() {
 }
 ```
 
+## Dead Code and Test Builds
+
+**Principle:** Suppress dead code warnings globally during tests via a crate-level attribute. Do not gate modules or items with `#[cfg(not(test))]` or add per-item `#[cfg_attr(test, allow(dead_code))]`.
+
+The crate root (`main.rs`) has:
+```rust
+#![cfg_attr(test, allow(dead_code))]
+```
+
+This means:
+- All modules are always compiled (rust-analyzer sees everything — neovim works correctly)
+- Dead code warnings are suppressed globally during `make test`
+- **New modules need no special treatment** — the crate-level attribute covers them automatically
+
+Use plain `#[allow(dead_code)]` only when an item should always be allowed to be unused regardless of build mode (e.g., a struct field kept for documentation or future use).
+
+**Don't do this:**
+```rust
+#[cfg(not(test))]        // Hides module from rust-analyzer in test mode
+mod my_module;
+
+#[cfg_attr(test, allow(dead_code))]  // Per-item suppression is now redundant
+pub fn my_fn() { ... }
+```
+
 ## Static Mutable References
 
 **Principle:** Use `&raw mut` pattern to avoid undefined behavior warnings.

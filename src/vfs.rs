@@ -51,7 +51,6 @@ pub fn mounts() -> Vec<MountInfo> {
 }
 
 /// Mount a registered filesystem at the given path.
-#[cfg_attr(test, allow(dead_code))]
 pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
     let inode = vfs_lookup(path)?;
     let fs = find_filesystem(fs_name).ok_or(Error::NotFound)?;
@@ -72,7 +71,6 @@ pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
 // =============================================================================
 
 /// Filesystem driver trait — each filesystem type implements this.
-#[cfg_attr(test, allow(dead_code))]
 pub trait FileSystem: Send + Sync {
     fn name(&self) -> &'static str;
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error>;
@@ -81,11 +79,9 @@ pub trait FileSystem: Send + Sync {
     fn requires_device(&self) -> bool;
 }
 
-#[cfg_attr(test, allow(dead_code))]
 static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
 
 /// Register a filesystem driver.
-#[cfg_attr(test, allow(dead_code))]
 pub fn register_filesystem(fs: &'static dyn FileSystem) {
     unsafe {
         let fss = core::ptr::addr_of_mut!(FILESYSTEMS);
@@ -97,7 +93,6 @@ pub fn register_filesystem(fs: &'static dyn FileSystem) {
 }
 
 /// Look up a registered filesystem by name.
-#[cfg_attr(test, allow(dead_code))]
 pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
     unsafe {
         let fss = core::ptr::addr_of!(FILESYSTEMS);
@@ -108,7 +103,6 @@ pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
 }
 
 /// Return all registered filesystem drivers.
-#[cfg_attr(test, allow(dead_code))]
 pub fn filesystems() -> Vec<&'static dyn FileSystem> {
     unsafe {
         let fss = core::ptr::addr_of!(FILESYSTEMS);
@@ -180,7 +174,6 @@ pub fn vfs_read(file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
 }
 
 /// Seek to a position in a file.
-#[cfg_attr(test, allow(dead_code))]
 pub fn vfs_seek(file: &mut File, pos: SeekFrom) -> Result<(), Error> {
     let ops = file.fops;
     ops.seek(file, pos)
@@ -216,7 +209,6 @@ pub fn vfs_read_to_string(file: &mut File, out: &mut alloc::string::String) -> R
 
 /// Write a buffer to a file.
 /// Returns the number of bytes written.
-#[cfg_attr(test, allow(dead_code))]
 pub fn vfs_write(file: &mut File, buf: &[u8]) -> Result<usize, Error> {
     let ops = file.fops;
     ops.write(file, buf)
