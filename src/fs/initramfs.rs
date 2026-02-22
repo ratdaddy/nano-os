@@ -79,6 +79,7 @@ mod tests {
     use alloc::format;
     use alloc::vec::Vec;
     use super::*;
+    use crate::file::{FileType, SuperBlock};
     use crate::fs::ramfs::Ramfs;
     use crate::vfs;
 
@@ -139,7 +140,7 @@ mod tests {
     fn setup_test_ramfs(cpio: &'static [u8]) -> &'static Ramfs {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
         unpack_cpio(ramfs, cpio);
-        let sb: &'static dyn crate::file::SuperBlock = ramfs.superblock();
+        let sb: &'static dyn SuperBlock = ramfs.superblock();
         vfs::init(sb);
         ramfs
     }
@@ -217,7 +218,7 @@ mod tests {
         let entries = vfs::vfs_readdir("/").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "mnt");
-        assert_eq!(entries[0].file_type, crate::file::FileType::Directory);
+        assert_eq!(entries[0].file_type, FileType::Directory);
 
         let mnt_entries = vfs::vfs_readdir("/mnt").unwrap();
         assert_eq!(mnt_entries.len(), 0);
@@ -252,9 +253,9 @@ mod tests {
         let entries = vfs::vfs_readdir("/dev").unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "console");
-        assert_eq!(entries[0].file_type, crate::file::FileType::CharDevice);
+        assert_eq!(entries[0].file_type, FileType::CharDevice);
 
         let inode = vfs::vfs_lookup("/dev/console").unwrap();
-        assert_eq!(inode.rdev(), Some((5, 1)));
+        assert_eq!(inode.rdev, Some((5, 1)));
     }
 }

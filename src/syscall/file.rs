@@ -1,6 +1,6 @@
 use super::errno::{EBADF, EFAULT, EIO, ENOENT};
 use super::uaccess;
-use crate::file::{FileType, inode_id};
+use crate::file::FileType;
 use crate::process;
 use crate::thread;
 use crate::vfs;
@@ -139,21 +139,21 @@ pub fn newfstat(tf: &mut types::ProcessTrapFrame) {
         }
     };
 
-    let inode = file.inode;
+    let inode = &file.inode;
 
-    let mode_type = match inode.file_type() {
+    let mode_type = match inode.file_type {
         FileType::RegularFile => 0o100000,
         FileType::Directory   => 0o040000,
         FileType::CharDevice  => 0o020000,
     };
 
     let mut stat: Stat = unsafe { core::mem::zeroed() };
-    stat.st_ino = inode_id(inode) as u64;
+    stat.st_ino = inode.ino;
     stat.st_mode = mode_type | 0o444;
     stat.st_nlink = 1;
-    stat.st_size = inode.len() as i64;
+    stat.st_size = inode.len as i64;
     stat.st_blksize = 4096;
-    if let Some((major, minor)) = inode.rdev() {
+    if let Some((major, minor)) = inode.rdev {
         stat.st_rdev = ((major as u64) << 8) | (minor as u64);
     }
 

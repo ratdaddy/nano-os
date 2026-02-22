@@ -1,6 +1,7 @@
 //! Character device registry and open logic.
 
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 
 use crate::file::{Error, File, FileOps, Inode};
 
@@ -18,8 +19,8 @@ pub fn chrdev_register(major: u32, minor: u32, fops: &'static dyn FileOps) {
 }
 
 /// Open a character device by looking up its registered driver.
-pub fn chrdev_open(inode: &'static dyn Inode) -> Result<File, Error> {
-    let (major, minor) = inode.rdev().ok_or(Error::InvalidInput)?;
+pub fn chrdev_open(inode: Arc<Inode>) -> Result<File, Error> {
+    let (major, minor) = inode.rdev.ok_or(Error::InvalidInput)?;
     let fops = unsafe {
         let chardevs = core::ptr::addr_of!(CHARDEVS);
         (*chardevs).as_ref()
@@ -33,34 +34,16 @@ pub fn chrdev_open(inode: &'static dyn Inode) -> Result<File, Error> {
 #[cfg(test)]
 mod tests {
     use alloc::boxed::Box;
-    use core::any::Any;
+    use alloc::sync::Arc;
 
-    use crate::file::{Error, File, FileOps, FileType, Inode};
+    use crate::file::{Error, File, FileOps, FileType, Inode, InodeOps};
     use super::*;
 
     // ---- Mock infrastructure ----
 
-    struct MockCharDevInode {
-        major: u32,
-        minor: u32,
-    }
-
-    impl MockCharDevInode {
-        fn new(major: u32, minor: u32) -> &'static Self {
-            Box::leak(Box::new(MockCharDevInode { major, minor }))
-        }
-    }
-
-    static MOCK_DEV_OPS: MockDevFileOps = MockDevFileOps;
-    static MOCK_INODE_OPS: MockInodeFileOps = MockInodeFileOps;
-
-    impl Inode for MockCharDevInode {
-        fn as_any(&self) -> &dyn Any { self }
-        fn file_type(&self) -> FileType { FileType::CharDevice }
-        fn len(&self) -> usize { 0 }
-        fn file_ops(&self) -> &'static dyn FileOps { &MOCK_INODE_OPS }
-        fn rdev(&self) -> Option<(u32, u32)> { Some((self.major, self.minor)) }
-    }
+    struct MockInodeOps;
+    impl InodeOps for MockInodeOps {}
+    static MOCK_INODE_OPS: MockInodeOps = MockInodeOps;
 
     /// The inode's own file ops — should NOT be used when chrdev_open succeeds.
     struct MockInodeFileOps;
@@ -71,6 +54,7 @@ mod tests {
             Ok(1)
         }
     }
+    static MOCK_INODE_FILE_OPS: MockInodeFileOps = MockInodeFileOps;
 
     /// The registered device ops — chrdev_open should use these.
     struct MockDevFileOps;
@@ -81,6 +65,20 @@ mod tests {
             Ok(1)
         }
     }
+    static MOCK_DEV_OPS: MockDevFileOps = MockDevFileOps;
+
+    fn mock_chardev_inode(major: u32, minor: u32) -> Arc<Inode> {
+        Arc::new(Inode {
+            ino: 0,
+            file_type: FileType::CharDevice,
+            len: 0,
+            iops: &MOCK_INODE_OPS,
+            fops: &MOCK_INODE_FILE_OPS,
+            sb: None,
+            rdev: Some((major, minor)),
+            fs_data: Box::new(()),
+        })
+    }
 
     // ---- Tests ----
 
@@ -90,7 +88,7 @@ mod tests {
 
         chrdev_register(5, 1, &MOCK_DEV_OPS);
 
-        let inode = MockCharDevInode::new(5, 1);
+        let inode = mock_chardev_inode(5, 1);
         let mut file = chrdev_open(inode).unwrap();
 
         // Verify we got the registered device ops, not the inode's own ops
@@ -104,7 +102,7 @@ mod tests {
     fn test_chrdev_open_not_registered() {
         println!("Testing chrdev_open on unregistered device...");
 
-        let inode = MockCharDevInode::new(99, 99);
+        let inode = mock_chardev_inode(99, 99);
         let result = chrdev_open(inode);
         assert!(matches!(result, Err(Error::NotFound)));
     }

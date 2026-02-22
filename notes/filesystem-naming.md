@@ -11,30 +11,51 @@ Each filesystem has a **filesystem name** that forms the root of all related typ
 
 This filesystem name is used consistently across all related types.
 
-## VFS Trait Implementations (In-Memory)
+## In-Memory Types
 
-These are the types that implement VFS traits (`SuperBlock`, `Inode`, etc.). They represent the in-memory, working instances of filesystem structures.
+There is no per-filesystem `Inode` type. The VFS provides a single concrete
+`Inode` struct shared by all filesystems. Filesystem-specific in-memory types
+are the superblock, the ops table implementations, and the private node data
+stored in `Inode::fs_data`.
 
-**Pattern:** `{FilesystemName}{TraitName}`
+**Patterns:**
 
-Examples:
+| Kind | Pattern | Example |
+|------|---------|---------|
+| FileSystem registration | `{Name}FileSystem` | `Ext2FileSystem` |
+| SuperBlock | `{Name}SuperBlock` | `Ext2SuperBlock` |
+| InodeOps impl | `{Name}InodeOps` | `RamfsInodeOps` |
+| FileOps impl | `{Name}FileOps` / `{Name}DirOps` | `ProcfsFileOps`, `ProcfsDirOps` |
+| fs_data payload | `{Name}Node` / `{Name}InodeData` | `RamfsNode`, `Ext2InodeData` |
+
 ```rust
 // ext2
-pub struct Ext2SuperBlock { ... }    // implements SuperBlock
-pub struct Ext2Inode { ... }         // implements Inode
+pub struct Ext2FileSystem;          // implements FileSystem
+pub struct Ext2SuperBlock { ... }   // implements SuperBlock
+struct Ext2InodeOps;                // implements InodeOps (static singleton)
+struct Ext2FileOps;                 // implements FileOps (static singleton)
+struct Ext2InodeData { ... }        // stored in Inode::fs_data
 
 // ramfs
-pub struct RamfsSuperBlock { ... }   // implements SuperBlock
-pub struct RamfsInode { ... }        // implements Inode
+pub struct RamfsFileSystem;
+pub struct RamfsSuperBlock { ... }
+struct RamfsInodeOps;
+struct RamfsFileOps;
+struct RamfsDirOps;
+enum RamfsNode { Dir { ... }, File { ... }, CharDevice }  // stored in Inode::fs_data
 
 // procfs
-pub struct ProcfsSuperBlock { ... }  // implements SuperBlock
-pub struct ProcfsInode { ... }       // implements Inode
+pub struct ProcfsFileSystem;
+pub struct ProcfsSuperBlock { ... }
+struct ProcfsInodeOps;
+struct ProcfsFileOps;
+struct ProcfsDirOps;
+enum ProcfsNode { Dir, File { entry: &'static ProcEntry } }  // stored in Inode::fs_data
 ```
 
-**Note:** Capitalization follows Rust naming conventions:
-- `Ext2SuperBlock` (capital 'B' in SuperBlock)
-- `Ext2Inode` (capital 'I' in Inode)
+**Note:** `InodeOps` and `FileOps` implementors are private (`struct`, not `pub struct`)
+and held as `static` singletons within the filesystem module. The `Inode` struct
+references them via `&'static dyn InodeOps` / `&'static dyn FileOps`.
 
 ### Field Naming in In-Memory Types
 
@@ -47,12 +68,6 @@ pub struct Ext2SuperBlock {
     pub s_blocks_count: u32,
     pub s_log_block_size: u32,
 }
-
-pub struct Ext2Inode {
-    pub i_mode: u16,              // NO - spec prefix in memory
-    pub i_size: u32,
-    pub i_block: [u32; 15],
-}
 ```
 
 ✅ **Do use clean names:**
@@ -60,13 +75,7 @@ pub struct Ext2Inode {
 pub struct Ext2SuperBlock {
     pub inodes_count: u32,        // YES - clear, Rust-friendly
     pub blocks_count: u32,
-    pub log_block_size: u32,
-}
-
-pub struct Ext2Inode {
-    pub mode: u16,                // YES - clear, concise
-    pub size: u32,
-    pub blocks: [u32; 15],
+    pub block_size: u32,          // pre-calculated: 1024 << log_block_size
 }
 ```
 
@@ -74,7 +83,7 @@ pub struct Ext2Inode {
 - In-memory types are used throughout the codebase
 - Specification prefixes (`s_`, `i_`, `bg_`, etc.) add noise without value
 - Rust naming conventions prefer clear, concise names
-- Type context already provides scope (`sb.blocks_count` vs `inode.size`)
+- Type context already provides scope (`sb.blocks_count` vs `inode_data.size`)
 
 ## On-Disk Structures (Raw Byte Layout)
 
@@ -97,10 +106,6 @@ pub struct Ext2GroupDescDisk { ... }    // 32 bytes of group descriptor
 // ramfs - no on-disk structures (purely in-memory)
 // procfs - no on-disk structures (virtual filesystem)
 ```
-
-**Note:** Capitalization matches the VFS type name for consistency:
-- `Ext2SuperBlockDisk` (capital 'B' in SuperBlock)
-- `Ext2InodeDisk` (capital 'I' in Inode)
 
 ### Field Naming in On-Disk Types
 
@@ -146,8 +151,8 @@ pub struct Ext2InodeDisk {
          │ parse/convert
          ▼
 ┌─────────────────┐
-│  Ext2* Type     │  ← Proper in-memory representation
-│ (VFS trait impl)│
+│  Arc<Inode>     │  ← VFS inode with Ext2InodeData in fs_data
+│  (long-lived)   │
 └─────────────────┘
 ```
 
@@ -160,14 +165,14 @@ volume.read_blocks(2, &mut buf)?;
 // Temporarily cast to Disk type to access fields
 let disk_sb = unsafe { &*(buf.as_ptr() as *const Ext2SuperBlockDisk) };
 
-// Parse into proper in-memory type
+// Parse into proper in-memory superblock
 let sb = Ext2SuperBlock {
     inodes_count: disk_sb.s_inodes_count,
     blocks_count: disk_sb.s_blocks_count,
-    block_size: 1024 << disk_sb.s_log_block_size,  // Calculated, not stored on disk
-    // ... parse other fields
+    block_size: 1024 << disk_sb.s_log_block_size,  // calculated, not stored on disk
+    // ...
 };
-// disk_sb is dropped here - no longer needed
+// disk_sb is dropped here
 ```
 
 ## Filesystem Type Registration
@@ -176,7 +181,6 @@ The type that implements the `FileSystem` trait for registration with VFS.
 
 **Pattern:** `{FilesystemName}FileSystem` (struct) and `{FILESYSTEM_NAME}_FS` (static instance)
 
-Examples:
 ```rust
 // ext2
 pub struct Ext2FileSystem;           // implements FileSystem trait
@@ -191,69 +195,107 @@ vfs::register_filesystem(&EXT2_FS);
 vfs::register_filesystem(&RAMFS_FS);
 ```
 
+The `FileSystem` type and its static instance are placed at the **top** of the
+source file, before internal implementation types.
+
 ## Complete Type Hierarchy
 
 ### ext2 (on-disk filesystem)
 
 ```
-Ext2FileSystem              → implements FileSystem (registration)
+Ext2FileSystem                  implements FileSystem (registration)
   └─ mount() reads disk:
-       ├─ Ext2SuperBlockDisk   (temporary, parsed immediately)
-       ├─ Ext2GroupDescDisk    (temporary, parsed immediately)
-       └─ creates:
-            Ext2SuperBlock     → implements SuperBlock (in-memory)
-              ├─ inodes_count, blocks_count, etc. (parsed values)
-              └─ creates:
-                   Ext2Inode   → implements Inode (in-memory)
-                     └─ size, blocks, etc. (parsed from Ext2InodeDisk)
+       ├─ Ext2SuperBlockDisk        (temporary, parsed immediately)
+       ├─ Ext2GroupDescDisk[]       (temporary, parsed immediately)
+       └─ creates Ext2SuperBlock    implements SuperBlock
+            └─ root_inode() loads from disk → Arc<Inode>
+                 ├─ iops: &Ext2InodeOps
+                 ├─ fops: &Ext2FileOps or &Ext2DirOps
+                 └─ fs_data: Ext2InodeData { num, size, blocks, ... }
+                      └─ populated by reading Ext2InodeDisk (temporary)
 ```
 
 ### ramfs (in-memory filesystem)
 
 ```
-RamfsFileSystem             → implements FileSystem (registration)
-  └─ mount() creates:
-       RamfsSuperBlock      → implements SuperBlock (per-mount instance)
-         └─ creates: RamfsInode → implements Inode (per-file instance)
+RamfsFileSystem                 implements FileSystem (registration)
+  └─ mount() creates Ramfs → RamfsSuperBlock    implements SuperBlock
+       └─ root: Arc<Inode>
+            ├─ iops: &RamfsInodeOps
+            ├─ fops: &RamfsDirOps
+            └─ fs_data: RamfsNode::Dir { children: UnsafeCell<BTreeMap<...>> }
+                 └─ each child: Arc<Inode>
+                      └─ fs_data: RamfsNode::File { data } | RamfsNode::CharDevice
 ```
 
 ### procfs (virtual filesystem)
 
 ```
-ProcfsFileSystem            → implements FileSystem (registration)
-  └─ mount() creates:
-       ProcfsSuperBlock     → implements SuperBlock (per-mount instance)
-         └─ creates: ProcfsInode → implements Inode (per-file instance)
+ProcfsFileSystem                implements FileSystem (registration)
+  └─ mount() creates ProcfsSuperBlock    implements SuperBlock
+       └─ root: Arc<Inode>   (permanent)
+            └─ lookup(name) → new Arc<Inode>   (per-lookup, not cached)
+                 └─ fops.open() → new Arc<Inode> with ProcfsFileData   (per-open)
+```
+
+## Adding a New Filesystem
+
+**With on-disk format (e.g., fat32):**
+```rust
+pub struct Fat32FileSystem;              // Registration
+pub static FAT32_FS: Fat32FileSystem = Fat32FileSystem;
+
+pub struct Fat32SuperBlock { ... }       // implements SuperBlock; holds parsed metadata
+struct Fat32InodeOps;                    // implements InodeOps  (static singleton)
+struct Fat32FileOps;                     // implements FileOps   (static singleton)
+struct Fat32DirOps;                      // implements FileOps   (static singleton)
+struct Fat32InodeData { ... }            // stored in Inode::fs_data
+
+#[repr(C)] struct Fat32BootSectorDisk { ... }   // on-disk layout (temporary)
+#[repr(C)] struct Fat32DirEntryDisk { ... }      // on-disk layout (temporary)
+```
+
+**Virtual/in-memory only (e.g., devfs):**
+```rust
+pub struct DevfsFileSystem;
+pub static DEVFS_FS: DevfsFileSystem = DevfsFileSystem;
+
+pub struct DevfsSuperBlock { ... }       // implements SuperBlock
+struct DevfsInodeOps;                    // implements InodeOps
+struct DevfsDirOps;                      // implements FileOps
+enum DevfsNode { ... }                   // stored in Inode::fs_data
+// No Disk types needed
 ```
 
 ## Rationale
 
 ### Why suffix on-disk structures with "Disk"?
 
-1. **VFS types are used 90% of the time** - they should have clean, natural names
-2. **On-disk structures are special** - they represent raw bytes and need explicit handling
-3. **Clear distinction** - `Ext2Inode` (VFS) vs `Ext2InodeDisk` (raw bytes) is unambiguous
-4. **Matches Linux pattern** - Linux uses `ext2_inode` (on-disk) vs `ext2_inode_info` (in-memory)
-5. **Temporary nature** - `Disk` types are only used during parsing, not stored
+1. **VFS inodes are shared** — there is no per-filesystem inode type to
+   disambiguate from; the `Disk` suffix marks raw-byte-layout structs clearly
+2. **Temporary nature** — `Disk` types live only during a single I/O parse
+3. **Clear distinction** — `Ext2InodeDisk` (128 raw bytes) vs `Ext2InodeData`
+   (parsed fields in `fs_data`) is unambiguous
+4. **Matches Linux pattern** — Linux uses `ext2_inode` (on-disk) vs
+   `ext2_inode_info` (in-memory)
 
 ### Why NOT embed Disk types in VFS types?
 
-1. **Different lifetimes** - Disk types are temporary during I/O, VFS types are long-lived
-2. **Data transformation** - Many fields need calculation (e.g., block_size = 1024 << log_block_size)
-3. **Cleaner API** - VFS types have Rust-friendly fields, not C-style packed layouts
-4. **Memory efficiency** - Don't store redundant on-disk layout in memory
+1. **Different lifetimes** — Disk types are temporary during I/O, in-memory
+   types are long-lived
+2. **Data transformation** — many fields need calculation
+   (e.g., `block_size = 1024 << log_block_size`)
+3. **Cleaner API** — in-memory types have Rust-friendly fields, not packed
+   C-style layouts
+4. **Memory efficiency** — don't store redundant on-disk layout in memory
 
 ### Why use filesystem name as prefix?
 
-1. **Namespace isolation** - `Ext2Inode`, `RamfsInode`, `ProcfsInode` are clearly different types
-2. **Grep-friendly** - easy to find all ext2-related types with `grep Ext2`
-3. **Import clarity** - `use ext2::Ext2Inode` vs `use ramfs::RamfsInode` is self-documenting
-
-### Why match trait names?
-
-1. **Obvious relationship** - `Ext2SuperBlock implements SuperBlock` is clear
-2. **Consistent pattern** - all filesystems follow the same naming convention
-3. **Type hints** - the name tells you what traits are implemented
+1. **Namespace isolation** — `Ext2InodeOps`, `RamfsInodeOps`, `ProcfsInodeOps`
+   are clearly different types
+2. **Grep-friendly** — easy to find all ext2-related types with `grep Ext2`
+3. **Consistent with SuperBlock** — `Ext2SuperBlock implements SuperBlock`
+   pattern extends naturally to ops types
 
 ## Filesystem Name Reference
 
@@ -263,32 +305,9 @@ ProcfsFileSystem            → implements FileSystem (registration)
 | RAM FS | `"ramfs"` | `Ramfs` | No |
 | Process FS | `"procfs"` | `Procfs` | No |
 
-**Note:** The name string (used in `fs_type()`) matches the filesystem name, even though the Rust prefix may capitalize differently (e.g., `ext2` → `Ext2`).
-
-## Future Filesystems
-
-When adding new filesystems, follow this pattern:
-
-**With on-disk format (ext4, fat32, etc.):**
-```rust
-pub struct Ext4FileSystem;              // Registration
-pub struct Ext4SuperBlock { ... }       // VFS SuperBlock impl (in-memory)
-pub struct Ext4Inode { ... }            // VFS Inode impl (in-memory)
-
-#[repr(C)]
-pub struct Ext4SuperBlockDisk { ... }   // On-disk layout (temporary)
-#[repr(C)]
-pub struct Ext4InodeDisk { ... }        // On-disk layout (temporary)
-```
-
-**Virtual/in-memory only (tmpfs, devfs, etc.):**
-```rust
-pub struct TmpfsFileSystem;             // Registration
-pub struct TmpfsSuperBlock { ... }      // VFS SuperBlock impl
-pub struct TmpfsInode { ... }           // VFS Inode impl
-// No Disk types needed
-```
+**Note:** The name string (used in `fs_type()`) matches the filesystem name,
+even though the Rust prefix may capitalize differently (e.g., `ext2` → `Ext2`).
 
 ---
 
-Last updated: 2026-02-18
+Last updated: 2026-02-21

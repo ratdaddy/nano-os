@@ -13,6 +13,32 @@ use crate::drivers::{BlockError, BLOCK_SIZE};
 use crate::file::{Error, Inode, SuperBlock};
 use crate::vfs::FileSystem;
 
+// =============================================================================
+// Filesystem driver
+// =============================================================================
+
+/// ext2 filesystem type for VFS registration
+pub struct Ext2FileSystem;
+
+/// Global ext2 filesystem instance
+pub static EXT2_FS: Ext2FileSystem = Ext2FileSystem;
+
+impl FileSystem for Ext2FileSystem {
+    fn name(&self) -> &'static str { "ext2" }
+    fn requires_device(&self) -> bool { true }
+
+    fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
+        // TODO: Implement proper mount() with device registry (Phase 1.4)
+        // This requires:
+        // - Device registry to map (major, minor) -> Arc<dyn BlockVolume>
+        // - Parsing source device path (e.g., "/dev/sda1")
+        // - Looking up device in registry
+        // - Creating Ext2SuperBlock from the volume
+        // - Storing in static storage and returning reference
+        Err(Error::NotFound)
+    }
+}
+
 // Static buffer for ext2 block I/O (4KB) - must be page-aligned for DMA
 //
 // Page alignment (4096) ensures buffer doesn't cross physical page boundaries.
@@ -228,7 +254,7 @@ impl Ext2SuperBlock {
 }
 
 impl SuperBlock for Ext2SuperBlock {
-    fn root_inode(&self) -> &'static dyn Inode {
+    fn root_inode(&self) -> Arc<Inode> {
         todo!("root_inode() requires inode lifetime management - Phase 2")
     }
 
@@ -504,24 +530,3 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
     }
 }
 
-/// ext2 filesystem type for VFS registration
-pub struct Ext2FileSystem;
-
-/// Global ext2 filesystem instance
-pub static EXT2_FS: Ext2FileSystem = Ext2FileSystem;
-
-impl FileSystem for Ext2FileSystem {
-    fn name(&self) -> &'static str { "ext2" }
-    fn requires_device(&self) -> bool { true }
-
-    fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
-        // TODO: Implement proper mount() with device registry (Phase 1.4)
-        // This requires:
-        // - Device registry to map (major, minor) -> Arc<dyn BlockVolume>
-        // - Parsing source device path (e.g., "/dev/sda1")
-        // - Looking up device in registry
-        // - Creating Ext2SuperBlock from the volume
-        // - Storing in static storage and returning reference
-        Err(Error::NotFound)
-    }
-}

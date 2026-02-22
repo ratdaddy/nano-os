@@ -7,88 +7,61 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
-use core::any::Any;
+use alloc::sync::Arc;
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, SeekFrom, SuperBlock};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SeekFrom, SuperBlock};
+use crate::vfs::FileSystem;
 
-/// Filesystem-specific node data.
+/// Filesystem-specific node data stored in each inode's `fs_data`.
 enum RamfsNode {
     /// Regular file with static data.
     File { data: &'static [u8] },
     /// Directory with named children.
-    Dir { children: BTreeMap<String, &'static RamfsInode> },
-    /// Character device with major/minor numbers.
-    CharDevice { major: u32, minor: u32 },
+    ///
+    /// `UnsafeCell` allows inserting children during single-threaded init
+    /// without a raw-pointer cast. After mount the filesystem is read-only.
+    Dir { children: UnsafeCell<BTreeMap<String, Arc<Inode>>> },
+    /// Character device. Major/minor numbers are stored in `inode.rdev`.
+    CharDevice,
 }
 
-/// Inode for ramfs, containing node type.
-struct RamfsInode {
-    node: RamfsNode,
-}
+// Safety: RamfsNode is only mutated during single-threaded initialisation.
+// After the Ramfs is mounted all accesses are read-only.
+unsafe impl Send for RamfsNode {}
+unsafe impl Sync for RamfsNode {}
 
-impl Inode for RamfsInode {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+// =============================================================================
+// Ops tables
+// =============================================================================
 
-    fn file_type(&self) -> FileType {
-        match &self.node {
-            RamfsNode::File { .. } => FileType::RegularFile,
-            RamfsNode::Dir { .. } => FileType::Directory,
-            RamfsNode::CharDevice { .. } => FileType::CharDevice,
-        }
-    }
-
-    fn len(&self) -> usize {
-        match &self.node {
-            RamfsNode::File { data } => data.len(),
-            RamfsNode::Dir { .. } | RamfsNode::CharDevice { .. } => 0,
-        }
-    }
-
-    fn lookup(&self, name: &str) -> Result<&'static dyn Inode, Error> {
-        match &self.node {
-            RamfsNode::Dir { children } => {
-                children.get(name).map(|&inode| inode as &'static dyn Inode).ok_or(Error::NotFound)
-            }
-            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => Err(Error::NotADirectory),
-        }
-    }
-
-    fn file_ops(&self) -> &'static dyn FileOps {
-        &RAMFS_FILE_OPS
-    }
-
-    fn rdev(&self) -> Option<(u32, u32)> {
-        match &self.node {
-            RamfsNode::CharDevice { major, minor } => Some((*major, *minor)),
-            _ => None,
-        }
-    }
-
-    fn superblock(&self) -> Option<&'static dyn SuperBlock> {
-        unsafe {
-            let sb = core::ptr::addr_of!(RAMFS_SB);
-            *sb
-        }
-    }
-}
-
-/// File operations for ramfs files (read-only).
+struct RamfsInodeOps;
 struct RamfsFileOps;
+
+static RAMFS_INODE_OPS: RamfsInodeOps = RamfsInodeOps;
+static RAMFS_FILE_OPS: RamfsFileOps = RamfsFileOps;
+
+impl InodeOps for RamfsInodeOps {
+    fn lookup(&self, inode: &Arc<Inode>, name: &str) -> Result<Arc<Inode>, Error> {
+        let node = inode.fs_data.downcast_ref::<RamfsNode>().unwrap();
+        match node {
+            RamfsNode::Dir { children } => {
+                let children = unsafe { &*children.get() };
+                children.get(name).cloned().ok_or(Error::NotFound)
+            }
+            RamfsNode::File { .. } | RamfsNode::CharDevice => Err(Error::NotADirectory),
+        }
+    }
+}
 
 impl FileOps for RamfsFileOps {
     fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
-        let ramfs_inode = file.inode
-            .as_any()
-            .downcast_ref::<RamfsInode>()
-            .ok_or(Error::InvalidInput)?;
-
-        let data = match &ramfs_inode.node {
+        let node = file.inode.fs_data.downcast_ref::<RamfsNode>().ok_or(Error::InvalidInput)?;
+        let data = match node {
             RamfsNode::File { data } => *data,
-            RamfsNode::Dir { .. } | RamfsNode::CharDevice { .. } => return Err(Error::InvalidInput),
+            RamfsNode::Dir { .. } | RamfsNode::CharDevice => return Err(Error::InvalidInput),
         };
-
         let remaining = &data[file.offset..];
         let len = remaining.len().min(buf.len());
         buf[..len].copy_from_slice(&remaining[..len]);
@@ -97,8 +70,7 @@ impl FileOps for RamfsFileOps {
     }
 
     fn seek(&self, file: &mut File, pos: SeekFrom) -> Result<(), Error> {
-        let file_len = file.inode.len();
-
+        let file_len = file.inode.len;
         match pos {
             SeekFrom::Start(offset) => {
                 if offset > file_len {
@@ -126,38 +98,20 @@ impl FileOps for RamfsFileOps {
     }
 
     fn readdir(&self, file: &mut File) -> Result<alloc::vec::Vec<DirEntry>, Error> {
-        let ramfs_inode = file.inode
-            .as_any()
-            .downcast_ref::<RamfsInode>()
-            .ok_or(Error::InvalidInput)?;
-
-        let children = match &ramfs_inode.node {
-            RamfsNode::Dir { children } => children,
-            RamfsNode::File { .. } | RamfsNode::CharDevice { .. } => return Err(Error::NotADirectory),
-        };
-
-        let entries = children
-            .iter()
-            .map(|(name, inode)| {
-                let file_type = match &inode.node {
-                    RamfsNode::Dir { .. } => FileType::Directory,
-                    RamfsNode::File { .. } => FileType::RegularFile,
-                    RamfsNode::CharDevice { .. } => FileType::CharDevice,
-                };
-                DirEntry { name: name.clone(), file_type }
-            })
-            .collect();
-
-        Ok(entries)
+        let node = file.inode.fs_data.downcast_ref::<RamfsNode>().ok_or(Error::InvalidInput)?;
+        match node {
+            RamfsNode::Dir { children } => {
+                let children = unsafe { &*children.get() };
+                let entries = children
+                    .iter()
+                    .map(|(name, inode)| DirEntry { name: name.clone(), file_type: inode.file_type })
+                    .collect();
+                Ok(entries)
+            }
+            RamfsNode::File { .. } | RamfsNode::CharDevice => Err(Error::NotADirectory),
+        }
     }
 }
-
-/// Static instance of RamfsFileOps for use with File.
-static RAMFS_FILE_OPS: RamfsFileOps = RamfsFileOps;
-
-// =============================================================================
-// Ramfs Builder API
-// =============================================================================
 
 // =============================================================================
 // Filesystem driver
@@ -165,7 +119,7 @@ static RAMFS_FILE_OPS: RamfsFileOps = RamfsFileOps;
 
 pub struct RamfsFileSystem;
 
-impl crate::vfs::FileSystem for RamfsFileSystem {
+impl FileSystem for RamfsFileSystem {
     fn name(&self) -> &'static str { "ramfs" }
     fn requires_device(&self) -> bool { false }
     fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
@@ -180,16 +134,14 @@ pub static RAMFS_FS: RamfsFileSystem = RamfsFileSystem;
 // SuperBlock
 // =============================================================================
 
-static mut RAMFS_SB: Option<&'static dyn SuperBlock> = None;
-
 /// SuperBlock for ramfs.
 pub struct RamfsSuperBlock {
-    root: &'static RamfsInode,
+    root: Arc<Inode>,
 }
 
 impl SuperBlock for RamfsSuperBlock {
-    fn root_inode(&self) -> &'static dyn Inode {
-        self.root
+    fn root_inode(&self) -> Arc<Inode> {
+        Arc::clone(&self.root)
     }
 
     fn fs_type(&self) -> &'static str {
@@ -197,36 +149,38 @@ impl SuperBlock for RamfsSuperBlock {
     }
 }
 
+// =============================================================================
+// Ramfs Builder API
+// =============================================================================
+
 /// A ramfs filesystem instance.
 pub struct Ramfs {
-    root: &'static RamfsInode,
+    root: Arc<Inode>,
+    next_ino: AtomicU64,
 }
 
 impl Ramfs {
     /// Create a new ramfs with an empty root directory.
     pub fn new() -> Self {
-        let root = Box::leak(Box::new(RamfsInode {
-            node: RamfsNode::Dir {
-                children: BTreeMap::new(),
-            },
-        }));
-        Self { root }
+        Self {
+            root: Self::make_dir_inode(1),
+            next_ino: AtomicU64::new(2),
+        }
+    }
+
+    fn alloc_ino(&self) -> u64 {
+        self.next_ino.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Get the root inode.
     #[allow(dead_code)]
-    pub fn root(&self) -> &'static dyn Inode {
-        self.root
+    pub fn root(&self) -> Arc<Inode> {
+        Arc::clone(&self.root)
     }
 
     /// Create a SuperBlock for this ramfs instance.
     pub fn superblock(&self) -> &'static RamfsSuperBlock {
-        let sb: &'static RamfsSuperBlock = Box::leak(Box::new(RamfsSuperBlock { root: self.root }));
-        unsafe {
-            let ptr = core::ptr::addr_of_mut!(RAMFS_SB);
-            *ptr = Some(sb);
-        }
-        sb
+        Box::leak(Box::new(RamfsSuperBlock { root: Arc::clone(&self.root) }))
     }
 
     /// Insert an empty directory, creating parent directories as needed.
@@ -235,10 +189,9 @@ impl Ramfs {
         if parts.is_empty() {
             return Err(Error::InvalidInput);
         }
-
-        let mut current = self.root;
+        let mut current = Arc::clone(&self.root);
         for &dir_name in &parts {
-            current = self.get_or_create_dir(current, dir_name)?;
+            current = self.get_or_create_dir(&current, dir_name)?;
         }
         Ok(())
     }
@@ -249,28 +202,14 @@ impl Ramfs {
         if parts.is_empty() {
             return Err(Error::InvalidInput);
         }
-
         let (dirs, filename) = parts.split_at(parts.len() - 1);
         let filename = filename[0];
-
-        // Navigate/create parent directories
-        let mut current = self.root;
+        let mut current = Arc::clone(&self.root);
         for &dir_name in dirs {
-            current = self.get_or_create_dir(current, dir_name)?;
+            current = self.get_or_create_dir(&current, dir_name)?;
         }
-
-        // Create file inode
-        let file_inode = Box::leak(Box::new(RamfsInode {
-            node: RamfsNode::File { data },
-        }));
-
-        // Insert file into current directory
-        let current_ptr = current as *const RamfsInode as *mut RamfsInode;
-        unsafe {
-            if let RamfsNode::Dir { children } = &mut (*current_ptr).node {
-                children.insert(String::from(filename), file_inode);
-            }
-        }
+        let file_inode = self.make_file_inode(data);
+        Self::dir_insert(&current, String::from(filename), file_inode);
         Ok(())
     }
 
@@ -280,50 +219,78 @@ impl Ramfs {
         if parts.is_empty() {
             return Err(Error::InvalidInput);
         }
-
         let (dirs, filename) = parts.split_at(parts.len() - 1);
         let filename = filename[0];
-
-        let mut current = self.root;
+        let mut current = Arc::clone(&self.root);
         for &dir_name in dirs {
-            current = self.get_or_create_dir(current, dir_name)?;
+            current = self.get_or_create_dir(&current, dir_name)?;
         }
-
-        let dev_inode = Box::leak(Box::new(RamfsInode {
-            node: RamfsNode::CharDevice { major, minor },
-        }));
-
-        let current_ptr = current as *const RamfsInode as *mut RamfsInode;
-        unsafe {
-            if let RamfsNode::Dir { children } = &mut (*current_ptr).node {
-                children.insert(String::from(filename), dev_inode);
-            }
-        }
+        let dev_inode = self.make_chardev_inode(major, minor);
+        Self::dir_insert(&current, String::from(filename), dev_inode);
         Ok(())
     }
 
-    fn get_or_create_dir(
-        &self,
-        parent: &'static RamfsInode,
-        name: &str,
-    ) -> Result<&'static RamfsInode, Error> {
-        let parent_ptr = parent as *const RamfsInode as *mut RamfsInode;
+    fn make_dir_inode(ino: u64) -> Arc<Inode> {
+        Arc::new(Inode {
+            ino,
+            file_type: FileType::Directory,
+            len: 0,
+            iops: &RAMFS_INODE_OPS,
+            fops: &RAMFS_FILE_OPS,
+            sb: None,
+            rdev: None,
+            fs_data: Box::new(RamfsNode::Dir { children: UnsafeCell::new(BTreeMap::new()) }),
+        })
+    }
 
-        unsafe {
-            if let RamfsNode::Dir { children } = &mut (*parent_ptr).node {
-                if let Some(&existing) = children.get(name) {
-                    return Ok(existing);
-                }
-                let new_dir = Box::leak(Box::new(RamfsInode {
-                    node: RamfsNode::Dir {
-                        children: BTreeMap::new(),
-                    },
-                }));
-                children.insert(String::from(name), new_dir);
-                Ok(new_dir)
-            } else {
-                Err(Error::InvalidInput)
+    fn make_file_inode(&self, data: &'static [u8]) -> Arc<Inode> {
+        Arc::new(Inode {
+            ino: self.alloc_ino(),
+            file_type: FileType::RegularFile,
+            len: data.len(),
+            iops: &RAMFS_INODE_OPS,
+            fops: &RAMFS_FILE_OPS,
+            sb: None,
+            rdev: None,
+            fs_data: Box::new(RamfsNode::File { data }),
+        })
+    }
+
+    fn make_chardev_inode(&self, major: u32, minor: u32) -> Arc<Inode> {
+        Arc::new(Inode {
+            ino: self.alloc_ino(),
+            file_type: FileType::CharDevice,
+            len: 0,
+            iops: &RAMFS_INODE_OPS,
+            fops: &RAMFS_FILE_OPS,
+            sb: None,
+            rdev: Some((major, minor)),
+            fs_data: Box::new(RamfsNode::CharDevice),
+        })
+    }
+
+    fn get_or_create_dir(&self, parent: &Arc<Inode>, name: &str) -> Result<Arc<Inode>, Error> {
+        let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
+        if let RamfsNode::Dir { children } = node {
+            // Safety: single-threaded initialisation; no concurrent readers yet.
+            let children = unsafe { &mut *children.get() };
+            if let Some(existing) = children.get(name) {
+                return Ok(Arc::clone(existing));
             }
+            let new_dir = Self::make_dir_inode(self.alloc_ino());
+            children.insert(String::from(name), Arc::clone(&new_dir));
+            Ok(new_dir)
+        } else {
+            Err(Error::InvalidInput)
+        }
+    }
+
+    fn dir_insert(parent: &Arc<Inode>, name: String, child: Arc<Inode>) {
+        let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
+        if let RamfsNode::Dir { children } = node {
+            // Safety: single-threaded initialisation; no concurrent readers yet.
+            let children = unsafe { &mut *children.get() };
+            children.insert(name, child);
         }
     }
 }
@@ -331,6 +298,7 @@ impl Ramfs {
 #[cfg(test)]
 mod tests {
     use alloc::boxed::Box;
+    use alloc::sync::Arc;
     use super::*;
 
     /// Create static test data from a byte slice.
@@ -343,18 +311,20 @@ mod tests {
     }
 
     /// Look up an inode by path from the root.
-    fn lookup(root: &'static dyn Inode, path: &str) -> Result<&'static dyn Inode, Error> {
+    fn lookup(root: Arc<Inode>, path: &str) -> Result<Arc<Inode>, Error> {
         let mut inode = root;
         for component in path.split('/').filter(|s| !s.is_empty()) {
-            inode = inode.lookup(component)?;
+            let next = inode.iops.lookup(&inode, component)?;
+            inode = next;
         }
         Ok(inode)
     }
 
     /// Open a file by path.
-    fn open(root: &'static dyn Inode, path: &str) -> Result<File, Error> {
+    fn open(root: Arc<Inode>, path: &str) -> Result<File, Error> {
         let inode = lookup(root, path)?;
-        inode.file_ops().open(inode)
+        let fops = inode.fops;
+        fops.open(inode)
     }
 
     /// Read from a file.
@@ -370,7 +340,7 @@ mod tests {
     }
 
     /// Read directory entries by path.
-    fn readdir(root: &'static dyn Inode, path: &str) -> Result<alloc::vec::Vec<DirEntry>, Error> {
+    fn readdir(root: Arc<Inode>, path: &str) -> Result<alloc::vec::Vec<DirEntry>, Error> {
         let mut file = open(root, path)?;
         let ops = file.fops;
         ops.readdir(&mut file)
@@ -508,7 +478,7 @@ mod tests {
         assert_eq!(entries[0].file_type, FileType::CharDevice);
 
         let inode = lookup(ramfs.root(), "dev/console").unwrap();
-        assert_eq!(inode.rdev(), Some((5, 1)));
+        assert_eq!(inode.rdev, Some((5, 1)));
     }
 
     // -- lookup error tests --
@@ -520,7 +490,8 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
 
-        let result = ramfs.root().lookup("nonexistent");
+        let root = ramfs.root();
+        let result = root.iops.lookup(&root, "nonexistent");
         assert!(matches!(result, Err(Error::NotFound)));
     }
 
@@ -531,8 +502,8 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
 
-        let file_inode = ramfs.root().lookup("a.txt").unwrap();
-        let result = file_inode.lookup("child");
+        let file_inode = lookup(ramfs.root(), "a.txt").unwrap();
+        let result = file_inode.iops.lookup(&file_inode, "child");
         assert!(matches!(result, Err(Error::NotADirectory)));
     }
 
@@ -543,10 +514,37 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_chardev("dev/console", 5, 1).unwrap();
 
-        let dev = ramfs.root().lookup("dev").unwrap();
-        let console = dev.lookup("console").unwrap();
-        let result = console.lookup("child");
+        let console = lookup(ramfs.root(), "dev/console").unwrap();
+        let result = console.iops.lookup(&console, "child");
         assert!(matches!(result, Err(Error::NotADirectory)));
+    }
+
+    // -- ino tests --
+
+    #[test_case]
+    fn test_ino_root() {
+        println!("Testing ramfs root inode has ino=1...");
+
+        let ramfs = setup_test_ramfs();
+        assert_eq!(ramfs.root().ino, 1);
+    }
+
+    #[test_case]
+    fn test_ino_sequential() {
+        println!("Testing ramfs assigns sequential inode numbers...");
+
+        let ramfs = setup_test_ramfs();
+        ramfs.insert_file("file.txt", leak_data(b"data")).unwrap();
+        ramfs.insert_dir("mydir").unwrap();
+        ramfs.insert_chardev("dev", 5, 1).unwrap();
+
+        let file_ino = lookup(ramfs.root(), "file.txt").unwrap().ino;
+        let dir_ino  = lookup(ramfs.root(), "mydir").unwrap().ino;
+        let dev_ino  = lookup(ramfs.root(), "dev").unwrap().ino;
+
+        assert_eq!(file_ino, 2);
+        assert_eq!(dir_ino,  3);
+        assert_eq!(dev_ino,  4);
     }
 
     // -- rdev tests --
@@ -558,8 +556,8 @@ mod tests {
         let ramfs = setup_test_ramfs();
         ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
 
-        let file_inode = ramfs.root().lookup("a.txt").unwrap();
-        assert_eq!(file_inode.rdev(), None);
+        let file_inode = lookup(ramfs.root(), "a.txt").unwrap();
+        assert_eq!(file_inode.rdev, None);
     }
 
     #[test_case]
@@ -567,7 +565,7 @@ mod tests {
         println!("Testing ramfs rdev on a directory inode...");
 
         let ramfs = setup_test_ramfs();
-        assert_eq!(ramfs.root().rdev(), None);
+        assert_eq!(ramfs.root().rdev, None);
     }
 
     // -- read error tests --

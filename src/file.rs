@@ -1,3 +1,9 @@
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::any::Any;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
     UnexpectedEof,
@@ -15,7 +21,7 @@ pub enum FileType {
 }
 
 pub struct DirEntry {
-    pub name: alloc::string::String,
+    pub name: String,
     pub file_type: FileType,
 }
 
@@ -35,12 +41,11 @@ pub struct File {
     /// Current read/write position in the file
     pub offset: usize,
     /// Inode for this file.
-    pub inode: &'static dyn Inode,
+    pub inode: Arc<Inode>,
 }
 
 impl File {
-    /// Create a new File with FileOps and an inode.
-    pub fn new(fops: &'static dyn FileOps, inode: &'static dyn Inode) -> Self {
+    pub fn new(fops: &'static dyn FileOps, inode: Arc<Inode>) -> Self {
         Self {
             fops,
             offset: 0,
@@ -53,8 +58,8 @@ impl File {
 /// stored as 'static references.
 pub trait FileOps: Send + Sync {
     /// Open a file from an inode.
-    fn open(&self, inode: &'static dyn Inode) -> Result<File, Error> {
-        Ok(File::new(inode.file_ops(), inode))
+    fn open(&self, inode: Arc<Inode>) -> Result<File, Error> {
+        Ok(File::new(inode.fops, inode))
     }
 
     fn read(&self, _file: &mut File, _buf: &mut [u8]) -> Result<usize, Error> {
@@ -70,51 +75,42 @@ pub trait FileOps: Send + Sync {
     }
 
     /// Read directory entries (for directories).
-    fn readdir(&self, _file: &mut File) -> Result<alloc::vec::Vec<DirEntry>, Error> {
+    fn readdir(&self, _file: &mut File) -> Result<Vec<DirEntry>, Error> {
         Err(Error::InvalidInput) // Not a directory
     }
 }
 
-/// Stable identity key for an inode (data pointer address).
-pub fn inode_id(inode: &dyn Inode) -> usize {
-    inode as *const dyn Inode as *const () as usize
+/// Inode operations trait — filesystem-specific directory operations.
+///
+/// Implementations must be Send + Sync since they're stored as 'static references.
+pub trait InodeOps: Send + Sync {
+    fn lookup(&self, _inode: &Arc<Inode>, _name: &str) -> Result<Arc<Inode>, Error> {
+        Err(Error::InvalidInput)
+    }
+}
+
+/// Universal inode struct shared across all filesystems.
+///
+/// Filesystem-specific data lives in `fs_data`, accessed via downcast.
+/// `iops` and `fops` point to static singleton operation tables.
+pub struct Inode {
+    pub ino: u64,
+    pub file_type: FileType,
+    pub len: usize,
+    pub iops: &'static dyn InodeOps,
+    pub fops: &'static dyn FileOps,
+    pub sb: Option<&'static dyn SuperBlock>,
+    pub rdev: Option<(u32, u32)>,
+    pub fs_data: Box<dyn Any + Send + Sync>,
+}
+
+/// Stable identity key for an inode (pointer address of the allocation).
+pub fn inode_id(inode: &Arc<Inode>) -> usize {
+    Arc::as_ptr(inode) as usize
 }
 
 /// SuperBlock trait — each filesystem provides one per mount.
 pub trait SuperBlock: Send + Sync {
-    fn root_inode(&self) -> &'static dyn Inode;
+    fn root_inode(&self) -> Arc<Inode>;
     fn fs_type(&self) -> &'static str;
-}
-
-/// Inode trait for filesystem-specific metadata and operations.
-///
-/// Implementations must be Send + Sync since they're stored as 'static references.
-pub trait Inode: Send + Sync {
-    /// Downcast to concrete type for filesystem-specific operations.
-    fn as_any(&self) -> &dyn core::any::Any;
-
-    /// The type of this inode (file, directory, char device, etc.).
-    fn file_type(&self) -> FileType;
-
-    /// Size of the file in bytes.
-    fn len(&self) -> usize;
-
-    /// Look up a child by name (for directories).
-    /// Returns the child inode if found.
-    fn lookup(&self, _name: &str) -> Result<&'static dyn Inode, Error> {
-        Err(Error::InvalidInput) // Not a directory
-    }
-
-    /// Get the FileOps for this inode.
-    fn file_ops(&self) -> &'static dyn FileOps;
-
-    /// Return device major/minor numbers (for device nodes).
-    fn rdev(&self) -> Option<(u32, u32)> {
-        None
-    }
-
-    /// Return the superblock this inode belongs to.
-    fn superblock(&self) -> Option<&'static dyn SuperBlock> {
-        None
-    }
 }

@@ -1,5 +1,7 @@
 //! Demo: Read procfs files.
 
+use alloc::string::String;
+
 use crate::file::FileType;
 use crate::vfs;
 
@@ -11,9 +13,9 @@ pub fn inspect_procfs() {
     println!("/proc inode:");
     match vfs::vfs_lookup("/proc") {
         Ok(inode) => {
-            println!("  file_type: {:?}", inode.file_type());
-            println!("  len:       {}", inode.len());
-            match inode.superblock() {
+            println!("  file_type: {:?}", inode.file_type);
+            println!("  len:       {}", inode.len);
+            match inode.sb {
                 Some(sb) => println!("  fs_type:   {}", sb.fs_type()),
                 None => println!("  fs_type:   (unknown)"),
             }
@@ -42,7 +44,7 @@ pub fn inspect_procfs() {
     println!("/proc/version:");
     match vfs::vfs_open("/proc/version") {
         Ok(mut file) => {
-            let mut contents = alloc::string::String::new();
+            let mut contents = String::new();
             match vfs::vfs_read_to_string(&mut file, &mut contents) {
                 Ok(()) => print!("{}", contents),
                 Err(e) => println!("  Read error: {:?}", e),
@@ -55,7 +57,7 @@ pub fn inspect_procfs() {
     println!("/proc/mounts:");
     match vfs::vfs_open("/proc/mounts") {
         Ok(mut file) => {
-            let mut contents = alloc::string::String::new();
+            let mut contents = String::new();
             match vfs::vfs_read_to_string(&mut file, &mut contents) {
                 Ok(()) if contents.is_empty() => println!("  (empty)"),
                 Ok(()) => print!("{}", contents),
