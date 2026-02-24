@@ -5,6 +5,7 @@
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::str::from_utf8;
 
 use crate::block::disk::BlockDisk;
 use crate::block::partition;
@@ -158,12 +159,12 @@ fn init_thread() {
                         kprintln!("  Boot signature: {:#06x}", boot_sig);
 
                         // Check for FAT32
-                        let fat32_type = core::str::from_utf8(
+                        let fat32_type = from_utf8(
                             &buf[FAT32_FILESYSTEM_TYPE_OFFSET..FAT32_FILESYSTEM_TYPE_OFFSET + FAT32_FILESYSTEM_TYPE_LEN]
                         ).unwrap_or("");
                         if fat32_type.starts_with("FAT32") {
                             // Try to read volume label
-                            let label = core::str::from_utf8(
+                            let label = from_utf8(
                                 &buf[FAT32_VOLUME_LABEL_OFFSET..FAT32_VOLUME_LABEL_OFFSET + FAT32_VOLUME_LABEL_LEN]
                             ).unwrap_or("").trim_end();
                             kprintln!("  Filesystem: FAT32");
@@ -172,7 +173,7 @@ fn init_thread() {
                             }
                         } else {
                             // Generic OEM name
-                            let oem = core::str::from_utf8(
+                            let oem = from_utf8(
                                 &buf[OEM_NAME_OFFSET..OEM_NAME_OFFSET + OEM_NAME_LEN]
                             ).unwrap_or("").trim_end();
                             if !oem.is_empty() {
