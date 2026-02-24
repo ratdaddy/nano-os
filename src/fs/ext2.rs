@@ -3,9 +3,11 @@
 //! Read-only ext2 filesystem driver.
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
+use core::cell::UnsafeCell;
 use core::str::from_utf8;
 
 use crate::block::volume::BlockVolume;
@@ -111,7 +113,7 @@ impl InodeOps for Ext2InodeOps {
             };
 
             if let Some(ino) = found_ino {
-                return Ext2SuperBlock::read_inode(sb, ino).map_err(|_| Error::NotFound);
+                return sb.get_or_read_inode(ino).map_err(|_| Error::NotFound);
             }
         }
 
@@ -216,7 +218,12 @@ pub struct Ext2SuperBlock {
     volume_label: Option<String>,
     groups: Vec<Ext2GroupDesc>,
     root: Option<Arc<Inode>>,
+    inode_cache: UnsafeCell<BTreeMap<u32, Weak<Inode>>>,
 }
+
+// Safety: ext2 is only accessed from a single thread; UnsafeCell is used in place
+// of a mutex since the kernel has no concurrent ext2 callers at this point.
+unsafe impl Sync for Ext2SuperBlock {}
 
 impl Ext2SuperBlock {
     /// Create and fully initialise an Ext2SuperBlock from a BlockVolume.
@@ -236,6 +243,7 @@ impl Ext2SuperBlock {
             volume_label: None,
             groups: Vec::new(),
             root: None,
+            inode_cache: UnsafeCell::new(BTreeMap::new()),
         });
 
         sb_box.read_superblock_data()?;
@@ -244,7 +252,7 @@ impl Ext2SuperBlock {
         // Safety: The box is about to be leaked, making this &'static valid.
         // We retain mutable access through sb_box until Box::leak consumes it.
         let sb: &'static Self = unsafe { &*(sb_box.as_ref() as *const Self) };
-        sb_box.root = Some(Self::read_inode(sb, ROOT_INODE)?);
+        sb_box.root = Some(sb.get_or_read_inode(ROOT_INODE)?);
 
         Ok(Box::leak(sb_box))
     }
@@ -266,14 +274,14 @@ impl Ext2SuperBlock {
 
     /// Read an inode from disk and return a fully constructed VFS inode.
     ///
-    /// Takes `&'static Self` so the superblock reference can be stored in the inode's `fs_data`.
-    fn read_inode(sb: &'static Self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
-        let (sector, offset) = sb.inode_location(inode_num)?;
+    /// Requires `&'static self` so the superblock reference can be stored in the inode's `fs_data`.
+    fn read_inode(&'static self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
+        let (sector, offset) = self.inode_location(inode_num)?;
 
         let buf = unsafe {
             let buf = &raw mut IO_BUFFER.0;
             let buf = &mut *buf;
-            sb.volume.as_ref().read_blocks(sector, buf)?;
+            self.volume.as_ref().read_blocks(sector, buf)?;
             buf as &[u8]
         };
 
@@ -297,10 +305,28 @@ impl Ext2SuperBlock {
             len: size as usize,
             iops: &EXT2_INODE_OPS,
             fops: &EXT2_FILE_OPS,
-            sb: Some(sb),
+            sb: Some(self),
             rdev: None,
-            fs_data: Box::new(Ext2InodeData { sb, blocks }),
+            fs_data: Box::new(Ext2InodeData { sb: self, blocks }),
         }))
+    }
+
+    /// Return an inode by number, consulting the cache first.
+    ///
+    /// On a cache hit, upgrades the stored `Weak` and returns it without a disk read.
+    /// On a miss, reads from disk and stores a `Weak` in the cache.
+    fn get_or_read_inode(&'static self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
+        let cache = unsafe { &mut *self.inode_cache.get() };
+        if let Some(weak) = cache.get(&inode_num) {
+            if let Some(arc) = weak.upgrade() {
+                return Ok(arc);
+            }
+        }
+
+        let inode = self.read_inode(inode_num)?;
+        cache.retain(|_, weak| weak.upgrade().is_some());
+        cache.insert(inode_num, Arc::downgrade(&inode));
+        Ok(inode)
     }
 
     /// Calculate the disk sector and byte offset for a given inode number.
@@ -412,7 +438,7 @@ impl Ext2SuperBlock {
 
 impl SuperBlock for Ext2SuperBlock {
     fn root_inode(&self) -> Arc<Inode> {
-        Arc::clone(self.root.as_ref().expect("root not initialized; call leak_and_init()"))
+        Arc::clone(self.root.as_ref().expect("root not initialized; call new()"))
     }
 
     fn fs_type(&self) -> &'static str {
@@ -537,10 +563,30 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
 
     // Step 4: List root directory contents (pending Ext2DirOps::readdir)
 
-    // Step 5: Look up hello.txt via InodeOps::lookup
-    match root.iops.lookup(&root, "hello.txt") {
-        Ok(inode) => kprintln!("ext2: lookup hello.txt: ino={}, type={:?}, len={}", inode.ino, inode.file_type, inode.len),
-        Err(e) => kprintln!("ext2: lookup hello.txt: {:?}", e),
+    // Step 5: Inode cache verification.
+    // Lookups [1] and [2] held simultaneously: same address (cache hit).
+    // Lookup [3] after both drop: new address (dead Weak upgraded fails, re-reads disk).
+    // Lookup [4] of different inode: dead hello.txt entry reaped, count stays at 2.
+    let cache_len = || unsafe { (*sb.inode_cache.get()).len() };
+
+    kprintln!("ext2: cache count before lookups: {}", cache_len());
+    {
+        let inode1 = root.iops.lookup(&root, "hello.txt");
+        let inode2 = root.iops.lookup(&root, "hello.txt");
+        if let Ok(i) = &inode1 { kprintln!("ext2: lookup[1] hello.txt: addr={:#x}", Arc::as_ptr(i) as usize); }
+        if let Ok(i) = &inode2 { kprintln!("ext2: lookup[2] hello.txt: addr={:#x}", Arc::as_ptr(i) as usize); }
+        kprintln!("ext2: cache count while holding both: {}", cache_len());
     }
+    kprintln!("ext2: cache count after drop: {}", cache_len());
+    match root.iops.lookup(&root, "hello.txt") {
+        Ok(i) => kprintln!("ext2: lookup[3] hello.txt: addr={:#x}", Arc::as_ptr(&i) as usize),
+        Err(e) => kprintln!("ext2: lookup[3] hello.txt failed: {:?}", e),
+    }
+    kprintln!("ext2: cache count after lookup[3]: {}", cache_len());
+    match root.iops.lookup(&root, "lost+found") {
+        Ok(i) => kprintln!("ext2: lookup[4] lost+found: addr={:#x}", Arc::as_ptr(&i) as usize),
+        Err(e) => kprintln!("ext2: lookup[4] lost+found failed: {:?}", e),
+    }
+    kprintln!("ext2: cache count after lookup[4]: {}", cache_len());
 }
 
