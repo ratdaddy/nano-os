@@ -133,6 +133,57 @@ struct Ext2InodeData {
 }
 
 // =============================================================================
+// Inode cache
+// =============================================================================
+
+const INODE_CACHE_CAPACITY: usize = 32;
+
+/// Combined inode cache: a BTreeMap index for O(log n) lookup and a Vec LRU
+/// list that holds strong `Arc`s to keep the most recently used inodes alive.
+struct InodeLruCache {
+    index: BTreeMap<u32, Weak<Inode>>,
+    lru: Vec<Arc<Inode>>,
+}
+
+impl InodeLruCache {
+    fn new() -> Self {
+        Self { index: BTreeMap::new(), lru: Vec::new() }
+    }
+
+    /// Look up an inode, moving it to the front of the LRU on a hit.
+    ///
+    /// If the entry was evicted from the Vec but the Weak is still live (e.g. held
+    /// by an open file), it is re-inserted at the front as if it were a new entry.
+    fn get(&mut self, inode_num: u32) -> Option<Arc<Inode>> {
+        let arc = self.index.get(&inode_num)?.upgrade()?;
+        if let Some(pos) = self.lru.iter().position(|e| e.ino == inode_num as u64) {
+            let entry = self.lru.remove(pos);
+            self.lru.insert(0, entry);
+        } else {
+            self.lru.insert(0, Arc::clone(&arc));
+            if self.lru.len() > INODE_CACHE_CAPACITY {
+                self.lru.pop();
+            }
+        }
+        Some(arc)
+    }
+
+    /// Insert an inode, evicting the LRU entry if at capacity and reaping dead Weaks.
+    fn insert(&mut self, inode_num: u32, inode: Arc<Inode>) {
+        self.index.insert(inode_num, Arc::downgrade(&inode));
+        self.lru.insert(0, inode);
+        if self.lru.len() > INODE_CACHE_CAPACITY {
+            self.lru.pop();
+        }
+        self.index.retain(|_, weak| weak.upgrade().is_some());
+    }
+
+    fn len(&self) -> usize {
+        self.index.len()
+    }
+}
+
+// =============================================================================
 // I/O buffer
 // =============================================================================
 
@@ -218,7 +269,7 @@ pub struct Ext2SuperBlock {
     volume_label: Option<String>,
     groups: Vec<Ext2GroupDesc>,
     root: Option<Arc<Inode>>,
-    inode_cache: UnsafeCell<BTreeMap<u32, Weak<Inode>>>,
+    inode_cache: UnsafeCell<InodeLruCache>,
 }
 
 // Safety: ext2 is only accessed from a single thread; UnsafeCell is used in place
@@ -243,7 +294,7 @@ impl Ext2SuperBlock {
             volume_label: None,
             groups: Vec::new(),
             root: None,
-            inode_cache: UnsafeCell::new(BTreeMap::new()),
+            inode_cache: UnsafeCell::new(InodeLruCache::new()),
         });
 
         sb_box.read_superblock_data()?;
@@ -317,15 +368,11 @@ impl Ext2SuperBlock {
     /// On a miss, reads from disk and stores a `Weak` in the cache.
     fn get_or_read_inode(&'static self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
         let cache = unsafe { &mut *self.inode_cache.get() };
-        if let Some(weak) = cache.get(&inode_num) {
-            if let Some(arc) = weak.upgrade() {
-                return Ok(arc);
-            }
+        if let Some(arc) = cache.get(inode_num) {
+            return Ok(arc);
         }
-
         let inode = self.read_inode(inode_num)?;
-        cache.retain(|_, weak| weak.upgrade().is_some());
-        cache.insert(inode_num, Arc::downgrade(&inode));
+        cache.insert(inode_num, Arc::clone(&inode));
         Ok(inode)
     }
 
@@ -565,8 +612,9 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
 
     // Step 5: Inode cache verification.
     // Lookups [1] and [2] held simultaneously: same address (cache hit).
-    // Lookup [3] after both drop: new address (dead Weak upgraded fails, re-reads disk).
-    // Lookup [4] of different inode: dead hello.txt entry reaped, count stays at 2.
+    // Lookup [3] after caller drops: same address — LRU Vec still holds strong Arc.
+    // Lookup [4] of different inode: miss, inserts lost+found; count grows to 3
+    //   (root + hello.txt + lost+found all pinned in LRU Vec).
     let cache_len = || unsafe { (*sb.inode_cache.get()).len() };
 
     kprintln!("ext2: cache count before lookups: {}", cache_len());
