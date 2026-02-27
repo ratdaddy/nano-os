@@ -41,6 +41,7 @@ CMD set -e && \
     echo "Hello from ext2 filesystem!" > /mnt/ext2/hello.txt && \
     mkdir -p /mnt/ext2/subdir && \
     echo "File in subdirectory" > /mnt/ext2/subdir/test.txt && \
+    mknod /mnt/ext2/console c 5 1 && \
     umount /mnt/ext2 && \
     \
     # Clean up second loop device
@@ -59,4 +60,5 @@ CMD set -e && \
     echo "  Partition 1: FAT32, 64 MiB, label KERNEL" && \
     echo "  Partition 2: ext2, ~256 MiB, label BOOT" && \
     echo "    - /hello.txt" && \
-    echo "    - /subdir/test.txt"
+    echo "    - /subdir/test.txt" && \
+    echo "    - /console (c 5,1)"

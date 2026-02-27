@@ -293,7 +293,7 @@ unsafe fn check_aligned_fit(
 
     let mut aligned = align_up(start as usize, align);
 
-    while align_up(aligned + alloc_size, 8) <= end {
+    while align_up(aligned + alloc_size, 8) + BLOCK_HEADER_SIZE <= end {
         let header = aligned - BLOCK_HEADER_SIZE;
         let padding = header - block as usize;
 

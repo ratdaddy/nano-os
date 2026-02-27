@@ -22,6 +22,7 @@ CMD set -e && \
     echo "Hello from ext2 filesystem on LicheeRV Nano!" > /mnt/ext2/hello.txt && \
     mkdir -p /mnt/ext2/subdir && \
     echo "File in subdirectory" > /mnt/ext2/subdir/test.txt && \
+    mknod /mnt/ext2/console c 5 1 && \
     \
     # Unmount
     umount /mnt/ext2 && \
@@ -29,4 +30,5 @@ CMD set -e && \
     echo "Created $IMG ($(stat -c%s $IMG) bytes)" && \
     echo "  Filesystem: ext2, label BOOT" && \
     echo "    - /hello.txt" && \
-    echo "    - /subdir/test.txt"
+    echo "    - /subdir/test.txt" && \
+    echo "    - /console (c 5,1)"

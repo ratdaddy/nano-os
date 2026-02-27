@@ -478,6 +478,38 @@ fn test_alignment_with_heap_growth_create_new_block() {
     }
 }
 
+/// Regression test for split_block overflow when an aligned allocation fits
+/// the check_aligned_fit condition exactly but leaves no room for the trailing
+/// block header.
+///
+/// Setup: allocating 3952 bytes (8-aligned) leaves a 112-byte tail free block
+/// whose alloc area starts at H+3984 (≡ 16 mod 64). A subsequent 64-byte /
+/// 64-aligned allocation finds the aligned address at H+4032, so:
+///
+///   check_aligned_fit passes:  align_up(H+4032+64, 8) = H+4096 <= end (H+4096)
+///   split_block excess:        112 - (32+16) - (64+16) = -16  ← overflow
+///
+/// After the fix, check_aligned_fit rejects this slot (needs BLOCK_HEADER_SIZE
+/// more room), the allocator grows the heap, and the allocation succeeds.
+#[test_case]
+fn test_aligned_alloc_no_room_for_trailing_header() {
+    unsafe {
+        println!("Testing aligned allocation with no room for trailing block header...");
+        setup_allocator();
+
+        let _setup = TEST_ALLOCATOR.alloc(Layout::from_size_align(3952, 8).unwrap());
+        assert!(!_setup.is_null(), "Setup allocation failed");
+
+        let layout = Layout::from_size_align(64, 64).unwrap();
+        let ptr = TEST_ALLOCATOR.alloc(layout);
+
+        assert!(!ptr.is_null(), "Aligned allocation failed");
+        assert_eq!(ptr as usize % 64, 0, "Allocation not aligned to 64 bytes");
+
+        assert_heap_invariants();
+    }
+}
+
 unsafe fn setup_allocator() {
     TEST_ALLOCATOR.init(core::ptr::addr_of!(TEST_HEAP) as usize, TEST_HEAP_SIZE / 2);
 }

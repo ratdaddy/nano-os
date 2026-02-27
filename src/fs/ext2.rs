@@ -2,6 +2,7 @@
 //!
 //! Read-only ext2 filesystem driver.
 
+use alloc::alloc::{alloc, Layout};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -13,7 +14,7 @@ use core::str::from_utf8;
 use crate::block::volume::BlockVolume;
 use crate::bytes::ReadIntLe;
 use crate::drivers::{BlockError, BLOCK_SIZE};
-use crate::file::{Error, FileOps, FileType, Inode, InodeOps, SuperBlock};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
 use crate::vfs::FileSystem;
 
 // =============================================================================
@@ -54,73 +55,42 @@ static EXT2_FILE_OPS: Ext2FileOps = Ext2FileOps;
 
 impl InodeOps for Ext2InodeOps {
     fn lookup(&self, inode: &Arc<Inode>, name: &str) -> Result<Arc<Inode>, Error> {
-        let data = inode.fs_data.downcast_ref::<Ext2InodeData>().unwrap();
-        let sb = data.sb;
-        let block_size = sb.block_size();
-
         if inode.file_type != FileType::Directory {
             return Err(Error::NotADirectory);
         }
 
-        let dir_size = inode.len as u32;
-        let dir_blocks = data.blocks;
+        let fs_data = inode.fs_data.downcast_ref::<Ext2InodeData>().unwrap();
 
-        // Scan directory blocks for the named entry
-        let mut bytes_read = 0u32;
-        for block_ptr in dir_blocks.iter().take(NDIR_BLOCKS) {
-            if *block_ptr == 0 || bytes_read >= dir_size {
-                break;
-            }
-
-            let block_sector = (*block_ptr as u64 * block_size as u64) / BLOCK_SIZE as u64;
-
-            // Scoped so buf is dropped before we call read_inode
-            let found_ino = {
-                let buf = unsafe {
-                    let buf = &raw mut IO_BUFFER.0;
-                    let buf = &mut *buf;
-                    sb.volume.as_ref().read_blocks(block_sector, buf).map_err(|_| Error::NotFound)?;
-                    buf as &[u8]
-                };
-
-                let mut found = None;
-                let mut offset = 0;
-                while offset < block_size as usize && bytes_read < dir_size {
-                    if offset + DIR_ENTRY_NAME_OFFSET > buf.len() {
-                        break;
-                    }
-                    let entry_inode = buf.read_u32_le(offset + DIR_ENTRY_INODE_OFFSET);
-                    let rec_len = buf.read_u16_le(offset + DIR_ENTRY_REC_LEN_OFFSET);
-                    let name_len = buf[offset + DIR_ENTRY_NAME_LEN_OFFSET];
-                    if rec_len == 0 {
-                        break;
-                    }
-                    if entry_inode != 0 && name_len > 0 {
-                        let name_start = offset + DIR_ENTRY_NAME_OFFSET;
-                        let name_end = name_start + name_len as usize;
-                        if name_end <= buf.len() {
-                            if let Ok(entry_name) = from_utf8(&buf[name_start..name_end]) {
-                                if entry_name == name {
-                                    found = Some(entry_inode);
-                                }
-                            }
-                        }
-                    }
-                    offset += rec_len as usize;
-                    bytes_read += rec_len as u32;
-                }
-                found
-            };
-
-            if let Some(ino) = found_ino {
-                return sb.get_or_read_inode(ino).map_err(|_| Error::NotFound);
+        for entry in DirEntryIter::new(inode) {
+            let (ino, entry_name, _) = entry.map_err(|_| Error::NotFound)?;
+            if entry_name == name {
+                return fs_data.sb.get_or_read_inode(ino).map_err(|_| Error::NotFound);
             }
         }
 
         Err(Error::NotFound)
     }
 }
-impl FileOps for Ext2FileOps {}
+impl FileOps for Ext2FileOps {
+    fn readdir(&self, file: &mut File) -> Result<Vec<DirEntry>, Error> {
+        if file.inode.file_type != FileType::Directory {
+            return Err(Error::NotADirectory);
+        }
+
+        DirEntryIter::new(&file.inode)
+            .map(|r| {
+                let (_, name, ft_byte) = r.map_err(|_| Error::InvalidInput)?;
+                let file_type = match ft_byte {
+                    EXT2_FT_REG_FILE => FileType::RegularFile,
+                    EXT2_FT_DIR      => FileType::Directory,
+                    EXT2_FT_CHRDEV   => FileType::CharDevice,
+                    _                => FileType::RegularFile,
+                };
+                Ok(DirEntry { name, file_type })
+            })
+            .collect()
+    }
+}
 
 // =============================================================================
 // Inode data
@@ -184,19 +154,138 @@ impl InodeLruCache {
 }
 
 // =============================================================================
+// Directory iterator
+// =============================================================================
+
+/// An iterator over raw directory entries in an ext2 directory inode.
+///
+/// Reads direct data blocks one at a time, yielding `(inode_num, name, file_type_byte)`
+/// for each valid entry. Deleted entries (inode_num == 0) are skipped automatically.
+/// Disk I/O errors are surfaced as `Err(BlockError)` rather than panicking.
+///
+/// Construction is infallible; the first block is loaded lazily on the initial `next()` call.
+pub struct DirEntryIter {
+    sb: &'static Ext2SuperBlock,
+    blocks: [u32; 15],
+    dir_size: u32,
+    buf: Box<Ext2BlockBuffer>,
+    block_size: usize,
+    block_idx: usize,    // index into blocks[] of the currently loaded (or next to load) block
+    block_offset: usize, // byte offset within buf; initialized to block_size as a "not loaded" sentinel
+    bytes_read: u32,
+}
+
+impl DirEntryIter {
+    /// Create an iterator over the directory entries of `inode`.
+    ///
+    /// `inode` must be a directory backed by `Ext2InodeData`; panics otherwise.
+    pub fn new(inode: &Inode) -> Self {
+        let fs_data = inode.fs_data.downcast_ref::<Ext2InodeData>().unwrap();
+        let block_size = fs_data.sb.block_size() as usize;
+        Self {
+            sb: fs_data.sb,
+            blocks: fs_data.blocks,
+            dir_size: inode.len as u32,
+            // Allocate directly on the heap — avoid creating a 4096-byte
+            // aligned local on the stack, which can overflow the 32KB thread stack.
+            buf: {
+                let layout = Layout::new::<Ext2BlockBuffer>();
+                let ptr = unsafe { alloc(layout) };
+                assert!(!ptr.is_null(), "Failed to allocate Ext2BlockBuffer");
+                unsafe { Box::from_raw(ptr as *mut Ext2BlockBuffer) }
+            },
+            block_size,
+            block_idx: 0,
+            block_offset: block_size, // sentinel: triggers first block load on next()
+            bytes_read: 0,
+        }
+    }
+}
+
+impl Iterator for DirEntryIter {
+    type Item = Result<(u32, String, u8), BlockError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // Load the next block when the current one is exhausted (or on first call).
+            if self.block_offset >= self.block_size {
+                if self.block_idx >= NDIR_BLOCKS || self.bytes_read >= self.dir_size {
+                    return None;
+                }
+                let block_ptr = self.blocks[self.block_idx];
+                if block_ptr == 0 {
+                    return None;
+                }
+                let sector = (block_ptr as u64 * self.block_size as u64) / BLOCK_SIZE as u64;
+                if let Err(e) = self.sb.volume.as_ref().read_blocks(sector, &mut self.buf.0) {
+                    return Some(Err(e));
+                }
+                self.block_offset = 0;
+            }
+
+            let offset = self.block_offset;
+
+            if offset + DIR_ENTRY_NAME_OFFSET > self.block_size {
+                // Misaligned — block is likely corrupt; skip to the next one.
+                self.block_idx   += 1;
+                self.block_offset = self.block_size;
+                continue;
+            }
+
+            let ino      = self.buf.0.read_u32_le(offset + DIR_ENTRY_INODE_OFFSET);
+            let rec_len  = self.buf.0.read_u16_le(offset + DIR_ENTRY_REC_LEN_OFFSET) as usize;
+            let name_len = self.buf.0[offset + DIR_ENTRY_NAME_LEN_OFFSET] as usize;
+            let ft_byte  = self.buf.0[offset + DIR_ENTRY_FILE_TYPE_OFFSET];
+
+            if rec_len == 0 {
+                // rec_len == 0 would loop forever; treat as end of block.
+                self.block_idx   += 1;
+                self.block_offset = self.block_size;
+                continue;
+            }
+
+            self.block_offset += rec_len;
+            self.bytes_read   += rec_len as u32;
+
+            // If we've reached either a block boundary or the end of the directory
+            // data, schedule the next block load (or signal exhaustion at the top).
+            if self.block_offset >= self.block_size || self.bytes_read >= self.dir_size {
+                self.block_idx   += 1;
+                self.block_offset = self.block_size;
+            }
+
+            if ino == 0 || name_len == 0 {
+                continue; // deleted or empty entry
+            }
+
+            let name_start = offset + DIR_ENTRY_NAME_OFFSET;
+            let name_end   = name_start + name_len;
+            if name_end > self.block_size {
+                continue; // corrupt name length
+            }
+
+            match from_utf8(&self.buf.0[name_start..name_end]) {
+                Ok(name) => return Some(Ok((ino, String::from(name), ft_byte))),
+                Err(_)   => continue, // non-UTF-8 name; skip
+            }
+        }
+    }
+}
+
+// =============================================================================
 // I/O buffer
 // =============================================================================
 
-// Static buffer for ext2 block I/O (4KB) - must be page-aligned for DMA
+// Page-aligned buffer for ext2 block I/O (4KB).
 //
-// Page alignment (4096) ensures buffer doesn't cross physical page boundaries.
-// Used for reading superblock, group descriptors, inodes, and directory entries.
+// align(4096) ensures the buffer never crosses a physical page boundary, which
+// is required for DMA since virtual-to-physical mappings are page-granular.
+// Used as a static (IO_BUFFER) for superblock/inode reads and as a heap-allocated
+// Box (DirEntryIter::buf) for directory block reads.
 //
-// Block size strategy:
-// - Superblock: Always 1024 bytes (ext2 spec), so we read exactly 1KB
-// - Other structures: Read full 4KB even if filesystem uses smaller blocks (1KB/2KB)
-//   Modern ext2 filesystems use 4KB blocks anyway. For smaller block sizes,
-//   this reads more than needed but still works correctly and simplifies the code.
+// Block size strategy: always read a full 4KB even if the filesystem uses smaller
+// blocks (1KB/2KB). The extra data is ignored; this simplifies the code and works
+// correctly because all valid block sizes divide 4096 evenly.
 #[repr(C, align(4096))]
 struct Ext2BlockBuffer([u8; IO_BUFFER_SIZE]);
 
@@ -251,9 +340,13 @@ const INODE_BLOCKS_OFFSET: usize = 40;
 const DIR_ENTRY_INODE_OFFSET: usize = 0;
 const DIR_ENTRY_REC_LEN_OFFSET: usize = 4;
 const DIR_ENTRY_NAME_LEN_OFFSET: usize = 6;
-#[allow(dead_code)]
 const DIR_ENTRY_FILE_TYPE_OFFSET: usize = 7;
 const DIR_ENTRY_NAME_OFFSET: usize = 8;
+
+// Directory entry file type values
+const EXT2_FT_REG_FILE: u8 = 1;
+const EXT2_FT_DIR: u8 = 2;
+const EXT2_FT_CHRDEV: u8 = 3;
 
 /// ext2 superblock structure (per-mount instance)
 ///
@@ -501,84 +594,6 @@ pub struct Ext2GroupDesc {
     pub inode_table: u32,
 }
 
-/// Parse directory entries from a directory inode's data blocks.
-///
-/// Returns a list of (inode_num, name) pairs for all entries in the directory.
-///
-/// # Arguments
-/// * `volume` - The volume to read from
-/// * `sb` - The superblock (for block size)
-/// * `mode` - The inode mode field (must be a directory)
-/// * `size` - The directory size in bytes
-/// * `blocks` - The inode's direct block pointers
-///
-/// # Returns
-/// Vector of (inode_number, filename) pairs
-#[allow(dead_code)]
-pub fn read_dir_entries(
-    volume: &dyn BlockVolume,
-    sb: &Ext2SuperBlock,
-    mode: u16,
-    size: u32,
-    blocks: &[u32; 15],
-) -> Result<Vec<(u32, String)>, BlockError> {
-
-    if (mode & S_IFMT) != S_IFDIR {
-        return Err(BlockError::InvalidInput);
-    }
-
-    let block_size = sb.block_size();
-    let mut entries = Vec::new();
-    let mut bytes_read = 0u32;
-
-    // Only direct blocks supported for now
-    for block_ptr in blocks.iter().take(NDIR_BLOCKS) {
-        if *block_ptr == 0 || bytes_read >= size {
-            break;
-        }
-
-        let block_byte_offset = *block_ptr as u64 * block_size as u64;
-        let sector = block_byte_offset / BLOCK_SIZE as u64;
-
-        let block_buf = unsafe {
-            let buf = &raw mut IO_BUFFER.0;
-            let buf = &mut *buf;
-            volume.read_blocks(sector, buf)?;
-            buf as &[u8]
-        };
-
-        let mut offset = 0;
-        while offset < block_size as usize && bytes_read < size {
-            if offset + DIR_ENTRY_NAME_OFFSET > block_buf.len() {
-                break;
-            }
-
-            let entry_inode = block_buf.read_u32_le(offset + DIR_ENTRY_INODE_OFFSET);
-            let rec_len = block_buf.read_u16_le(offset + DIR_ENTRY_REC_LEN_OFFSET);
-            let name_len = block_buf[offset + DIR_ENTRY_NAME_LEN_OFFSET];
-
-            if rec_len == 0 {
-                break;
-            }
-
-            if entry_inode != 0 && name_len > 0 {
-                let name_start = offset + DIR_ENTRY_NAME_OFFSET;
-                let name_end = name_start + name_len as usize;
-
-                if name_end <= block_buf.len() {
-                    if let Ok(name) = from_utf8(&block_buf[name_start..name_end]) {
-                        entries.push((entry_inode, String::from(name)));
-                    }
-                }
-            }
-
-            offset += rec_len as usize;
-            bytes_read += rec_len as u32;
-        }
-    }
-
-    Ok(entries)
-}
 
 /// Inspect an ext2 filesystem and display its structure
 ///
@@ -608,7 +623,22 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
     let root = sb.root_inode();
     kprintln!("ext2: root inode: ino={}, type={:?}, len={}", root.ino, root.file_type, root.len);
 
-    // Step 4: List root directory contents (pending Ext2DirOps::readdir)
+    // Step 4: List root directory contents via readdir
+    let mut root_file = EXT2_FILE_OPS.open(Arc::clone(&root)).unwrap();
+    match EXT2_FILE_OPS.readdir(&mut root_file) {
+        Ok(entries) => {
+            kprintln!("ext2: root directory ({} entries):", entries.len());
+            for entry in &entries {
+                let type_char = match entry.file_type {
+                    FileType::Directory   => 'd',
+                    FileType::RegularFile => 'f',
+                    FileType::CharDevice  => 'c',
+                };
+                kprintln!("  {} {}", type_char, entry.name);
+            }
+        }
+        Err(e) => kprintln!("ext2: readdir failed: {:?}", e),
+    }
 
     // Step 5: Inode cache verification.
     // Lookups [1] and [2] held simultaneously: same address (cache hit).
