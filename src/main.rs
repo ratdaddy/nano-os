@@ -30,7 +30,7 @@ mod cpu_info;
 mod demos;
 mod dtb;
 mod file;
-mod chardev;
+mod dev;
 mod fs;
 mod vfs;
 mod kernel_allocator;

@@ -1,10 +1,12 @@
 //! Synthetic /proc filesystem.
 
+use core::fmt::Write;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::dev;
 use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
 use crate::vfs::{self, FileSystem};
 
@@ -22,14 +24,23 @@ enum ProcContent {
     Dynamic(fn() -> String),
 }
 
-static ENTRIES: [ProcEntry; 3] = [
+static ENTRIES: [ProcEntry; 4] = [
+    ProcEntry { name: "devices",     content: ProcContent::Dynamic(gen_devices) },
     ProcEntry { name: "filesystems", content: ProcContent::Dynamic(gen_filesystems) },
     ProcEntry { name: "mounts",      content: ProcContent::Dynamic(gen_mounts) },
     ProcEntry { name: "version",     content: ProcContent::Static(b"Nano OS 0.1.0 (riscv64)\n") },
 ];
 
+fn gen_devices() -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "Character devices:");
+    dev::chrdev_for_each(|major, minor, name| {
+        let _ = writeln!(out, "{:3} {} ({}:{})", major, name, major, minor);
+    });
+    out
+}
+
 fn gen_filesystems() -> String {
-    use core::fmt::Write;
     let mut out = String::new();
     for fs in vfs::filesystems() {
         let prefix = if fs.requires_device() { "\t" } else { "nodev\t" };
@@ -39,7 +50,6 @@ fn gen_filesystems() -> String {
 }
 
 fn gen_mounts() -> String {
-    use core::fmt::Write;
     let mut out = String::new();
     for m in vfs::mounts() {
         let _ = writeln!(out, "{} {} {}", m.fs_type, m.mountpoint, m.id);
@@ -216,11 +226,12 @@ mod tests {
     fn test_lookup_inos() {
         println!("Testing procfs lookup assigns ino = entry_index + 2...");
 
-        // ENTRIES order: [0]="filesystems", [1]="mounts", [2]="version"
+        // ENTRIES order: [0]="devices", [1]="filesystems", [2]="mounts", [3]="version"
         let root = make_root();
-        assert_eq!(root.iops.lookup(&root, "filesystems").unwrap().ino, 2);
-        assert_eq!(root.iops.lookup(&root, "mounts").unwrap().ino,      3);
-        assert_eq!(root.iops.lookup(&root, "version").unwrap().ino,     4);
+        assert_eq!(root.iops.lookup(&root, "devices").unwrap().ino,     2);
+        assert_eq!(root.iops.lookup(&root, "filesystems").unwrap().ino, 3);
+        assert_eq!(root.iops.lookup(&root, "mounts").unwrap().ino,      4);
+        assert_eq!(root.iops.lookup(&root, "version").unwrap().ino,     5);
     }
 
     // -- lookup tests --
@@ -263,13 +274,15 @@ mod tests {
         let mut file = root.fops.open(Arc::clone(&root)).unwrap();
         let entries = root.fops.readdir(&mut file).unwrap();
 
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].name, "filesystems");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].name, "devices");
         assert_eq!(entries[0].file_type, FileType::RegularFile);
-        assert_eq!(entries[1].name, "mounts");
+        assert_eq!(entries[1].name, "filesystems");
         assert_eq!(entries[1].file_type, FileType::RegularFile);
-        assert_eq!(entries[2].name, "version");
+        assert_eq!(entries[2].name, "mounts");
         assert_eq!(entries[2].file_type, FileType::RegularFile);
+        assert_eq!(entries[3].name, "version");
+        assert_eq!(entries[3].file_type, FileType::RegularFile);
     }
 
     // -- open + read tests --

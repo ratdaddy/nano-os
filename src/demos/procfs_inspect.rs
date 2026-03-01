@@ -67,4 +67,18 @@ pub fn inspect_procfs() {
         }
         Err(e) => println!("  Open error: {:?}", e),
     }
+    println!();
+
+    println!("/proc/devices:");
+    match vfs::vfs_open("/proc/devices") {
+        Ok(mut file) => {
+            let mut contents = String::new();
+            match vfs::vfs_read_to_string(&mut file, &mut contents) {
+                Ok(()) if contents.is_empty() => println!("  (empty)"),
+                Ok(()) => print!("{}", contents),
+                Err(e) => println!("  Read error: {:?}", e),
+            }
+        }
+        Err(e) => println!("  Open error: {:?}", e),
+    }
 }

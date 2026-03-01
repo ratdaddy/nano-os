@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crate::chardev;
+
+use crate::dev;
+use crate::drivers::plic;
 use crate::dtb;
 use crate::file::{self, File, FileOps};
 use crate::kthread::uart_writer;
@@ -53,7 +55,7 @@ static UART_FILE_OPS: UartFileOps = UartFileOps;
 /// Register the UART as a character device (major 5, minor 1).
 /// Must be called after VFS is initialized.
 pub fn register_chrdev() {
-    chardev::chrdev_register(5, 1, &UART_FILE_OPS);
+    dev::chrdev_register(5, 1, "/dev/console", &UART_FILE_OPS);
 }
 
 /// Initialize the UART driver. Must be called after dtb::init() and plic::init().
@@ -81,7 +83,7 @@ pub fn init() {
     }
 
     // Register UART IRQ handler with PLIC
-    crate::drivers::plic::register_irq(irq, handle_irq);
+    plic::register_irq(irq, handle_irq);
 }
 
 /// Get a UART handle for performing operations.

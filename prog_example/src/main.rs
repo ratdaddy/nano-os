@@ -12,5 +12,9 @@ fn main() {
     println!("**Reading /proc/mounts");
     let mounts = fs::read_to_string("/proc/mounts").expect("Failed to read /proc/mounts");
     println!("{mounts}");
+
+    println!("**Reading /proc/devices");
+    let devices = fs::read_to_string("/proc/devices").expect("Failed to read /proc/devices");
+    println!("{devices}");
     loop {}
 }

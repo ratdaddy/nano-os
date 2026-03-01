@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::dev;
 use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom, SuperBlock, inode_id};
 
 // =============================================================================
@@ -155,7 +156,7 @@ pub fn vfs_lookup(path: &str) -> Result<Arc<Inode>, Error> {
 pub fn vfs_open(path: &str) -> Result<File, Error> {
     let inode = vfs_lookup(path)?;
     if inode.file_type == FileType::CharDevice {
-        return crate::chardev::chrdev_open(inode);
+        return dev::chrdev_open(inode);
     }
     let fops = inode.fops;
     fops.open(inode)

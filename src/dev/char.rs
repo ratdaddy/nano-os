@@ -5,16 +5,33 @@ use alloc::sync::Arc;
 
 use crate::file::{Error, File, FileOps, Inode};
 
-static mut CHARDEVS: Option<BTreeMap<(u32, u32), &'static dyn FileOps>> = None;
+struct CharDevEntry {
+    name: &'static str,
+    fops: &'static dyn FileOps,
+}
+
+static mut CHARDEVS: Option<BTreeMap<(u32, u32), CharDevEntry>> = None;
 
 /// Register a character device driver for the given major/minor.
-pub fn chrdev_register(major: u32, minor: u32, fops: &'static dyn FileOps) {
+pub fn chrdev_register(major: u32, minor: u32, name: &'static str, fops: &'static dyn FileOps) {
     unsafe {
         let chardevs = core::ptr::addr_of_mut!(CHARDEVS);
         if (*chardevs).is_none() {
             *chardevs = Some(BTreeMap::new());
         }
-        (*chardevs).as_mut().unwrap().insert((major, minor), fops);
+        (*chardevs).as_mut().unwrap().insert((major, minor), CharDevEntry { name, fops });
+    }
+}
+
+/// Call `f` for each registered character device: (major, minor, name).
+pub fn chrdev_for_each(mut f: impl FnMut(u32, u32, &'static str)) {
+    unsafe {
+        let chardevs = core::ptr::addr_of!(CHARDEVS);
+        if let Some(devs) = (*chardevs).as_ref() {
+            for (&(major, minor), entry) in devs {
+                f(major, minor, entry.name);
+            }
+        }
     }
 }
 
@@ -25,7 +42,7 @@ pub fn chrdev_open(inode: Arc<Inode>) -> Result<File, Error> {
         let chardevs = core::ptr::addr_of!(CHARDEVS);
         (*chardevs).as_ref()
             .and_then(|devs| devs.get(&(major, minor)))
-            .copied()
+            .map(|e| e.fops)
             .ok_or(Error::NotFound)?
     };
     Ok(File::new(fops, inode))
@@ -86,7 +103,7 @@ mod tests {
     fn test_chrdev_register_and_open() {
         println!("Testing chrdev_register and chrdev_open...");
 
-        chrdev_register(5, 1, &MOCK_DEV_OPS);
+        chrdev_register(5, 1, "mock_dev", &MOCK_DEV_OPS);
 
         let inode = mock_chardev_inode(5, 1);
         let mut file = chrdev_open(inode).unwrap();
