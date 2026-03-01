@@ -7,6 +7,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::str::from_utf8;
 
+use crate::block::cache::CachedVolume;
 use crate::block::disk::BlockDisk;
 use crate::block::partition;
 use crate::block::volume::{BlockVolume, PartitionVolume, WholeDiskVolume};
@@ -215,7 +216,8 @@ fn init_thread() {
 
     // Inspect ext2 filesystem on partition 2 (index 1)
     if volumes.len() >= 2 {
-        ext2::inspect_ext2(Arc::new(volumes[1].clone()));
+        let volume = CachedVolume::new(Arc::new(volumes[1].clone()));
+        ext2::inspect_ext2(Arc::new(volume));
     }
 
     kprintln!("\nBlock subsystem initialization complete");

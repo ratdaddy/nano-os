@@ -2,6 +2,7 @@
 //!
 //! Provides device-agnostic block I/O interface with request/completion model.
 
+pub mod cache;
 pub mod disk;
 pub mod init;
 pub mod partition;

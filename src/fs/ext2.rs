@@ -2,16 +2,15 @@
 //!
 //! Read-only ext2 filesystem driver.
 
-use alloc::alloc::{alloc, Layout};
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::str::from_utf8;
 
-use crate::block::volume::BlockVolume;
+use crate::block::volume::{BlockBuf, BlockVolume, CACHE_BLOCK_SIZE};
 use crate::bytes::ReadIntLe;
 use crate::drivers::{BlockError, BLOCK_SIZE};
 use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
@@ -112,39 +111,39 @@ const INODE_CACHE_CAPACITY: usize = 32;
 /// list that holds strong `Arc`s to keep the most recently used inodes alive.
 struct InodeLruCache {
     index: BTreeMap<u32, Weak<Inode>>,
-    lru: Vec<Arc<Inode>>,
+    lru: VecDeque<Arc<Inode>>,
 }
 
 impl InodeLruCache {
     fn new() -> Self {
-        Self { index: BTreeMap::new(), lru: Vec::new() }
+        Self { index: BTreeMap::new(), lru: VecDeque::new() }
     }
 
     /// Look up an inode, moving it to the front of the LRU on a hit.
     ///
-    /// If the entry was evicted from the Vec but the Weak is still live (e.g. held
-    /// by an open file), it is re-inserted at the front as if it were a new entry.
+    /// If the entry was evicted from the LRU but the Weak is still live (e.g.
+    /// held by an open file), it is re-inserted at the front as if it were a
+    /// new entry.
     fn get(&mut self, inode_num: u32) -> Option<Arc<Inode>> {
         let arc = self.index.get(&inode_num)?.upgrade()?;
         if let Some(pos) = self.lru.iter().position(|e| e.ino == inode_num as u64) {
-            let entry = self.lru.remove(pos);
-            self.lru.insert(0, entry);
+            self.lru.remove(pos);
         } else {
-            self.lru.insert(0, Arc::clone(&arc));
-            if self.lru.len() > INODE_CACHE_CAPACITY {
-                self.lru.pop();
+            if self.lru.len() >= INODE_CACHE_CAPACITY {
+                self.lru.pop_back();
             }
         }
+        self.lru.push_front(Arc::clone(&arc));
         Some(arc)
     }
 
     /// Insert an inode, evicting the LRU entry if at capacity and reaping dead Weaks.
     fn insert(&mut self, inode_num: u32, inode: Arc<Inode>) {
         self.index.insert(inode_num, Arc::downgrade(&inode));
-        self.lru.insert(0, inode);
-        if self.lru.len() > INODE_CACHE_CAPACITY {
-            self.lru.pop();
+        if self.lru.len() >= INODE_CACHE_CAPACITY {
+            self.lru.pop_back();
         }
+        self.lru.push_front(inode);
         self.index.retain(|_, weak| weak.upgrade().is_some());
     }
 
@@ -168,7 +167,7 @@ pub struct DirEntryIter {
     sb: &'static Ext2SuperBlock,
     blocks: [u32; 15],
     dir_size: u32,
-    buf: Box<Ext2BlockBuffer>,
+    buf: Option<Arc<BlockBuf>>,
     block_size: usize,
     block_idx: usize,    // index into blocks[] of the currently loaded (or next to load) block
     block_offset: usize, // byte offset within buf; initialized to block_size as a "not loaded" sentinel
@@ -186,14 +185,7 @@ impl DirEntryIter {
             sb: fs_data.sb,
             blocks: fs_data.blocks,
             dir_size: inode.len as u32,
-            // Allocate directly on the heap — avoid creating a 4096-byte
-            // aligned local on the stack, which can overflow the 32KB thread stack.
-            buf: {
-                let layout = Layout::new::<Ext2BlockBuffer>();
-                let ptr = unsafe { alloc(layout) };
-                assert!(!ptr.is_null(), "Failed to allocate Ext2BlockBuffer");
-                unsafe { Box::from_raw(ptr as *mut Ext2BlockBuffer) }
-            },
+            buf: None,
             block_size,
             block_idx: 0,
             block_offset: block_size, // sentinel: triggers first block load on next()
@@ -217,12 +209,14 @@ impl Iterator for DirEntryIter {
                     return None;
                 }
                 let sector = (block_ptr as u64 * self.block_size as u64) / BLOCK_SIZE as u64;
-                if let Err(e) = self.sb.volume.as_ref().read_blocks(sector, &mut self.buf.0) {
-                    return Some(Err(e));
+                match self.sb.volume.as_ref().get_block(sector) {
+                    Ok(block) => self.buf = Some(block),
+                    Err(e)    => return Some(Err(e)),
                 }
                 self.block_offset = 0;
             }
 
+            let buf    = self.buf.as_deref().unwrap();
             let offset = self.block_offset;
 
             if offset + DIR_ENTRY_NAME_OFFSET > self.block_size {
@@ -232,10 +226,10 @@ impl Iterator for DirEntryIter {
                 continue;
             }
 
-            let ino      = self.buf.0.read_u32_le(offset + DIR_ENTRY_INODE_OFFSET);
-            let rec_len  = self.buf.0.read_u16_le(offset + DIR_ENTRY_REC_LEN_OFFSET) as usize;
-            let name_len = self.buf.0[offset + DIR_ENTRY_NAME_LEN_OFFSET] as usize;
-            let ft_byte  = self.buf.0[offset + DIR_ENTRY_FILE_TYPE_OFFSET];
+            let ino      = buf.read_u32_le(offset + DIR_ENTRY_INODE_OFFSET);
+            let rec_len  = buf.read_u16_le(offset + DIR_ENTRY_REC_LEN_OFFSET) as usize;
+            let name_len = buf[offset + DIR_ENTRY_NAME_LEN_OFFSET] as usize;
+            let ft_byte  = buf[offset + DIR_ENTRY_FILE_TYPE_OFFSET];
 
             if rec_len == 0 {
                 // rec_len == 0 would loop forever; treat as end of block.
@@ -264,7 +258,7 @@ impl Iterator for DirEntryIter {
                 continue; // corrupt name length
             }
 
-            match from_utf8(&self.buf.0[name_start..name_end]) {
+            match from_utf8(&buf[name_start..name_end]) {
                 Ok(name) => return Some(Ok((ino, String::from(name), ft_byte))),
                 Err(_)   => continue, // non-UTF-8 name; skip
             }
@@ -272,29 +266,8 @@ impl Iterator for DirEntryIter {
     }
 }
 
-// =============================================================================
-// I/O buffer
-// =============================================================================
-
-// Page-aligned buffer for ext2 block I/O (4KB).
-//
-// align(4096) ensures the buffer never crosses a physical page boundary, which
-// is required for DMA since virtual-to-physical mappings are page-granular.
-// Used as a static (IO_BUFFER) for superblock/inode reads and as a heap-allocated
-// Box (DirEntryIter::buf) for directory block reads.
-//
-// Block size strategy: always read a full 4KB even if the filesystem uses smaller
-// blocks (1KB/2KB). The extra data is ignored; this simplifies the code and works
-// correctly because all valid block sizes divide 4096 evenly.
-#[repr(C, align(4096))]
-struct Ext2BlockBuffer([u8; IO_BUFFER_SIZE]);
-
-static mut IO_BUFFER: Ext2BlockBuffer = Ext2BlockBuffer([0; IO_BUFFER_SIZE]);
-
 // Superblock constants
 const SUPERBLOCK_OFFSET: u64 = 1024;
-#[allow(dead_code)]
-const SUPERBLOCK_SIZE: usize = 1024;
 const SUPERBLOCK_SECTOR: u64 = SUPERBLOCK_OFFSET / BLOCK_SIZE as u64;
 const SUPER_MAGIC: u16 = 0xEF53;
 
@@ -313,7 +286,6 @@ const VOLUME_LABEL_LEN: usize = 16;
 const MIN_BLOCK_SIZE: u32 = 1024;
 const GOOD_OLD_INODE_SIZE: u16 = 128;
 const NDIR_BLOCKS: usize = 12;
-const IO_BUFFER_SIZE: usize = 4096;
 
 // Group descriptor constants
 const GROUP_DESC_SIZE: usize = 32;
@@ -422,12 +394,7 @@ impl Ext2SuperBlock {
     fn read_inode(&'static self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
         let (sector, offset) = self.inode_location(inode_num)?;
 
-        let buf = unsafe {
-            let buf = &raw mut IO_BUFFER.0;
-            let buf = &mut *buf;
-            self.volume.as_ref().read_blocks(sector, buf)?;
-            buf as &[u8]
-        };
+        let buf = self.volume.as_ref().get_block(sector)?;
 
         let mode = buf.read_u16_le(offset + INODE_MODE_OFFSET);
         let size = buf.read_u32_le(offset + INODE_SIZE_OFFSET);
@@ -495,13 +462,7 @@ impl Ext2SuperBlock {
 
     /// Read and parse superblock data from volume
     fn read_superblock_data(&mut self) -> Result<(), BlockError> {
-        let buf = unsafe {
-            let buf = &raw mut IO_BUFFER.0;
-            let buf = &mut *buf;
-            let superblock_slice = &mut buf[..SUPERBLOCK_SIZE];
-            self.volume.as_ref().read_blocks(SUPERBLOCK_SECTOR, superblock_slice)?;
-            superblock_slice
-        };
+        let buf = self.volume.as_ref().get_block(SUPERBLOCK_SECTOR)?;
 
         let magic = buf.read_u16_le(MAGIC_OFFSET);
         if magic != SUPER_MAGIC {
@@ -540,7 +501,7 @@ impl Ext2SuperBlock {
     /// - 1KB blocks: GDT at byte 2048
     /// - 2KB+ blocks: GDT at byte block_size
     fn read_group_descriptors(&mut self) -> Result<(), BlockError> {
-        const MAX_GROUPS_IN_BUFFER: usize = IO_BUFFER_SIZE / GROUP_DESC_SIZE;
+        const MAX_GROUPS_IN_BUFFER: usize = CACHE_BLOCK_SIZE / GROUP_DESC_SIZE;
 
         let num_groups = self.num_groups();
         let block_size = self.block_size();
@@ -559,12 +520,7 @@ impl Ext2SuperBlock {
 
         let gdt_sector = gdt_byte_offset / BLOCK_SIZE as u64;
 
-        let buf = unsafe {
-            let buf = &raw mut IO_BUFFER.0;
-            let buf = &mut *buf;
-            self.volume.as_ref().read_blocks(gdt_sector, buf)?;
-            buf as &[u8]
-        };
+        let buf = self.volume.as_ref().get_block(gdt_sector)?;
 
         for i in 0..num_groups {
             let offset = i as usize * GROUP_DESC_SIZE;
@@ -640,7 +596,23 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
         Err(e) => kprintln!("ext2: readdir failed: {:?}", e),
     }
 
-    // Step 5: Inode cache verification.
+    // Step 5: Read hello.txt
+    match root.iops.lookup(&root, "hello.txt") {
+        Ok(inode) => {
+            let mut file = EXT2_FILE_OPS.open(Arc::clone(&inode)).unwrap();
+            let mut buf = [0u8; 128];
+            match EXT2_FILE_OPS.read(&mut file, &mut buf) {
+                Ok(n) => {
+                    let content = core::str::from_utf8(&buf[..n]).unwrap_or("<invalid utf8>");
+                    kprintln!("ext2: hello.txt ({} bytes): {:?}", n, content);
+                }
+                Err(e) => kprintln!("ext2: read hello.txt failed: {:?}", e),
+            }
+        }
+        Err(e) => kprintln!("ext2: lookup hello.txt failed: {:?}", e),
+    }
+
+    // Step 6: Inode cache verification.
     // Lookups [1] and [2] held simultaneously: same address (cache hit).
     // Lookup [3] after caller drops: same address — LRU Vec still holds strong Arc.
     // Lookup [4] of different inode: miss, inserts lost+found; count grows to 3

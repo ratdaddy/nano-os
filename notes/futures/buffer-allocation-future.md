@@ -1,5 +1,10 @@
 # Buffer Allocation Improvements (Future Work)
 
+> **Superseded by `plans/block-cache-plan.md`**
+> The block cache plan addresses all the concerns raised here. The aligned
+> heap allocation approach (Option B) is already in use in `DirEntryIter`.
+> `MBR_BUFFER` in `src/block/init.rs` remains out of scope for that plan.
+
 ## Current State
 
 Block I/O currently uses static buffers allocated with `#[repr(C, align(512))]`:
