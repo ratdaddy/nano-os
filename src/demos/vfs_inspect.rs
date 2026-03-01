@@ -15,15 +15,16 @@ fn list_dir(path: &str) {
                     FileType::Directory => 'd',
                     FileType::RegularFile => 'f',
                     FileType::CharDevice => 'c',
+                    FileType::BlockDevice => 'b',
                 };
                 match entry.file_type {
-                    FileType::CharDevice => {
-                        let path = if path == "/" {
+                    FileType::CharDevice | FileType::BlockDevice => {
+                        let entry_path = if path == "/" {
                             format!("/{}", entry.name)
                         } else {
                             format!("{}/{}", path, entry.name)
                         };
-                        let inode = vfs::vfs_lookup(&path).unwrap();
+                        let inode = vfs::vfs_lookup(&entry_path).unwrap();
                         let (major, minor) = inode.rdev.unwrap();
                         println!("  {} {} {}:{}", type_char, entry.name, major, minor);
                     }

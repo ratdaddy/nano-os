@@ -13,11 +13,20 @@ pub enum Error {
     NotFound,
 }
 
+// POSIX file type bits — used in inode mode fields and stat st_mode.
+// Values match both the ext2 on-disk i_mode field and the POSIX stat st_mode field.
+pub const S_IFMT:  u16 = 0o170000;
+pub const S_IFREG: u16 = 0o100000;
+pub const S_IFDIR: u16 = 0o040000;
+pub const S_IFCHR: u16 = 0o020000;
+pub const S_IFBLK: u16 = 0o060000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileType {
     RegularFile,
     Directory,
     CharDevice,
+    BlockDevice,
 }
 
 pub struct DirEntry {

@@ -25,6 +25,8 @@ enum RamfsNode {
     Dir { children: UnsafeCell<BTreeMap<String, Arc<Inode>>> },
     /// Character device. Major/minor numbers are stored in `inode.rdev`.
     CharDevice,
+    /// Block device. Major/minor numbers are stored in `inode.rdev`.
+    BlockDevice,
 }
 
 // Safety: RamfsNode is only mutated during single-threaded initialisation.
@@ -50,7 +52,7 @@ impl InodeOps for RamfsInodeOps {
                 let children = unsafe { &*children.get() };
                 children.get(name).cloned().ok_or(Error::NotFound)
             }
-            RamfsNode::File { .. } | RamfsNode::CharDevice => Err(Error::NotADirectory),
+            RamfsNode::File { .. } | RamfsNode::CharDevice | RamfsNode::BlockDevice => Err(Error::NotADirectory),
         }
     }
 }
@@ -60,7 +62,7 @@ impl FileOps for RamfsFileOps {
         let node = file.inode.fs_data.downcast_ref::<RamfsNode>().ok_or(Error::InvalidInput)?;
         let data = match node {
             RamfsNode::File { data } => *data,
-            RamfsNode::Dir { .. } | RamfsNode::CharDevice => return Err(Error::InvalidInput),
+            RamfsNode::Dir { .. } | RamfsNode::CharDevice | RamfsNode::BlockDevice => return Err(Error::InvalidInput),
         };
         let remaining = &data[file.offset..];
         let len = remaining.len().min(buf.len());
@@ -86,7 +88,7 @@ impl FileOps for RamfsFileOps {
                     .collect();
                 Ok(entries)
             }
-            RamfsNode::File { .. } | RamfsNode::CharDevice => Err(Error::NotADirectory),
+            RamfsNode::File { .. } | RamfsNode::CharDevice | RamfsNode::BlockDevice => Err(Error::NotADirectory),
         }
     }
 }
@@ -176,23 +178,21 @@ impl Ramfs {
 
     /// Insert a file, creating parent directories as needed.
     pub fn insert_file(&self, path: &str, data: &'static [u8]) -> Result<(), Error> {
-        let parts: alloc::vec::Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if parts.is_empty() {
-            return Err(Error::InvalidInput);
-        }
-        let (dirs, filename) = parts.split_at(parts.len() - 1);
-        let filename = filename[0];
-        let mut current = Arc::clone(&self.root);
-        for &dir_name in dirs {
-            current = self.get_or_create_dir(&current, dir_name)?;
-        }
-        let file_inode = self.make_file_inode(data);
-        Self::dir_insert(&current, String::from(filename), file_inode);
-        Ok(())
+        self.insert_leaf(path, self.make_file_inode(data))
     }
 
     /// Insert a character device node, creating parent directories as needed.
     pub fn insert_chardev(&self, path: &str, major: u32, minor: u32) -> Result<(), Error> {
+        self.insert_leaf(path, self.make_dev_inode(FileType::CharDevice, major, minor))
+    }
+
+    /// Insert a block device node, creating parent directories as needed.
+    pub fn insert_blockdev(&self, path: &str, major: u32, minor: u32) -> Result<(), Error> {
+        self.insert_leaf(path, self.make_dev_inode(FileType::BlockDevice, major, minor))
+    }
+
+    /// Resolve the parent directories of `path` and insert `inode` as the leaf.
+    fn insert_leaf(&self, path: &str, inode: Arc<Inode>) -> Result<(), Error> {
         let parts: alloc::vec::Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if parts.is_empty() {
             return Err(Error::InvalidInput);
@@ -203,9 +203,33 @@ impl Ramfs {
         for &dir_name in dirs {
             current = self.get_or_create_dir(&current, dir_name)?;
         }
-        let dev_inode = self.make_chardev_inode(major, minor);
-        Self::dir_insert(&current, String::from(filename), dev_inode);
+        Self::dir_insert(&current, String::from(filename), inode);
         Ok(())
+    }
+
+    fn get_or_create_dir(&self, parent: &Arc<Inode>, name: &str) -> Result<Arc<Inode>, Error> {
+        let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
+        if let RamfsNode::Dir { children } = node {
+            // Safety: single-threaded initialisation; no concurrent readers yet.
+            let children = unsafe { &mut *children.get() };
+            if let Some(existing) = children.get(name) {
+                return Ok(Arc::clone(existing));
+            }
+            let new_dir = Self::make_dir_inode(self.alloc_ino());
+            children.insert(String::from(name), Arc::clone(&new_dir));
+            Ok(new_dir)
+        } else {
+            Err(Error::InvalidInput)
+        }
+    }
+
+    fn dir_insert(parent: &Arc<Inode>, name: String, child: Arc<Inode>) {
+        let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
+        if let RamfsNode::Dir { children } = node {
+            // Safety: single-threaded initialisation; no concurrent readers yet.
+            let children = unsafe { &mut *children.get() };
+            children.insert(name, child);
+        }
     }
 
     fn make_dir_inode(ino: u64) -> Arc<Inode> {
@@ -234,42 +258,22 @@ impl Ramfs {
         })
     }
 
-    fn make_chardev_inode(&self, major: u32, minor: u32) -> Arc<Inode> {
+    fn make_dev_inode(&self, file_type: FileType, major: u32, minor: u32) -> Arc<Inode> {
+        let node = match file_type {
+            FileType::CharDevice  => RamfsNode::CharDevice,
+            FileType::BlockDevice => RamfsNode::BlockDevice,
+            _ => unreachable!("make_dev_inode called with non-device FileType"),
+        };
         Arc::new(Inode {
             ino: self.alloc_ino(),
-            file_type: FileType::CharDevice,
+            file_type,
             len: 0,
             iops: &RAMFS_INODE_OPS,
             fops: &RAMFS_FILE_OPS,
             sb: None,
             rdev: Some((major, minor)),
-            fs_data: Box::new(RamfsNode::CharDevice),
+            fs_data: Box::new(node),
         })
-    }
-
-    fn get_or_create_dir(&self, parent: &Arc<Inode>, name: &str) -> Result<Arc<Inode>, Error> {
-        let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
-        if let RamfsNode::Dir { children } = node {
-            // Safety: single-threaded initialisation; no concurrent readers yet.
-            let children = unsafe { &mut *children.get() };
-            if let Some(existing) = children.get(name) {
-                return Ok(Arc::clone(existing));
-            }
-            let new_dir = Self::make_dir_inode(self.alloc_ino());
-            children.insert(String::from(name), Arc::clone(&new_dir));
-            Ok(new_dir)
-        } else {
-            Err(Error::InvalidInput)
-        }
-    }
-
-    fn dir_insert(parent: &Arc<Inode>, name: String, child: Arc<Inode>) {
-        let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
-        if let RamfsNode::Dir { children } = node {
-            // Safety: single-threaded initialisation; no concurrent readers yet.
-            let children = unsafe { &mut *children.get() };
-            children.insert(name, child);
-        }
     }
 }
 

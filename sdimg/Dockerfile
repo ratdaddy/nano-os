@@ -42,6 +42,7 @@ CMD set -e && \
     mkdir -p /mnt/ext2/subdir && \
     echo "File in subdirectory" > /mnt/ext2/subdir/test.txt && \
     mknod /mnt/ext2/console c 5 1 && \
+    mknod /mnt/ext2/sda b 8 0 && \
     umount /mnt/ext2 && \
     \
     # Clean up second loop device
@@ -61,4 +62,5 @@ CMD set -e && \
     echo "  Partition 2: ext2, ~256 MiB, label BOOT" && \
     echo "    - /hello.txt" && \
     echo "    - /subdir/test.txt" && \
-    echo "    - /console (c 5,1)"
+    echo "    - /console (c 5,1)" && \
+    echo "    - /sda (b 8,0)"

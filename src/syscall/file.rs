@@ -1,9 +1,16 @@
 use super::errno::{EBADF, EFAULT, EIO, ENOENT};
 use super::uaccess;
-use crate::file::FileType;
+use crate::file::{FileType, S_IFREG, S_IFDIR, S_IFCHR, S_IFBLK};
 use crate::process;
 use crate::thread;
 use crate::vfs;
+
+// stat defaults
+const STAT_DEFAULT_MODE: u32 = 0o444;  // read-only for owner/group/other
+const STAT_BLKSIZE: i32 = 4096;
+
+// rdev encoding: minor occupies the low 8 bits, major the next 8
+const RDEV_MINOR_BITS: u32 = 8;
 
 /// sys_write(fd, buf, count) -> bytes written or error
 ///
@@ -142,19 +149,20 @@ pub fn newfstat(tf: &mut types::ProcessTrapFrame) {
     let inode = &file.inode;
 
     let mode_type = match inode.file_type {
-        FileType::RegularFile => 0o100000,
-        FileType::Directory   => 0o040000,
-        FileType::CharDevice  => 0o020000,
+        FileType::RegularFile => S_IFREG as u32,
+        FileType::Directory   => S_IFDIR as u32,
+        FileType::CharDevice  => S_IFCHR as u32,
+        FileType::BlockDevice => S_IFBLK as u32,
     };
 
     let mut stat: Stat = unsafe { core::mem::zeroed() };
     stat.st_ino = inode.ino;
-    stat.st_mode = mode_type | 0o444;
+    stat.st_mode = mode_type | STAT_DEFAULT_MODE;
     stat.st_nlink = 1;
     stat.st_size = inode.len as i64;
-    stat.st_blksize = 4096;
+    stat.st_blksize = STAT_BLKSIZE;
     if let Some((major, minor)) = inode.rdev {
-        stat.st_rdev = ((major as u64) << 8) | (minor as u64);
+        stat.st_rdev = ((major as u64) << RDEV_MINOR_BITS) | (minor as u64);
     }
 
     #[cfg(feature = "trace_syscalls")]

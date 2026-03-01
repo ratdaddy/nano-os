@@ -33,6 +33,7 @@ pub fn inspect_procfs() {
                     FileType::Directory => 'd',
                     FileType::RegularFile => 'f',
                     FileType::CharDevice => 'c',
+                    FileType::BlockDevice => 'b',
                 };
                 println!("  {} {}", type_char, entry.name);
             }

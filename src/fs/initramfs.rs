@@ -5,7 +5,21 @@ use core::sync::atomic::Ordering;
 
 use crate::dtb;
 use crate::fs::ramfs::Ramfs;
-use crate::file::SuperBlock;
+use crate::file::{SuperBlock, S_IFMT, S_IFDIR, S_IFCHR, S_IFBLK};
+
+// CPIO "newc" format layout
+const CPIO_MAGIC: &[u8] = b"070701";
+const CPIO_MAGIC_LEN: usize = 6;
+const CPIO_HEADER_SIZE: usize = 110;
+const CPIO_ALIGN: usize = 4;
+const CPIO_FIELD_WIDTH: usize = 8; // each header field is 8 hex characters
+
+// CPIO header field offsets (byte position within the 110-byte header)
+const CPIO_MODE_OFFSET: usize = 14;
+const CPIO_FILESIZE_OFFSET: usize = 54;
+const CPIO_RDEVMAJOR_OFFSET: usize = 78;
+const CPIO_RDEVMINOR_OFFSET: usize = 86;
+const CPIO_NAMESIZE_OFFSET: usize = 94;
 
 /// Create a ramfs populated from the DTB-specified initramfs location.
 /// Returns a SuperBlock for registration with VFS.
@@ -26,17 +40,17 @@ pub fn new() -> &'static dyn SuperBlock {
 pub(crate) fn unpack_cpio(ramfs: &Ramfs, cpio: &'static [u8]) {
     let mut pos = 0;
 
-    while pos + 110 <= cpio.len() {
+    while pos + CPIO_HEADER_SIZE <= cpio.len() {
         let hdr = &cpio[pos..];
-        if &hdr[0..6] != b"070701" {
+        if &hdr[..CPIO_MAGIC_LEN] != CPIO_MAGIC {
             break;
         }
 
-        let mode = parse_hex(&hdr[14..22]) as u16;
-        let filesize = parse_hex(&hdr[54..62]);
-        let namesize = parse_hex(&hdr[94..102]);
+        let mode = parse_hex(&hdr[CPIO_MODE_OFFSET..CPIO_MODE_OFFSET + CPIO_FIELD_WIDTH]) as u16;
+        let filesize = parse_hex(&hdr[CPIO_FILESIZE_OFFSET..CPIO_FILESIZE_OFFSET + CPIO_FIELD_WIDTH]);
+        let namesize = parse_hex(&hdr[CPIO_NAMESIZE_OFFSET..CPIO_NAMESIZE_OFFSET + CPIO_FIELD_WIDTH]);
 
-        let name_start = pos + 110;
+        let name_start = pos + CPIO_HEADER_SIZE;
         let name_end = name_start + namesize;
         let filename = match core::str::from_utf8(&cpio[name_start..name_end - 1]) {
             Ok(s) => s,
@@ -47,21 +61,25 @@ pub(crate) fn unpack_cpio(ramfs: &Ramfs, cpio: &'static [u8]) {
             break;
         }
 
-        let data_start = align_up(name_end, 4);
+        let data_start = align_up(name_end, CPIO_ALIGN);
         let data_end = data_start + filesize;
 
-        let fmt = mode & 0o170000;
-        if fmt == 0o040000 {
+        let fmt = mode & S_IFMT;
+        if fmt == S_IFDIR {
             let _ = ramfs.insert_dir(filename);
-        } else if fmt == 0o020000 {
-            let rdevmajor = parse_hex(&hdr[78..86]) as u32;
-            let rdevminor = parse_hex(&hdr[86..94]) as u32;
+        } else if fmt == S_IFCHR {
+            let rdevmajor = parse_hex(&hdr[CPIO_RDEVMAJOR_OFFSET..CPIO_RDEVMAJOR_OFFSET + CPIO_FIELD_WIDTH]) as u32;
+            let rdevminor = parse_hex(&hdr[CPIO_RDEVMINOR_OFFSET..CPIO_RDEVMINOR_OFFSET + CPIO_FIELD_WIDTH]) as u32;
             let _ = ramfs.insert_chardev(filename, rdevmajor, rdevminor);
+        } else if fmt == S_IFBLK {
+            let rdevmajor = parse_hex(&hdr[CPIO_RDEVMAJOR_OFFSET..CPIO_RDEVMAJOR_OFFSET + CPIO_FIELD_WIDTH]) as u32;
+            let rdevminor = parse_hex(&hdr[CPIO_RDEVMINOR_OFFSET..CPIO_RDEVMINOR_OFFSET + CPIO_FIELD_WIDTH]) as u32;
+            let _ = ramfs.insert_blockdev(filename, rdevmajor, rdevminor);
         } else if filesize > 0 {
             let _ = ramfs.insert_file(filename, &cpio[data_start..data_end]);
         }
 
-        pos = align_up(data_end, 4);
+        pos = align_up(data_end, CPIO_ALIGN);
     }
 }
 
@@ -79,6 +97,8 @@ mod tests {
     use alloc::format;
     use alloc::vec::Vec;
     use super::*;
+
+    const CPIO_TRAILER: &[u8] = b"TRAILER!!!\0";
     use crate::file::{FileType, SuperBlock};
     use crate::fs::ramfs::Ramfs;
     use crate::vfs;
@@ -92,44 +112,42 @@ mod tests {
             let namesize = name_cstr.len();
             let filesize = data.len();
 
-            // Write CPIO "newc" header (110 bytes)
-            buf.extend_from_slice(b"070701"); // c_magic
-            buf.extend_from_slice(&[b'0'; 110 - 6]); // fill with '0's
-            let hdr_start = buf.len() - 110;
-            // c_mode at offset 14
-            buf[hdr_start + 14..hdr_start + 22]
+            // Write CPIO "newc" header
+            buf.extend_from_slice(CPIO_MAGIC);
+            buf.extend_from_slice(&[b'0'; CPIO_HEADER_SIZE - CPIO_MAGIC_LEN]);
+            let hdr_start = buf.len() - CPIO_HEADER_SIZE;
+            let o = CPIO_FIELD_WIDTH;
+            buf[hdr_start + CPIO_MODE_OFFSET..hdr_start + CPIO_MODE_OFFSET + o]
                 .copy_from_slice(format!("{:08X}", mode).as_bytes());
-            // c_filesize at offset 54
-            buf[hdr_start + 54..hdr_start + 62]
+            buf[hdr_start + CPIO_FILESIZE_OFFSET..hdr_start + CPIO_FILESIZE_OFFSET + o]
                 .copy_from_slice(format!("{:08X}", filesize).as_bytes());
-            // c_rdevmajor at offset 78
-            buf[hdr_start + 78..hdr_start + 86]
+            buf[hdr_start + CPIO_RDEVMAJOR_OFFSET..hdr_start + CPIO_RDEVMAJOR_OFFSET + o]
                 .copy_from_slice(format!("{:08X}", rdevmajor).as_bytes());
-            // c_rdevminor at offset 86
-            buf[hdr_start + 86..hdr_start + 94]
+            buf[hdr_start + CPIO_RDEVMINOR_OFFSET..hdr_start + CPIO_RDEVMINOR_OFFSET + o]
                 .copy_from_slice(format!("{:08X}", rdevminor).as_bytes());
-            // c_namesize at offset 94
-            buf[hdr_start + 94..hdr_start + 102]
+            buf[hdr_start + CPIO_NAMESIZE_OFFSET..hdr_start + CPIO_NAMESIZE_OFFSET + o]
                 .copy_from_slice(format!("{:08X}", namesize).as_bytes());
 
             buf.extend_from_slice(name_cstr.as_bytes());
-            while buf.len() % 4 != 0 {
+            while buf.len() % CPIO_ALIGN != 0 {
                 buf.push(0);
             }
 
             buf.extend_from_slice(data);
-            while buf.len() % 4 != 0 {
+            while buf.len() % CPIO_ALIGN != 0 {
                 buf.push(0);
             }
         }
 
         // Append TRAILER!!! entry
-        buf.extend_from_slice(b"070701");
-        buf.extend_from_slice(&[b'0'; 110 - 6]);
-        let trailer_start = buf.len() - 110;
-        buf[trailer_start + 94..trailer_start + 102].copy_from_slice(b"0000000B");
-        buf.extend_from_slice(b"TRAILER!!!\0");
-        while buf.len() % 4 != 0 {
+        buf.extend_from_slice(CPIO_MAGIC);
+        buf.extend_from_slice(&[b'0'; CPIO_HEADER_SIZE - CPIO_MAGIC_LEN]);
+        let trailer_start = buf.len() - CPIO_HEADER_SIZE;
+        let o = CPIO_FIELD_WIDTH;
+        buf[trailer_start + CPIO_NAMESIZE_OFFSET..trailer_start + CPIO_NAMESIZE_OFFSET + o]
+            .copy_from_slice(format!("{:08X}", CPIO_TRAILER.len()).as_bytes());
+        buf.extend_from_slice(CPIO_TRAILER);
+        while buf.len() % CPIO_ALIGN != 0 {
             buf.push(0);
         }
 
@@ -257,5 +275,24 @@ mod tests {
 
         let inode = vfs::vfs_lookup("/dev/console").unwrap();
         assert_eq!(inode.rdev, Some((5, 1)));
+    }
+
+    #[test_case]
+    fn test_cpio_blockdev() {
+        println!("Testing CPIO block device parsing...");
+
+        let cpio = make_cpio(&[
+            ("dev", b"", 0o040755, 0, 0),
+            ("dev/sda", b"", 0o060600, 8, 0),
+        ]);
+        setup_test_ramfs(cpio);
+
+        let entries = vfs::vfs_readdir("/dev").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "sda");
+        assert_eq!(entries[0].file_type, FileType::BlockDevice);
+
+        let inode = vfs::vfs_lookup("/dev/sda").unwrap();
+        assert_eq!(inode.rdev, Some((8, 0)));
     }
 }

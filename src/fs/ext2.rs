@@ -14,6 +14,7 @@ use crate::bytes::ReadIntLe;
 use crate::collections::LruCache;
 use crate::drivers::{BlockError, BLOCK_SIZE};
 use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SeekFrom, SuperBlock};
+use crate::file::{S_IFMT, S_IFREG, S_IFDIR, S_IFCHR, S_IFBLK};
 use crate::vfs::FileSystem;
 
 // =============================================================================
@@ -128,6 +129,7 @@ impl FileOps for Ext2FileOps {
                     EXT2_FT_REG_FILE => FileType::RegularFile,
                     EXT2_FT_DIR      => FileType::Directory,
                     EXT2_FT_CHRDEV   => FileType::CharDevice,
+                    EXT2_FT_BLKDEV   => FileType::BlockDevice,
                     _                => FileType::RegularFile,
                 };
                 Ok(DirEntry { name, file_type })
@@ -292,14 +294,6 @@ const GROUP_DESC_SIZE: usize = 32;
 const GDT_1K_OFFSET: u64 = 2048;
 const GD_INODE_TABLE_OFFSET: usize = 8;
 
-// File type masks (mode field)
-const S_IFMT: u16 = 0xF000;
-const S_IFDIR: u16 = 0x4000;
-const S_IFREG: u16 = 0x8000;
-const S_IFCHR: u16 = 0x2000;
-#[allow(dead_code)]
-const S_IFBLK: u16 = 0x6000;
-
 // Special inode numbers
 const ROOT_INODE: u32 = 2;
 
@@ -319,6 +313,7 @@ const DIR_ENTRY_NAME_OFFSET: usize = 8;
 const EXT2_FT_REG_FILE: u8 = 1;
 const EXT2_FT_DIR: u8 = 2;
 const EXT2_FT_CHRDEV: u8 = 3;
+const EXT2_FT_BLKDEV: u8 = 4;
 
 /// ext2 superblock structure (per-mount instance)
 ///
@@ -415,6 +410,7 @@ impl Ext2SuperBlock {
             S_IFDIR => FileType::Directory,
             S_IFREG => FileType::RegularFile,
             S_IFCHR => FileType::CharDevice,
+            S_IFBLK => FileType::BlockDevice,
             _ => FileType::RegularFile,
         };
 
@@ -597,6 +593,7 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
                     FileType::Directory   => 'd',
                     FileType::RegularFile => 'f',
                     FileType::CharDevice  => 'c',
+                    FileType::BlockDevice => 'b',
                 };
                 kprintln!("  {} {}", type_char, entry.name);
             }

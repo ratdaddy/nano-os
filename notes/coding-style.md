@@ -166,6 +166,39 @@ Use method names that clearly indicate whether operations are asynchronous (non-
 
 - Keep plural names even if current implementation only supports single operations, if the design intends to support multiple items in the future
 
+## Numeric Literal Formatting
+
+**Principle:** Use lowercase hex digits and octal for POSIX/Unix values.
+
+### Hex literals
+
+Always use lowercase `a–f`, matching Rust idiom and the standard library:
+
+```rust
+// Bad
+const MBR_SIGNATURE: u16 = 0xaa55;
+const BLOCK_SIZE: usize = 0x200;
+
+// Good
+const MBR_SIGNATURE: u16 = 0xaa55;
+const BLOCK_SIZE: usize = 0x200;
+```
+
+### Octal literals
+
+Use octal for POSIX mode bits and Unix permission values — these are universally
+documented and discussed in octal, so octal literals are the most readable form:
+
+```rust
+// Bad - requires mental conversion to recognise as POSIX mode bits
+pub const S_IFREG: u16 = 0x8000;
+
+// Good - immediately recognisable as a POSIX file type constant
+pub const S_IFREG: u16 = 0o100000;
+```
+
+---
+
 ## Magic Numbers and Named Constants
 
 **Principle:** Replace magic numbers with appropriately named constants.
@@ -192,7 +225,7 @@ const OFFSET: usize = 446;
 const BLOCK_SIZE: usize = 512;  // When referring to block I/O
 const SECTOR_SIZE: u64 = 512;   // When referring to disk geometry
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
-const MBR_SIGNATURE: u16 = 0xAA55;
+const MBR_SIGNATURE: u16 = 0xaa55;
 const BYTES_PER_MB: u64 = 1024 * 1024;
 ```
 
@@ -208,7 +241,7 @@ if block0[510] == 0x55 && block0[511] == 0xAA {
 }
 
 // Good - clear and self-documenting
-const MBR_SIGNATURE: u16 = 0xAA55;
+const MBR_SIGNATURE: u16 = 0xaa55;
 const MBR_SIGNATURE_OFFSET: usize = 510;
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 const MBR_PARTITION_ENTRY_SIZE: usize = 16;
@@ -235,7 +268,7 @@ if signature == MBR_SIGNATURE {
 
 ```rust
 // MBR partition table layout
-const MBR_SIGNATURE: u16 = 0xAA55;
+const MBR_SIGNATURE: u16 = 0xaa55;
 const MBR_SIGNATURE_OFFSET: usize = 510;
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 const MBR_PARTITION_ENTRY_SIZE: usize = 16;
@@ -424,6 +457,7 @@ Before committing:
 - [ ] No unnecessary nested `unsafe` blocks
 - [ ] Method names clearly indicate async vs sync behavior
 - [ ] Magic numbers replaced with appropriately named constants
+- [ ] Hex literals use lowercase digits (`0xaa55` not `0xAA55`); POSIX mode bits use octal
 - [ ] Smart pointer conversions use `as_ref()` not `&*`
 - [ ] Helper functions are associated functions when appropriate
 - [ ] Struct initialization uses mutable builder pattern instead of large tuple returns
