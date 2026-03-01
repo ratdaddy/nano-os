@@ -13,7 +13,7 @@ use crate::block::volume::{BlockBuf, BlockVolume, CACHE_BLOCK_SIZE};
 use crate::bytes::ReadIntLe;
 use crate::collections::LruCache;
 use crate::drivers::{BlockError, BLOCK_SIZE};
-use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SeekFrom, SuperBlock};
 use crate::vfs::FileSystem;
 
 // =============================================================================
@@ -71,6 +71,51 @@ impl InodeOps for Ext2InodeOps {
     }
 }
 impl FileOps for Ext2FileOps {
+    fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
+        if file.inode.file_type != FileType::RegularFile {
+            return Err(Error::InvalidInput);
+        }
+
+        let file_len = file.inode.len;
+        if file.offset >= file_len || buf.is_empty() {
+            return Ok(0);
+        }
+
+        let fs_data = file.inode.fs_data.downcast_ref::<Ext2InodeData>().unwrap();
+        let sb = fs_data.sb;
+        let block_size = sb.block_size() as usize;
+        let mut buf_pos = 0;
+
+        while buf_pos < buf.len() && file.offset < file_len {
+            let block_idx = file.offset / block_size;
+            if block_idx >= NDIR_BLOCKS {
+                break; // indirect blocks not yet supported
+            }
+            let block_ptr = fs_data.blocks[block_idx];
+            if block_ptr == 0 {
+                break; // sparse hole or end of allocated blocks
+            }
+
+            let block_buf = sb.volume.as_ref()
+                .get_block(sb.block_to_sector(block_ptr))
+                .map_err(|_| Error::InvalidInput)?;
+
+            let block_offset  = file.offset % block_size;
+            let copy_len = (block_size - block_offset)
+                .min(file_len - file.offset)
+                .min(buf.len() - buf_pos);
+
+            buf[buf_pos..buf_pos + copy_len]
+                .copy_from_slice(&block_buf[block_offset..block_offset + copy_len]);
+
+            file.offset += copy_len;
+            buf_pos     += copy_len;
+            // block_buf dropped here — cache slot unpinned
+        }
+
+        Ok(buf_pos)
+    }
+
     fn readdir(&self, file: &mut File) -> Result<Vec<DirEntry>, Error> {
         if file.inode.file_type != FileType::Directory {
             return Err(Error::NotADirectory);
@@ -163,7 +208,7 @@ impl Iterator for DirEntryIter {
                 if block_ptr == 0 {
                     return None;
                 }
-                let sector = (block_ptr as u64 * self.block_size as u64) / BLOCK_SIZE as u64;
+                let sector = self.sb.block_to_sector(block_ptr);
                 match self.sb.volume.as_ref().get_block(sector) {
                     Ok(block) => self.buf = Some(block),
                     Err(e)    => return Some(Err(e)),
@@ -331,6 +376,14 @@ impl Ext2SuperBlock {
     /// Calculate the actual block size from the log value
     pub fn block_size(&self) -> u32 {
         MIN_BLOCK_SIZE << self.log_block_size
+    }
+
+    /// Convert an ext2 block number to the disk sector passed to `get_block`.
+    ///
+    /// `get_block` always reads `CACHE_BLOCK_SIZE` (4096) bytes starting at the
+    /// returned sector. The file data occupies `buf[0..block_size]`.
+    fn block_to_sector(&self, block_num: u32) -> u64 {
+        block_num as u64 * self.block_size() as u64 / BLOCK_SIZE as u64
     }
 
     /// Calculate number of block groups in the filesystem
@@ -535,8 +588,8 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
     kprintln!("ext2: root inode: ino={}, type={:?}, len={}", root.ino, root.file_type, root.len);
 
     // Step 4: List root directory contents via readdir
-    let mut root_file = EXT2_FILE_OPS.open(Arc::clone(&root)).unwrap();
-    match EXT2_FILE_OPS.readdir(&mut root_file) {
+    let mut root_file = root.fops.open(Arc::clone(&root)).unwrap();
+    match root_file.fops.readdir(&mut root_file) {
         Ok(entries) => {
             kprintln!("ext2: root directory ({} entries):", entries.len());
             for entry in &entries {
@@ -551,17 +604,37 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
         Err(e) => kprintln!("ext2: readdir failed: {:?}", e),
     }
 
-    // Step 5: Read hello.txt
+    // Step 5: Read hello.txt — seek + multi-part read
     match root.iops.lookup(&root, "hello.txt") {
         Ok(inode) => {
-            let mut file = EXT2_FILE_OPS.open(Arc::clone(&inode)).unwrap();
-            let mut buf = [0u8; 128];
-            match EXT2_FILE_OPS.read(&mut file, &mut buf) {
-                Ok(n) => {
-                    let content = core::str::from_utf8(&buf[..n]).unwrap_or("<invalid utf8>");
-                    kprintln!("ext2: hello.txt ({} bytes): {:?}", n, content);
-                }
-                Err(e) => kprintln!("ext2: read hello.txt failed: {:?}", e),
+            let mut file = inode.fops.open(Arc::clone(&inode)).unwrap();
+            let fops = file.fops;
+
+            // Full read from offset 0.
+            let mut buf_full = [0u8; 256];
+            match fops.read(&mut file, &mut buf_full) {
+                Ok(n) => kprintln!("ext2: hello.txt full: {:?}", core::str::from_utf8(&buf_full[..n]).unwrap_or("<invalid utf8>")),
+                Err(e) => kprintln!("ext2: hello.txt full read failed: {:?}", e),
+            }
+
+            // Reopen to reset offset, seek 5 bytes in, then read the next 5.
+            let mut file = inode.fops.open(Arc::clone(&inode)).unwrap();
+            // Seek 5 bytes in, then read the next 5.
+            match fops.seek(&mut file, SeekFrom::Current(5)) {
+                Ok(()) => {}
+                Err(e) => { kprintln!("ext2: hello.txt seek failed: {:?}", e); return; }
+            }
+            let mut buf_a = [0u8; 5];
+            match fops.read(&mut file, &mut buf_a) {
+                Ok(n) => kprintln!("ext2: hello.txt [5..10]: {:?}", core::str::from_utf8(&buf_a[..n]).unwrap_or("<invalid utf8>")),
+                Err(e) => kprintln!("ext2: hello.txt read [5..10] failed: {:?}", e),
+            }
+
+            // Read the remainder of the file.
+            let mut buf_b = [0u8; 256];
+            match fops.read(&mut file, &mut buf_b) {
+                Ok(n) => kprintln!("ext2: hello.txt [10..]: {:?}", core::str::from_utf8(&buf_b[..n]).unwrap_or("<invalid utf8>")),
+                Err(e) => kprintln!("ext2: hello.txt read [10..] failed: {:?}", e),
             }
         }
         Err(e) => kprintln!("ext2: lookup hello.txt failed: {:?}", e),

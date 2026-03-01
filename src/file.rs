@@ -70,8 +70,19 @@ pub trait FileOps: Send + Sync {
         Err(Error::InvalidInput)
     }
 
-    fn seek(&self, _file: &mut File, _pos: SeekFrom) -> Result<(), Error> {
-        Err(Error::InvalidInput)
+    fn seek(&self, file: &mut File, pos: SeekFrom) -> Result<(), Error> {
+        let file_len = file.inode.len;
+        file.offset = match pos {
+            SeekFrom::Start(n)   => n.min(file_len),
+            SeekFrom::Current(n) => {
+                if n >= 0 {
+                    file.offset.saturating_add(n as usize).min(file_len)
+                } else {
+                    file.offset.saturating_sub((-n) as usize)
+                }
+            }
+        };
+        Ok(())
     }
 
     /// Read directory entries (for directories).

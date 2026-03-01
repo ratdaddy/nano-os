@@ -5,7 +5,7 @@ INIT_ELF := target/riscv64gc-unknown-linux-musl/release/prog_example
 all: $(INIT_ELF)
 
 $(INIT_ELF): src/main.rs
-	docker run -it --rm -v "$$(pwd)":/work -w /work rust-riscv-musl-static \
+	docker run --rm -v "$$(pwd)":/work -w /work rust-riscv-musl-static \
 		cargo +nightly build --release --target riscv64gc-unknown-linux-musl -Z build-std=std,panic_abort
 
 build:

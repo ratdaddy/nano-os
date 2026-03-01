@@ -11,7 +11,7 @@ use alloc::sync::Arc;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SeekFrom, SuperBlock};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
 use crate::vfs::FileSystem;
 
 /// Filesystem-specific node data stored in each inode's `fs_data`.
@@ -69,28 +69,6 @@ impl FileOps for RamfsFileOps {
         Ok(len)
     }
 
-    fn seek(&self, file: &mut File, pos: SeekFrom) -> Result<(), Error> {
-        let file_len = file.inode.len;
-        match pos {
-            SeekFrom::Start(offset) => {
-                if offset > file_len {
-                    return Err(Error::UnexpectedEof);
-                }
-                file.offset = offset;
-            }
-            SeekFrom::Current(offset) => {
-                let new_offset = file
-                    .offset
-                    .checked_add_signed(offset)
-                    .ok_or(Error::InvalidInput)?;
-                if new_offset > file_len {
-                    return Err(Error::UnexpectedEof);
-                }
-                file.offset = new_offset;
-            }
-        }
-        Ok(())
-    }
 
     fn write(&self, _file: &mut File, _buf: &[u8]) -> Result<usize, Error> {
         // Read-only filesystem
@@ -300,6 +278,7 @@ mod tests {
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use super::*;
+    use crate::file::SeekFrom;
 
     /// Create static test data from a byte slice.
     fn leak_data(data: &[u8]) -> &'static [u8] {
@@ -372,8 +351,8 @@ mod tests {
         ramfs.insert_file("tiny.txt", leak_data(b"short")).unwrap();
 
         let mut file = open(ramfs.root(), "tiny.txt").unwrap();
-        let result = seek(&mut file, SeekFrom::Start(1000));
-        assert!(matches!(result, Err(Error::UnexpectedEof)));
+        seek(&mut file, SeekFrom::Start(1000)).unwrap();
+        assert_eq!(file.offset, 5); // clamped to file_len
     }
 
     #[test_case]
@@ -384,8 +363,8 @@ mod tests {
         ramfs.insert_file("back.txt", leak_data(b"12345678")).unwrap();
 
         let mut file = open(ramfs.root(), "back.txt").unwrap();
-        let result = seek(&mut file, SeekFrom::Current(-10));
-        assert!(matches!(result, Err(Error::InvalidInput)));
+        seek(&mut file, SeekFrom::Current(-10)).unwrap();
+        assert_eq!(file.offset, 0); // clamped to 0
     }
 
     #[test_case]
