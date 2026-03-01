@@ -3,15 +3,15 @@
 //! Read-only ext2 filesystem driver.
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::str::from_utf8;
 
 use crate::block::volume::{BlockBuf, BlockVolume, CACHE_BLOCK_SIZE};
 use crate::bytes::ReadIntLe;
+use crate::collections::LruCache;
 use crate::drivers::{BlockError, BLOCK_SIZE};
 use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
 use crate::vfs::FileSystem;
@@ -106,51 +106,6 @@ struct Ext2InodeData {
 // =============================================================================
 
 const INODE_CACHE_CAPACITY: usize = 32;
-
-/// Combined inode cache: a BTreeMap index for O(log n) lookup and a Vec LRU
-/// list that holds strong `Arc`s to keep the most recently used inodes alive.
-struct InodeLruCache {
-    index: BTreeMap<u32, Weak<Inode>>,
-    lru: VecDeque<Arc<Inode>>,
-}
-
-impl InodeLruCache {
-    fn new() -> Self {
-        Self { index: BTreeMap::new(), lru: VecDeque::new() }
-    }
-
-    /// Look up an inode, moving it to the front of the LRU on a hit.
-    ///
-    /// If the entry was evicted from the LRU but the Weak is still live (e.g.
-    /// held by an open file), it is re-inserted at the front as if it were a
-    /// new entry.
-    fn get(&mut self, inode_num: u32) -> Option<Arc<Inode>> {
-        let arc = self.index.get(&inode_num)?.upgrade()?;
-        if let Some(pos) = self.lru.iter().position(|e| e.ino == inode_num as u64) {
-            self.lru.remove(pos);
-        } else {
-            if self.lru.len() >= INODE_CACHE_CAPACITY {
-                self.lru.pop_back();
-            }
-        }
-        self.lru.push_front(Arc::clone(&arc));
-        Some(arc)
-    }
-
-    /// Insert an inode, evicting the LRU entry if at capacity and reaping dead Weaks.
-    fn insert(&mut self, inode_num: u32, inode: Arc<Inode>) {
-        self.index.insert(inode_num, Arc::downgrade(&inode));
-        if self.lru.len() >= INODE_CACHE_CAPACITY {
-            self.lru.pop_back();
-        }
-        self.lru.push_front(inode);
-        self.index.retain(|_, weak| weak.upgrade().is_some());
-    }
-
-    fn len(&self) -> usize {
-        self.index.len()
-    }
-}
 
 // =============================================================================
 // Directory iterator
@@ -334,7 +289,7 @@ pub struct Ext2SuperBlock {
     volume_label: Option<String>,
     groups: Vec<Ext2GroupDesc>,
     root: Option<Arc<Inode>>,
-    inode_cache: UnsafeCell<InodeLruCache>,
+    inode_cache: UnsafeCell<LruCache<u32, Inode>>,
 }
 
 // Safety: ext2 is only accessed from a single thread; UnsafeCell is used in place
@@ -359,7 +314,7 @@ impl Ext2SuperBlock {
             volume_label: None,
             groups: Vec::new(),
             root: None,
-            inode_cache: UnsafeCell::new(InodeLruCache::new()),
+            inode_cache: UnsafeCell::new(LruCache::new(INODE_CACHE_CAPACITY)),
         });
 
         sb_box.read_superblock_data()?;
@@ -424,11 +379,11 @@ impl Ext2SuperBlock {
 
     /// Return an inode by number, consulting the cache first.
     ///
-    /// On a cache hit, upgrades the stored `Weak` and returns it without a disk read.
-    /// On a miss, reads from disk and stores a `Weak` in the cache.
+    /// On a cache hit, moves the entry to the front of the LRU and returns it
+    /// without a disk read. On a miss, reads from disk and inserts into the cache.
     fn get_or_read_inode(&'static self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
         let cache = unsafe { &mut *self.inode_cache.get() };
-        if let Some(arc) = cache.get(inode_num) {
+        if let Some(arc) = cache.get(&inode_num) {
             return Ok(arc);
         }
         let inode = self.read_inode(inode_num)?;
@@ -617,26 +572,19 @@ pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
     // Lookup [3] after caller drops: same address — LRU Vec still holds strong Arc.
     // Lookup [4] of different inode: miss, inserts lost+found; count grows to 3
     //   (root + hello.txt + lost+found all pinned in LRU Vec).
-    let cache_len = || unsafe { (*sb.inode_cache.get()).len() };
-
-    kprintln!("ext2: cache count before lookups: {}", cache_len());
     {
         let inode1 = root.iops.lookup(&root, "hello.txt");
         let inode2 = root.iops.lookup(&root, "hello.txt");
         if let Ok(i) = &inode1 { kprintln!("ext2: lookup[1] hello.txt: addr={:#x}", Arc::as_ptr(i) as usize); }
         if let Ok(i) = &inode2 { kprintln!("ext2: lookup[2] hello.txt: addr={:#x}", Arc::as_ptr(i) as usize); }
-        kprintln!("ext2: cache count while holding both: {}", cache_len());
     }
-    kprintln!("ext2: cache count after drop: {}", cache_len());
     match root.iops.lookup(&root, "hello.txt") {
         Ok(i) => kprintln!("ext2: lookup[3] hello.txt: addr={:#x}", Arc::as_ptr(&i) as usize),
         Err(e) => kprintln!("ext2: lookup[3] hello.txt failed: {:?}", e),
     }
-    kprintln!("ext2: cache count after lookup[3]: {}", cache_len());
     match root.iops.lookup(&root, "lost+found") {
         Ok(i) => kprintln!("ext2: lookup[4] lost+found: addr={:#x}", Arc::as_ptr(&i) as usize),
         Err(e) => kprintln!("ext2: lookup[4] lost+found failed: {:?}", e),
     }
-    kprintln!("ext2: cache count after lookup[4]: {}", cache_len());
 }
 
