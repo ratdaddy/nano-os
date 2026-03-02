@@ -37,6 +37,11 @@ fn gen_devices() -> String {
     dev::chrdev_for_each(|major, minor, name| {
         let _ = writeln!(out, "{:3} {} ({}:{})", major, name, major, minor);
     });
+    let _ = writeln!(out);
+    let _ = writeln!(out, "Block devices:");
+    dev::blkdev_for_each(|major, minor, name| {
+        let _ = writeln!(out, "{:3} {} ({}:{})", major, name, major, minor);
+    });
     out
 }
 

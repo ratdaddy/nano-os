@@ -9,6 +9,7 @@ use types::ThreadContext;
 use crate::kernel_memory_map::TRAMPOLINE_TRAP_FRAME;
 use crate::kernel_trap;
 use crate::process;
+use crate::riscv;
 use crate::trap;
 
 /// Thread execution state
@@ -260,6 +261,36 @@ pub unsafe extern "C" fn yield_now() {
 fn yield_impl() -> ! {
     let current = Thread::current();
     let current_id = current.id;
+
+    // Check for pending interrupts before re-enqueueing this thread.
+    // If the ready queue is never empty, the idle thread (which normally
+    // handles interrupts via wfi) never runs. Servicing interrupts here
+    // ensures blocked threads (e.g., waiting for DMA completion) are woken
+    // and placed in the ready queue before this thread is re-enqueued,
+    // giving them scheduling priority over the yielding thread.
+    unsafe {
+        let sip: usize;
+        core::arch::asm!("csrr {}, sip", out(reg) sip);
+        if sip & riscv::SIE_ALL != 0 {
+            // Route the interrupt to kernel_trap_entry, not trap_entry.
+            // We are in S-mode kernel code; if we left stvec=trap_entry the interrupt
+            // would corrupt the user ProcessTrapFrame and sret to the wrong place.
+            // sscratch must be the kernel trap stack so kernel_trap_entry can use it.
+            // After kernel_trap_entry handles the interrupt it srets back here.
+            core::arch::asm!(
+                "csrw sie, {sie_all}",
+                "csrw stvec, {stvec}",
+                "csrw sscratch, {sscratch}",
+                "csrs sstatus, {sie_bit}",
+                "csrc sstatus, {sie_bit}",
+                sie_all = in(reg) riscv::SIE_ALL,
+                sie_bit = in(reg) riscv::SSTATUS_SIE,
+                stvec = in(reg) kernel_trap::kernel_trap_entry as usize,
+                sscratch = in(reg) kernel_trap::trap_stack_top(),
+            );
+        }
+    }
+
     #[cfg(feature = "trace_scheduler")]
     println!("[sched] thread {} yielding", current_id);
 

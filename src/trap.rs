@@ -157,7 +157,13 @@ extern "C" fn trap_handler(tf: &mut types::ProcessTrapFrame) -> usize {
     );
 
     if riscv::is_interrupt(scause) {
-        // Handle interrupt while user process was running
+        // Handle interrupt while user process was running in U-mode.
+        // sepc holds the instruction that was about to execute; set tf.pc so
+        // the return path resumes there after the interrupt is handled.
+        // (For ecalls, syscall::handle sets tf.pc = tf.sepc + 4 instead.)
+        // Note: S-mode interrupts from yield_impl are routed to kernel_trap_entry
+        // and never reach here, so tf.sepc is always a valid user address.
+        tf.pc = tf.sepc;
         match interrupt::code(scause) {
             interrupt::code::EXTERNAL => {
                 plic::dispatch_irq();

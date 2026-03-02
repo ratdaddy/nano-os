@@ -36,6 +36,7 @@ pub fn kernel_main() -> ! {
     kthread::uart_writer::init();
     kprint::init();
     kthread::idle::init();
+    block::init().expect("Failed to spawn block init thread");
 
     loop {
         println!();
@@ -141,8 +142,8 @@ fn run_two_processes() -> ! {
     thread::start_scheduler()
 }
 
-/// Initialize block subsystem
+/// Start the block-related threads and the scheduler.
 fn spawn_block_dispatcher() {
-    block::init().expect("Failed to spawn block init thread");
+    kthread::ext2_inspect::init();
     thread::start_scheduler();
 }

@@ -3,6 +3,8 @@
 //! Handles hardware probing, driver initialization, partition discovery,
 //! and volume registration for the block layer.
 
+use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::str::from_utf8;
@@ -11,13 +13,13 @@ use crate::block::cache::CachedVolume;
 use crate::block::disk::BlockDisk;
 use crate::block::partition;
 use crate::block::volume::{BlockVolume, PartitionVolume, WholeDiskVolume};
+use crate::dev;
 use crate::drivers::{sd, virtio_blk};
 use crate::dtb;
-use crate::fs::ext2;
 use crate::thread;
 
 // Boot sector constants
-const BOOT_SIGNATURE: u16 = 0xAA55;
+const BOOT_SIGNATURE: u16 = 0xaa55;
 const BOOT_SIGNATURE_OFFSET: usize = 510;
 const SECTOR_SIZE: usize = 512;
 
@@ -31,6 +33,9 @@ const FAT32_VOLUME_LABEL_LEN: usize = 11;
 const EXT2_SUPERBLOCK_SECTOR: u64 = 2;
 const EXT2_MAGIC_OFFSET: usize = 56;
 const EXT2_MAGIC: u16 = 0xEF53;
+
+// Disk device numbering (Linux SCSI disk major numbers start at 8)
+const SCSI_DISK_MAJOR: u32 = 8;
 
 // Generic boot sector offsets
 const OEM_NAME_OFFSET: usize = 3;
@@ -51,6 +56,14 @@ pub fn init() -> Result<usize, &'static str> {
     let tid = t.id;
     thread::add(t);
     Ok(tid)
+}
+
+/// Derive the base device name for a block disk from its major number.
+///
+/// Linux SCSI disk major numbers start at 8: major 8 → "sda", 9 → "sdb", etc.
+fn disk_base_name(major: u32) -> String {
+    let letter = (b'a' + major.saturating_sub(SCSI_DISK_MAJOR) as u8) as char;
+    format!("sd{}", letter)
 }
 
 // Static buffers for disk I/O - must be properly aligned for DMA
@@ -136,11 +149,12 @@ fn init_thread() {
     };
 
     // Create partition volumes and probe filesystems
-    let mut volumes: Vec<PartitionVolume> = Vec::new();
+    let mut volumes: Vec<Arc<dyn BlockVolume>> = Vec::new();
 
     for part in partitions {
         kprintln!("\nProbing partition {} filesystem...", part.number);
 
+        let part_number = part.number;
         let volume = PartitionVolume::new(Arc::clone(&disk), part);
 
         // Read first block of partition (boot sector)
@@ -207,18 +221,17 @@ fn init_thread() {
             }
         }
 
-        volumes.push(volume);
+        let cached: Arc<dyn BlockVolume> = Arc::new(CachedVolume::new(Arc::new(volume)));
+        let name = format!("{}{}", disk_base_name(SCSI_DISK_MAJOR), part_number);
+        dev::blkdev_register(SCSI_DISK_MAJOR, part_number as u32, &name, Arc::clone(&cached));
+        volumes.push(cached);
     }
+
+    // Register the whole disk
+    let disk_name = disk_base_name(SCSI_DISK_MAJOR);
+    dev::blkdev_register(SCSI_DISK_MAJOR, 0, &disk_name, Arc::new(WholeDiskVolume::new(Arc::clone(&disk))));
 
     kprintln!("\nCreated {} partition volume(s)", volumes.len());
-
-    // TODO: Register volumes as devices
-
-    // Inspect ext2 filesystem on partition 2 (index 1)
-    if volumes.len() >= 2 {
-        let volume = CachedVolume::new(Arc::new(volumes[1].clone()));
-        ext2::inspect_ext2(Arc::new(volume));
-    }
 
     kprintln!("\nBlock subsystem initialization complete");
     thread::exit();

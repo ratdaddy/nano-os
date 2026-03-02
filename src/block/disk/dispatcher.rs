@@ -119,6 +119,11 @@ pub fn spawn_dispatcher<D: BlockDriver + 'static>(driver: D) -> Result<usize, &'
         *pending = Some(Box::new(driver));
     }
 
+    // Register TID before adding the thread so that request_read_block()
+    // can send messages as soon as block_init starts issuing reads, even
+    // before the dispatcher thread has had a chance to run.
+    DISPATCHER_TID.store(tid, Ordering::Relaxed);
+
     thread::add(t);
     Ok(tid)
 }
@@ -150,10 +155,6 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
     let tid = thread::Thread::current().id;
     let name = device.name();
     kprintln!("Block dispatcher [{}] started (tid={})", name, tid);
-
-    // Register our TID so interrupt handlers can send us messages
-    DISPATCHER_TID.store(tid, Ordering::Relaxed);
-
     kprintln!("Dispatcher [{}]: Ready, waiting for read requests...", name);
 
     // Main dispatcher loop - handles both VirtIO and SD
