@@ -1,5 +1,8 @@
+use core::sync::atomic::AtomicBool;
+
 use crate::block;
 use crate::console;
+use crate::demos;
 use crate::drivers::{plic, uart};
 use crate::fs::{ext2, initramfs, procfs, ramfs};
 use crate::kernel_trap;
@@ -7,7 +10,10 @@ use crate::kprint;
 use crate::kthread;
 use crate::thread;
 use crate::vfs;
-use crate::demos;
+
+/// Set to `true` by the fs_init thread once ext2 is mounted on /newroot.
+/// Threads that require a fully-initialized filesystem wait on this flag.
+pub static KERNEL_READY: AtomicBool = AtomicBool::new(false);
 
 pub fn kernel_main() -> ! {
     println!("In kernel_main");
@@ -30,13 +36,14 @@ pub fn kernel_main() -> ! {
 
     // Mount initramfs as root filesystem
     vfs::init(initramfs::new());
-    vfs::vfs_mount_at("/proc", "proc").expect("failed to mount /proc");
+    vfs::vfs_mount_at(None, "/proc", "proc").expect("failed to mount /proc");
 
     uart::register_chrdev();
     kthread::uart_writer::init();
     kprint::init();
     kthread::idle::init();
     block::init().expect("Failed to spawn block init thread");
+    kthread::fs_init::init();
 
     loop {
         println!();

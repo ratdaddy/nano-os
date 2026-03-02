@@ -4,17 +4,15 @@
 //! scheduling of user-mode code.
 
 use core::mem;
+use core::ptr::write_bytes;
+use core::sync::atomic::Ordering;
 
-use crate::dev;
+use crate::kernel_main::KERNEL_READY;
 use crate::process;
-
-/// Major/minor for the whole-disk block device (sda), used as a kernel-ready signal.
-const BLOCK_READY_MAJOR: u32 = 8;
-const BLOCK_READY_MINOR: u32 = 0;
-use crate::vfs;
 use crate::process_memory_map;
 use crate::process_trampoline;
 use crate::thread::{self, Thread};
+use crate::vfs;
 
 /// Spawn a user process as a kernel thread.
 ///
@@ -40,7 +38,7 @@ pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
 
     // Zero-initialize the trap frame and create process context
     let mut process_ctx = unsafe {
-        core::ptr::write_bytes(trap_frame_ptr, 0, 1);
+        write_bytes(trap_frame_ptr, 0, 1);
         process::Context::new(&mut *trap_frame_ptr)
     };
 
@@ -68,13 +66,8 @@ pub fn spawn_process(path: &str) -> Result<usize, &'static str> {
 ///
 /// Never returns - enters the user-mode trap loop via enter_process.
 fn user_thread_entry() {
-    // Wait until the whole-disk device is registered, indicating block init
-    // is complete and all kernel setup threads have done their initial work.
-    loop {
-        match dev::blkdev_get(BLOCK_READY_MAJOR, BLOCK_READY_MINOR) {
-            Ok(_) => break,
-            Err(_) => unsafe { thread::yield_now() },
-        }
+    while !KERNEL_READY.load(Ordering::Acquire) {
+        unsafe { thread::yield_now() };
     }
 
     let thread = Thread::current();

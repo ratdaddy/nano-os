@@ -48,7 +48,7 @@ fn gen_devices() -> String {
 fn gen_filesystems() -> String {
     let mut out = String::new();
     for fs in vfs::filesystems() {
-        let prefix = if fs.requires_device() { "\t" } else { "nodev\t" };
+        let prefix = if fs.nodev() { "nodev\t" } else { "\t" };
         let _ = writeln!(out, "{}{}", prefix, fs.name());
     }
     out
@@ -179,8 +179,8 @@ pub struct ProcfsFileSystem;
 
 impl FileSystem for ProcfsFileSystem {
     fn name(&self) -> &'static str { "proc" }
-    fn requires_device(&self) -> bool { false }
-    fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
+    fn nodev(&self) -> bool { true }
+    fn mount(&self, _source: Option<&str>) -> Result<&'static dyn SuperBlock, Error> {
         let root = Arc::new(Inode {
             ino: 1,
             file_type: FileType::Directory,

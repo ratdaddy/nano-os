@@ -16,5 +16,9 @@ fn main() {
     println!("**Reading /proc/devices");
     let devices = fs::read_to_string("/proc/devices").expect("Failed to read /proc/devices");
     println!("{devices}");
+
+    println!("**Reading /newroot/hello.txt");
+    let hello = fs::read_to_string("/newroot/hello.txt").expect("Failed to read /newroot/hello.txt");
+    println!("{hello}");
     loop {}
 }

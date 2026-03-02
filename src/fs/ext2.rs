@@ -13,7 +13,7 @@ use crate::block::volume::{BlockBuf, BlockVolume, CACHE_BLOCK_SIZE};
 use crate::bytes::ReadIntLe;
 use crate::collections::LruCache;
 use crate::drivers::{BlockError, BLOCK_SIZE};
-use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SeekFrom, SuperBlock};
+use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
 use crate::file::{S_IFMT, S_IFREG, S_IFDIR, S_IFCHR, S_IFBLK};
 use crate::vfs::FileSystem;
 
@@ -29,17 +29,14 @@ pub static EXT2_FS: Ext2FileSystem = Ext2FileSystem;
 
 impl FileSystem for Ext2FileSystem {
     fn name(&self) -> &'static str { "ext2" }
-    fn requires_device(&self) -> bool { true }
 
-    fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
-        // TODO: Implement proper mount() with device registry (Phase 1.4)
-        // This requires:
-        // - Device registry to map (major, minor) -> Arc<dyn BlockVolume>
-        // - Parsing source device path (e.g., "/dev/sda1")
-        // - Looking up device in registry
-        // - Creating Ext2SuperBlock from the volume
-        // - Storing in static storage and returning reference
-        Err(Error::NotFound)
+    fn mount(&self, source: Option<&str>) -> Result<&'static dyn SuperBlock, Error> {
+        let source = source.ok_or(Error::InvalidInput)?;
+        let inode = crate::vfs::vfs_lookup(source)?;
+        let (major, minor) = inode.rdev.ok_or(Error::InvalidInput)?;
+        let volume = crate::dev::blkdev_get(major, minor).map_err(|_| Error::NotFound)?;
+        let sb = Ext2SuperBlock::new(volume).map_err(|_| Error::InvalidInput)?;
+        Ok(sb)
     }
 }
 
@@ -327,7 +324,7 @@ pub struct Ext2SuperBlock {
     pub inodes_per_group: u32,
     pub inode_size: u16,
     volume_label: Option<String>,
-    groups: Vec<Ext2GroupDesc>,
+    pub groups: Vec<Ext2GroupDesc>,
     root: Option<Arc<Inode>>,
     inode_cache: UnsafeCell<LruCache<u32, Inode>>,
 }
@@ -553,108 +550,3 @@ impl SuperBlock for Ext2SuperBlock {
 pub struct Ext2GroupDesc {
     pub inode_table: u32,
 }
-
-
-/// Inspect an ext2 filesystem and display its structure
-///
-/// Reads the superblock, group descriptors, root directory, and tests lookup.
-/// Used for development and debugging.
-pub fn inspect_ext2(volume: Arc<dyn BlockVolume>) {
-    kprintln!("\nReading ext2 filesystem\n");
-
-    let sb = match Ext2SuperBlock::new(volume) {
-        Ok(sb) => sb,
-        Err(e) => { kprintln!("ext2: Failed to read ext2 filesystem: {:?}", e); return; }
-    };
-
-    // Print superblock info
-    if let Some(label) = sb.volume_label() {
-        kprintln!("ext2: {} blocks ({} bytes), {} inodes, {} groups ('{}')",
-                 sb.blocks_count, sb.block_size(), sb.inodes_count, sb.num_groups(), label);
-    } else {
-        kprintln!("ext2: {} blocks ({} bytes), {} inodes, {} groups",
-                 sb.blocks_count, sb.block_size(), sb.inodes_count, sb.num_groups());
-    }
-    for (i, group) in sb.groups.iter().enumerate() {
-        kprintln!("  Group {}: inode_table={}", i, group.inode_table);
-    }
-
-    // Step 3: Display root inode via SuperBlock trait
-    let root = sb.root_inode();
-    kprintln!("ext2: root inode: ino={}, type={:?}, len={}", root.ino, root.file_type, root.len);
-
-    // Step 4: List root directory contents via readdir
-    let mut root_file = root.fops.open(Arc::clone(&root)).unwrap();
-    match root_file.fops.readdir(&mut root_file) {
-        Ok(entries) => {
-            kprintln!("ext2: root directory ({} entries):", entries.len());
-            for entry in &entries {
-                let type_char = match entry.file_type {
-                    FileType::Directory   => 'd',
-                    FileType::RegularFile => 'f',
-                    FileType::CharDevice  => 'c',
-                    FileType::BlockDevice => 'b',
-                };
-                kprintln!("  {} {}", type_char, entry.name);
-            }
-        }
-        Err(e) => kprintln!("ext2: readdir failed: {:?}", e),
-    }
-
-    // Step 5: Read hello.txt — seek + multi-part read
-    match root.iops.lookup(&root, "hello.txt") {
-        Ok(inode) => {
-            let mut file = inode.fops.open(Arc::clone(&inode)).unwrap();
-            let fops = file.fops;
-
-            // Full read from offset 0.
-            let mut buf_full = [0u8; 256];
-            match fops.read(&mut file, &mut buf_full) {
-                Ok(n) => kprintln!("ext2: hello.txt full: {:?}", core::str::from_utf8(&buf_full[..n]).unwrap_or("<invalid utf8>")),
-                Err(e) => kprintln!("ext2: hello.txt full read failed: {:?}", e),
-            }
-
-            // Reopen to reset offset, seek 5 bytes in, then read the next 5.
-            let mut file = inode.fops.open(Arc::clone(&inode)).unwrap();
-            // Seek 5 bytes in, then read the next 5.
-            match fops.seek(&mut file, SeekFrom::Current(5)) {
-                Ok(()) => {}
-                Err(e) => { kprintln!("ext2: hello.txt seek failed: {:?}", e); return; }
-            }
-            let mut buf_a = [0u8; 5];
-            match fops.read(&mut file, &mut buf_a) {
-                Ok(n) => kprintln!("ext2: hello.txt [5..10]: {:?}", core::str::from_utf8(&buf_a[..n]).unwrap_or("<invalid utf8>")),
-                Err(e) => kprintln!("ext2: hello.txt read [5..10] failed: {:?}", e),
-            }
-
-            // Read the remainder of the file.
-            let mut buf_b = [0u8; 256];
-            match fops.read(&mut file, &mut buf_b) {
-                Ok(n) => kprintln!("ext2: hello.txt [10..]: {:?}", core::str::from_utf8(&buf_b[..n]).unwrap_or("<invalid utf8>")),
-                Err(e) => kprintln!("ext2: hello.txt read [10..] failed: {:?}", e),
-            }
-        }
-        Err(e) => kprintln!("ext2: lookup hello.txt failed: {:?}", e),
-    }
-
-    // Step 6: Inode cache verification.
-    // Lookups [1] and [2] held simultaneously: same address (cache hit).
-    // Lookup [3] after caller drops: same address — LRU Vec still holds strong Arc.
-    // Lookup [4] of different inode: miss, inserts lost+found; count grows to 3
-    //   (root + hello.txt + lost+found all pinned in LRU Vec).
-    {
-        let inode1 = root.iops.lookup(&root, "hello.txt");
-        let inode2 = root.iops.lookup(&root, "hello.txt");
-        if let Ok(i) = &inode1 { kprintln!("ext2: lookup[1] hello.txt: addr={:#x}", Arc::as_ptr(i) as usize); }
-        if let Ok(i) = &inode2 { kprintln!("ext2: lookup[2] hello.txt: addr={:#x}", Arc::as_ptr(i) as usize); }
-    }
-    match root.iops.lookup(&root, "hello.txt") {
-        Ok(i) => kprintln!("ext2: lookup[3] hello.txt: addr={:#x}", Arc::as_ptr(&i) as usize),
-        Err(e) => kprintln!("ext2: lookup[3] hello.txt failed: {:?}", e),
-    }
-    match root.iops.lookup(&root, "lost+found") {
-        Ok(i) => kprintln!("ext2: lookup[4] lost+found: addr={:#x}", Arc::as_ptr(&i) as usize),
-        Err(e) => kprintln!("ext2: lookup[4] lost+found failed: {:?}", e),
-    }
-}
-

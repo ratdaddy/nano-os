@@ -452,7 +452,7 @@ fn align_up(x: usize, align: usize) -> usize {
 Before committing:
 
 - [ ] All imports follow the external → blank → internal pattern
-- [ ] No `crate::` usage at call sites (only in imports)
+- [ ] No `crate::` or `core::` or `alloc::` usage at call sites (only in `use` declarations)
 - [ ] Mutable statics use `&raw mut` pattern
 - [ ] No unnecessary nested `unsafe` blocks
 - [ ] Method names clearly indicate async vs sync behavior

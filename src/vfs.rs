@@ -6,6 +6,8 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::ptr::{addr_of, addr_of_mut};
+use core::str::from_utf8;
 
 use crate::dev;
 use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom, SuperBlock, inode_id};
@@ -33,7 +35,7 @@ static mut MOUNTS: Option<Vec<Mount>> = None;
 /// Initialize the VFS with a root filesystem SuperBlock (mount 0).
 pub fn init(sb: &'static dyn SuperBlock) {
     unsafe {
-        let mounts = core::ptr::addr_of_mut!(MOUNTS);
+        let mounts = addr_of_mut!(MOUNTS);
         *mounts = Some(Vec::new());
         (*mounts).as_mut().unwrap().push(Mount { mountpoint_inode: None, mountpoint: "/", sb });
     }
@@ -42,7 +44,7 @@ pub fn init(sb: &'static dyn SuperBlock) {
 /// Return mount info for all mounted filesystems.
 pub fn mounts() -> Vec<MountInfo> {
     unsafe {
-        let mounts = core::ptr::addr_of!(MOUNTS);
+        let mounts = addr_of!(MOUNTS);
         (*mounts).as_ref().map_or_else(Vec::new, |mounts| {
             mounts.iter().enumerate().map(|(i, m)| MountInfo {
                 id: i,
@@ -54,12 +56,15 @@ pub fn mounts() -> Vec<MountInfo> {
 }
 
 /// Mount a registered filesystem at the given path.
-pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
+///
+/// `source` is the device to mount (e.g. `Some("/dev/sda2")`) for block-based
+/// filesystems, or `None` for virtual filesystems (procfs, ramfs).
+pub fn vfs_mount_at(source: Option<&str>, path: &'static str, fs_name: &str) -> Result<(), Error> {
     let inode = vfs_lookup(path)?;
     let fs = find_filesystem(fs_name).ok_or(Error::NotFound)?;
-    let sb = fs.mount()?;
+    let sb = fs.mount(source)?;
     unsafe {
-        let mounts = core::ptr::addr_of_mut!(MOUNTS);
+        let mounts = addr_of_mut!(MOUNTS);
         (*mounts).as_mut().expect("VFS not initialized").push(Mount {
             mountpoint_inode: Some(inode),
             mountpoint: path,
@@ -76,10 +81,14 @@ pub fn vfs_mount_at(path: &'static str, fs_name: &str) -> Result<(), Error> {
 /// Filesystem driver trait — each filesystem type implements this.
 pub trait FileSystem: Send + Sync {
     fn name(&self) -> &'static str;
-    fn mount(&self) -> Result<&'static dyn SuperBlock, Error>;
-    /// Returns true if this filesystem requires a block device to mount.
-    /// Virtual filesystems (proc, ramfs) return false; disk-based return true.
-    fn requires_device(&self) -> bool;
+    /// Returns true if this filesystem does not require a block device.
+    /// Matches the Linux `nodev` flag shown in /proc/filesystems.
+    fn nodev(&self) -> bool { false }
+    /// Mount the filesystem and return a SuperBlock.
+    ///
+    /// `source` is the device path for block-based filesystems (e.g. "/dev/sda2").
+    /// Virtual filesystems (procfs, ramfs) ignore it and accept `None`.
+    fn mount(&self, source: Option<&str>) -> Result<&'static dyn SuperBlock, Error>;
 }
 
 static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
@@ -87,7 +96,7 @@ static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
 /// Register a filesystem driver.
 pub fn register_filesystem(fs: &'static dyn FileSystem) {
     unsafe {
-        let fss = core::ptr::addr_of_mut!(FILESYSTEMS);
+        let fss = addr_of_mut!(FILESYSTEMS);
         if (*fss).is_none() {
             *fss = Some(Vec::new());
         }
@@ -98,7 +107,7 @@ pub fn register_filesystem(fs: &'static dyn FileSystem) {
 /// Look up a registered filesystem by name.
 pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
     unsafe {
-        let fss = core::ptr::addr_of!(FILESYSTEMS);
+        let fss = addr_of!(FILESYSTEMS);
         (*fss).as_ref()
             .and_then(|fss| fss.iter().find(|fs| fs.name() == name))
             .copied()
@@ -108,7 +117,7 @@ pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
 /// Return all registered filesystem drivers.
 pub fn filesystems() -> Vec<&'static dyn FileSystem> {
     unsafe {
-        let fss = core::ptr::addr_of!(FILESYSTEMS);
+        let fss = addr_of!(FILESYSTEMS);
         (*fss).as_ref().map_or_else(Vec::new, |fss| fss.clone())
     }
 }
@@ -120,7 +129,7 @@ pub fn filesystems() -> Vec<&'static dyn FileSystem> {
 /// Return the root inode from mount 0.
 fn root_inode() -> Result<Arc<Inode>, Error> {
     unsafe {
-        let mounts = core::ptr::addr_of!(MOUNTS);
+        let mounts = addr_of!(MOUNTS);
         Ok((*mounts).as_ref().ok_or(Error::InvalidInput)?[0].sb.root_inode())
     }
 }
@@ -128,7 +137,7 @@ fn root_inode() -> Result<Arc<Inode>, Error> {
 /// Check if an inode is a mountpoint; if so, return the mounted root inode.
 fn cross_mount(inode: Arc<Inode>) -> Arc<Inode> {
     unsafe {
-        let mounts = core::ptr::addr_of!(MOUNTS);
+        let mounts = addr_of!(MOUNTS);
         if let Some(mounts) = (*mounts).as_ref() {
             for mount in mounts {
                 if let Some(ref mp) = mount.mountpoint_inode {
@@ -204,7 +213,7 @@ pub fn vfs_read_to_string(file: &mut File, out: &mut String) -> Result<(), Error
         if len == 0 {
             break;
         }
-        let s = core::str::from_utf8(&buf[..len]).map_err(|_| Error::InvalidUtf8)?;
+        let s = from_utf8(&buf[..len]).map_err(|_| Error::InvalidUtf8)?;
         out.push_str(s);
     }
     Ok(())
@@ -322,7 +331,7 @@ mod tests {
     fn mount_over(mountpoint: Arc<Inode>, root: Arc<Inode>) {
         let sb: &'static dyn SuperBlock = Box::leak(Box::new(MockSuperBlock { root }));
         unsafe {
-            let mounts = core::ptr::addr_of_mut!(MOUNTS);
+            let mounts = addr_of_mut!(MOUNTS);
             (*mounts).as_mut().unwrap().push(Mount {
                 mountpoint_inode: Some(mountpoint),
                 mountpoint: "",

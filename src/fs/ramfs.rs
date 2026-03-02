@@ -101,8 +101,8 @@ pub struct RamfsFileSystem;
 
 impl FileSystem for RamfsFileSystem {
     fn name(&self) -> &'static str { "ramfs" }
-    fn requires_device(&self) -> bool { false }
-    fn mount(&self) -> Result<&'static dyn SuperBlock, Error> {
+    fn nodev(&self) -> bool { true }
+    fn mount(&self, _source: Option<&str>) -> Result<&'static dyn SuperBlock, Error> {
         let ramfs = Box::leak(Box::new(Ramfs::new()));
         Ok(ramfs.superblock())
     }
