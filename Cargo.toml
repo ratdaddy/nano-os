@@ -32,6 +32,7 @@ trace_traps = []
 trace_scheduler = []
 trace_process = []
 trace_amo = []
+trace_volumes = []
 
 [build-dependencies]
 memoffset = "0.9.1"

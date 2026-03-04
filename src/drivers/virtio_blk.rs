@@ -1,5 +1,8 @@
 //! VirtIO block device driver
 
+use core::ptr::addr_of;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::block::disk;
 use crate::drivers::block::validate_read_buffer;
 use crate::drivers::{plic, BlockDriver, BlockError};
@@ -36,6 +39,7 @@ const VIRTIO_INT_USED_BUFFER: u32 = 0x1;
 const VIRTIO_MMIO_MAGIC_VALUE: usize = 0x000;
 const VIRTIO_MMIO_VERSION: usize = 0x004;
 const VIRTIO_MMIO_DEVICE_ID: usize = 0x008;
+#[cfg(feature = "trace_volumes")]
 const VIRTIO_MMIO_DEVICE_FEATURES: usize = 0x010;
 const VIRTIO_MMIO_DRIVER_FEATURES: usize = 0x020;
 const VIRTIO_MMIO_QUEUE_SEL: usize = 0x030;
@@ -96,7 +100,7 @@ struct ReqBuffer(VirtioBlkReq);
 static mut DESC: DescTable = DescTable([VirtqDesc { addr: 0, len: 0, flags: 0, next: 0 }; 8]);
 static mut AVAIL: AvailRing = AvailRing([0; 12]);
 static mut REQ: ReqBuffer = ReqBuffer(VirtioBlkReq { req_type: 0, _reserved: 0, sector: 0 });
-static mut STATUS: u8 = 0xFF;
+static mut STATUS: u8 = 0xff;
 
 /// VirtIO block device
 pub struct VirtioBlk {
@@ -109,7 +113,8 @@ impl VirtioBlk {
     /// Probe for a VirtIO block device
     fn probe() -> Option<usize> {
 
-        kprintln!("VirtIO: Probing for block device...");
+        #[cfg(feature = "trace_volumes")]
+        kprintln!("virtio: probing for block device");
         for i in 0..VIRTIO_COUNT {
             let base = VIRTIO_BASE + i * VIRTIO_STRIDE;
             let magic = read32(base, VIRTIO_MMIO_MAGIC_VALUE);
@@ -123,14 +128,14 @@ impl VirtioBlk {
             }
 
             let device_id = read32(base, VIRTIO_MMIO_DEVICE_ID);
-            kprintln!("VirtIO: Found device at {:#x}, id={}", base, device_id);
+            #[cfg(feature = "trace_volumes")]
+            kprintln!("virtio: found device at {:#x}, id={}", base, device_id);
 
             if device_id == VIRTIO_DEVICE_ID_BLOCK {
-                kprintln!("VirtIO: Block device found at {:#x}", base);
                 return Some(base);
             }
         }
-        kprintln!("VirtIO: No block device found");
+        kprintln!("VirtIO: no block device found");
         None
     }
 
@@ -146,8 +151,11 @@ impl VirtioBlk {
         write32(base, VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
         // Read and accept features
-        let features = read32(base, VIRTIO_MMIO_DEVICE_FEATURES);
-        kprintln!("VirtIO: device features = {:#x}", features);
+        #[cfg(feature = "trace_volumes")]
+        {
+            let features = read32(base, VIRTIO_MMIO_DEVICE_FEATURES);
+            kprintln!("virtio: device features = {:#x}", features);
+        }
         write32(base, VIRTIO_MMIO_DRIVER_FEATURES, 0);
 
         // Features OK
@@ -156,7 +164,8 @@ impl VirtioBlk {
 
         // Check features OK was accepted
         let status = read32(base, VIRTIO_MMIO_STATUS);
-        kprintln!("VirtIO: status after features = {:#x}", status);
+        #[cfg(feature = "trace_volumes")]
+        kprintln!("virtio: status after features = {:#x}", status);
         if status & VIRTIO_STATUS_FEATURES_OK == 0 {
             kprintln!("VirtIO: FEATURES_OK not accepted!");
             return Err(BlockError::IoError);
@@ -165,7 +174,8 @@ impl VirtioBlk {
         // Set up virtqueue 0
         write32(base, VIRTIO_MMIO_QUEUE_SEL, 0);
         let max_size = read32(base, VIRTIO_MMIO_QUEUE_NUM_MAX);
-        kprintln!("VirtIO: queue max size = {}", max_size);
+        #[cfg(feature = "trace_volumes")]
+        kprintln!("virtio: queue max size = {}", max_size);
         if max_size == 0 {
             kprintln!("VirtIO: queue max size is 0!");
             return Err(BlockError::IoError);
@@ -173,23 +183,24 @@ impl VirtioBlk {
         write32(base, VIRTIO_MMIO_QUEUE_NUM, VIRTIO_QUEUE_SIZE);
 
         // Get physical addresses for queue structures
-        let desc_phys = kernel_virt_to_phys(core::ptr::addr_of!(DESC) as usize)
+        let desc_phys = kernel_virt_to_phys(addr_of!(DESC) as usize)
             .ok_or_else(|| {
                 kprintln!("VirtIO: Failed to get physical address for DESC");
                 BlockError::IoError
             })?;
-        let avail_phys = kernel_virt_to_phys(core::ptr::addr_of!(AVAIL) as usize)
+        let avail_phys = kernel_virt_to_phys(addr_of!(AVAIL) as usize)
             .ok_or_else(|| {
                 kprintln!("VirtIO: Failed to get physical address for AVAIL");
                 BlockError::IoError
             })?;
-        let used_phys = kernel_virt_to_phys(core::ptr::addr_of!(USED) as usize)
+        let used_phys = kernel_virt_to_phys(addr_of!(USED) as usize)
             .ok_or_else(|| {
                 kprintln!("VirtIO: Failed to get physical address for USED");
                 BlockError::IoError
             })?;
 
-        kprintln!("VirtIO: queue physical addresses: desc={:#x}, avail={:#x}, used={:#x}",
+        #[cfg(feature = "trace_volumes")]
+        kprintln!("virtio: queue physical addresses: desc={:#x}, avail={:#x}, used={:#x}",
                  desc_phys, avail_phys, used_phys);
 
         // Tell device where the queues are
@@ -209,9 +220,9 @@ impl VirtioBlk {
                 VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
         // Get physical addresses for I/O buffers
-        let req_phys = kernel_virt_to_phys(core::ptr::addr_of!(REQ) as usize)
+        let req_phys = kernel_virt_to_phys(addr_of!(REQ) as usize)
             .ok_or(BlockError::IoError)?;
-        let status_phys = kernel_virt_to_phys(core::ptr::addr_of!(STATUS) as usize)
+        let status_phys = kernel_virt_to_phys(addr_of!(STATUS) as usize)
             .ok_or(BlockError::IoError)?;
 
         Ok(VirtioBlk {
@@ -252,7 +263,7 @@ impl BlockDriver for VirtioBlk {
             REQ.0.req_type = VIRTIO_BLK_T_IN;
             REQ.0._reserved = 0;
             REQ.0.sector = sector as u64;
-            STATUS = 0xFF;
+            STATUS = 0xff;
 
             // Build descriptor chain (3 descriptors: request header, data buffer, status byte)
             DESC.0[0].addr = self.req_phys as u64;
@@ -291,7 +302,6 @@ impl BlockDriver for VirtioBlk {
 
 /// VirtIO interrupt handler
 fn virtio_irq_handler(_irq: u32) {
-    use core::sync::atomic::Ordering;
 
     let base = DEVICE_BASE.load(Ordering::Relaxed);
     if base == 0 {
@@ -312,7 +322,6 @@ fn virtio_irq_handler(_irq: u32) {
 
 /// Initialize VirtIO block device and register interrupt handler
 pub fn init() -> Result<VirtioBlk, BlockError> {
-    use core::sync::atomic::Ordering;
 
     let device = VirtioBlk::new()?;
 
@@ -323,7 +332,7 @@ pub fn init() -> Result<VirtioBlk, BlockError> {
     let device_index = ((device.base - VIRTIO_BASE) / VIRTIO_STRIDE) as u32;
     let irq = VIRTIO_IRQ_BASE + device_index;
 
-    kprintln!("VirtIO: Registering IRQ {} for device at {:#x}", irq, device.base);
+    kprintln!("VirtIO block device: IRQ {} at {:#x}", irq, device.base);
 
     // Register interrupt handler with PLIC
     plic::register_irq(irq, virtio_irq_handler);
@@ -338,7 +347,7 @@ struct UsedRing([u32; 20]);
 static mut USED: UsedRing = UsedRing([0; 20]);
 
 // Device base for interrupt handler
-static DEVICE_BASE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static DEVICE_BASE: AtomicUsize = AtomicUsize::new(0);
 
 // MMIO register access
 fn read32(base: usize, offset: usize) -> u32 {

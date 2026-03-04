@@ -5,19 +5,20 @@
 use alloc::vec::Vec;
 
 // MBR layout constants
-const MBR_SIGNATURE: u16 = 0xAA55;
+const MBR_SIGNATURE: u16 = 0xaa55;
 const MBR_SIGNATURE_OFFSET: usize = 510;
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 const MBR_PARTITION_ENTRY_SIZE: usize = 16;
 
 // Partition entry field offsets
-const PARTITION_STATUS_OFFSET: usize = 0;
 const PARTITION_TYPE_OFFSET: usize = 4;
 const PARTITION_LBA_OFFSET: usize = 8;
 const PARTITION_SECTORS_OFFSET: usize = 12;
 
-// Size conversion constants
+// Size conversion constants (used for trace output)
+#[cfg(feature = "trace_volumes")]
 const SECTOR_SIZE: u64 = 512;
+#[cfg(feature = "trace_volumes")]
 const BYTES_PER_MB: u64 = 1024 * 1024;
 
 /// MBR partition entry
@@ -25,9 +26,8 @@ const BYTES_PER_MB: u64 = 1024 * 1024;
 pub struct Partition {
     /// Partition number (1-4)
     pub number: u8,
-    /// Boot indicator (0x80 = bootable, 0x00 = not bootable)
-    pub status: u8,
     /// Partition type ID
+    #[cfg(feature = "trace_volumes")]
     pub partition_type: u8,
     /// Starting LBA (Logical Block Address)
     pub lba_start: u32,
@@ -35,12 +35,8 @@ pub struct Partition {
     pub num_sectors: u32,
 }
 
+#[cfg(feature = "trace_volumes")]
 impl Partition {
-    /// Check if this partition is bootable
-    pub fn is_bootable(&self) -> bool {
-        self.status == 0x80
-    }
-
     /// Get partition size in bytes
     pub fn size_bytes(&self) -> u64 {
         self.num_sectors as u64 * SECTOR_SIZE
@@ -79,7 +75,6 @@ pub fn parse_mbr(block0: &[u8; 512]) -> Vec<Partition> {
         let offset = MBR_PARTITION_TABLE_OFFSET + i * MBR_PARTITION_ENTRY_SIZE;
         let entry_bytes = &block0[offset..offset + MBR_PARTITION_ENTRY_SIZE];
 
-        let status = entry_bytes[PARTITION_STATUS_OFFSET];
         let partition_type = entry_bytes[PARTITION_TYPE_OFFSET];
         let lba_start = u32::from_le_bytes(
             entry_bytes[PARTITION_LBA_OFFSET..PARTITION_LBA_OFFSET + 4].try_into().unwrap()
@@ -95,7 +90,7 @@ pub fn parse_mbr(block0: &[u8; 512]) -> Vec<Partition> {
 
         partitions.push(Partition {
             number: (i + 1) as u8,
-            status,
+            #[cfg(feature = "trace_volumes")]
             partition_type,
             lba_start,
             num_sectors,
@@ -106,6 +101,7 @@ pub fn parse_mbr(block0: &[u8; 512]) -> Vec<Partition> {
 }
 
 /// Get human-readable partition type name
+#[cfg(feature = "trace_volumes")]
 fn partition_type_name(type_id: u8) -> &'static str {
     match type_id {
         0x00 => "Empty",

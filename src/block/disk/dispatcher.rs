@@ -22,10 +22,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 
 use crate::drivers::{BlockDriver, BlockError};
+#[cfg(feature = "trace_volumes")]
 use crate::dtb;
 use crate::thread;
 
 /// Read the RISC-V time register
+#[cfg(feature = "trace_volumes")]
 #[inline]
 fn read_time() -> u64 {
     let time: u64;
@@ -145,6 +147,7 @@ fn dispatcher_entry() {
 /// Pending request state
 struct PendingRequest {
     requester_tid: usize,
+    #[cfg(feature = "trace_volumes")]
     start_time: u64,
 }
 
@@ -155,7 +158,6 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
     let tid = thread::Thread::current().id;
     let name = device.name();
     kprintln!("Block dispatcher [{}] started (tid={})", name, tid);
-    kprintln!("Dispatcher [{}]: Ready, waiting for read requests...", name);
 
     // Main dispatcher loop - handles both VirtIO and SD
     loop {
@@ -167,10 +169,11 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                 // Get caller's buffer
                 let buf = unsafe { &mut *buffer };
 
-                kprintln!("Dispatcher [{}]: ReadRequest from tid={}, sector={}, buffer_len={}",
-                         name, requester_tid, sector, buf.len());
+                #[cfg(feature = "trace_volumes")]
+                kprintln!("dispatcher [{}]: read sector={} tid={}", name, sector, requester_tid);
 
                 // Issue read to device
+                #[cfg(feature = "trace_volumes")]
                 let start_time = read_time();
                 match device.start_read(sector, buf) {
                     Ok(_) => {
@@ -179,12 +182,13 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                             let ptr = &raw mut PENDING_REQUEST;
                             *ptr = Some(PendingRequest {
                                 requester_tid,
+                                #[cfg(feature = "trace_volumes")]
                                 start_time,
                             });
                         }
                     }
                     Err(e) => {
-                        kprintln!("Dispatcher [{}]: Failed to issue read: {:?}", name, e);
+                        kprintln!("dispatcher [{}]: failed to issue read: {:?}", name, e);
                         // Send error response to requester
                         let response = BlockMessage::ReadResponse { status: Err(e) };
                         let ptr = Box::into_raw(Box::new(response));
@@ -196,8 +200,6 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                 }
             }
             BlockMessage::ReadComplete { status } => {
-                let end_time = read_time();
-
                 // Get pending request info
                 let pending = unsafe {
                     let ptr = &raw mut PENDING_REQUEST;
@@ -205,16 +207,19 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                 };
 
                 if let Some(req) = pending {
-                    let elapsed_cycles = end_time - req.start_time;
-                    let timebase_freq = dtb::get_timebase_frequency();
-                    let elapsed_us = (elapsed_cycles * 1_000_000) / timebase_freq;
+                    #[cfg(feature = "trace_volumes")]
+                    if status.is_ok() {
+                        let end_time = read_time();
+                        let elapsed_cycles = end_time - req.start_time;
+                        let timebase_freq = dtb::get_timebase_frequency();
+                        let elapsed_us = (elapsed_cycles * 1_000_000) / timebase_freq;
+                        kprintln!("dispatcher [{}]: read completed in {} us", name, elapsed_us);
+                    }
 
                     match status {
-                        Ok(()) => {
-                            kprintln!("Dispatcher [{}]: Read completed in {} us", name, elapsed_us);
-                        }
+                        Ok(()) => {}
                         Err(e) => {
-                            kprintln!("Dispatcher [{}]: Read failed: {:?}", name, e);
+                            kprintln!("dispatcher [{}]: read failed: {:?}", name, e);
                         }
                     }
 
@@ -226,12 +231,12 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                         data: ptr as usize,
                     });
                 } else {
-                    kprintln!("Dispatcher [{}]: ReadComplete but no pending request!", name);
+                    kprintln!("dispatcher [{}]: ReadComplete but no pending request!", name);
                 }
             }
             BlockMessage::ReadResponse { .. } => {
                 // Dispatcher should never receive ReadResponse (it only sends them)
-                kprintln!("Dispatcher [{}]: ERROR - Received unexpected ReadResponse message!", name);
+                kprintln!("dispatcher [{}]: ERROR - received unexpected ReadResponse", name);
             }
         }
     }

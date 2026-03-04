@@ -198,6 +198,7 @@ pub fn get_cpu_type() -> CpuType {
     }
 }
 
+#[cfg(feature = "trace_volumes")]
 #[inline]
 pub fn get_timebase_frequency() -> u64 {
     let freq = TIMEBASE_FREQ.load(Ordering::Relaxed);

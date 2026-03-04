@@ -13,7 +13,7 @@ EXT2IMG := $(BUILD_DIR)/ext2.img
 EXT2IMG_IMAGE := ext2img-builder
 INIT_ELF := prog_example/target/riscv64gc-unknown-linux-musl/release/prog_example
 
-#FEATURES := --features print_dtb,trace_syscalls,trace_trap,trace_scheduler,trace_process
+#FEATURES := --features print_dtb,trace_syscalls,trace_trap,trace_scheduler,trace_process,trace_volumes
 FEATURES :=
 
 SD_MOUNT=/Volumes/KERNEL
