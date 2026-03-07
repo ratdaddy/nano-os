@@ -7,7 +7,6 @@ use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps};
 
 use super::dir::{DirEntryIter, EXT2_FT_BLKDEV, EXT2_FT_CHRDEV, EXT2_FT_DIR, EXT2_FT_REG_FILE};
 use super::inode::Ext2InodeData;
-use super::superblock::NDIR_BLOCKS;
 
 pub(super) struct Ext2InodeOps;
 pub(super) struct Ext2FileOps;
@@ -52,10 +51,8 @@ impl FileOps for Ext2FileOps {
 
         while buf_pos < buf.len() && file.offset < file_len {
             let block_idx = file.offset / block_size;
-            if block_idx >= NDIR_BLOCKS {
-                break; // indirect blocks not yet supported
-            }
-            let block_ptr = fs_data.blocks[block_idx];
+            let block_ptr = sb.resolve_block_ptr(&fs_data.blocks, block_idx)
+                .map_err(|_| Error::InvalidInput)?;
             if block_ptr == 0 {
                 break; // sparse hole or end of allocated blocks
             }

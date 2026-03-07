@@ -14,7 +14,6 @@ use crate::drivers::{BlockError, BLOCK_SIZE};
 use crate::file::{Inode, SuperBlock};
 
 pub(super) const INODE_CACHE_CAPACITY: usize = 32;
-pub(super) const NDIR_BLOCKS: usize = 12;
 pub(super) const MIN_BLOCK_SIZE: u32 = 1024;
 pub(super) const ROOT_INODE: u32 = 2;
 

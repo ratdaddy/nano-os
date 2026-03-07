@@ -24,6 +24,8 @@ CMD set -e && \
     echo "File in subdirectory" > /mnt/ext2/subdir/test.txt && \
     mknod /mnt/ext2/console c 5 1 && \
     mknod /mnt/ext2/sda b 8 0 && \
+    dd if=/dev/zero bs=4096 count=12 2>/dev/null | tr '\0' 'A' > /mnt/ext2/large.txt && \
+    printf 'Hello from indirect block!\n' >> /mnt/ext2/large.txt && \
     \
     # Unmount
     umount /mnt/ext2 && \
@@ -33,4 +35,5 @@ CMD set -e && \
     echo "    - /hello.txt" && \
     echo "    - /subdir/test.txt" && \
     echo "    - /console (c 5,1)" && \
-    echo "    - /sda (b 8,0)"
+    echo "    - /sda (b 8,0)" && \
+    echo "    - /large.txt (48 KiB padding + indirect block marker)"

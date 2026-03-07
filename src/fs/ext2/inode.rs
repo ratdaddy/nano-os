@@ -11,6 +11,8 @@ use crate::file::{S_IFBLK, S_IFCHR, S_IFDIR, S_IFREG, S_IFMT};
 use super::ops::{EXT2_FILE_OPS, EXT2_INODE_OPS};
 use super::superblock::Ext2SuperBlock;
 
+const NDIR_BLOCKS: usize = 12;
+
 // Inode structure offsets (within inode data)
 const INODE_MODE_OFFSET: usize = 0;
 const INODE_SIZE_OFFSET: usize = 4;
@@ -70,6 +72,49 @@ impl Ext2SuperBlock {
         let inode = self.read_inode(inode_num)?;
         cache.insert(inode_num, Arc::clone(&inode));
         Ok(inode)
+    }
+
+    /// Resolve a logical block index to a physical block pointer.
+    ///
+    /// Handles direct blocks (0..12) and single-indirect (12..12+ptrs_per_block).
+    /// Returns 0 for an unallocated (sparse) block or an out-of-range index.
+    pub(super) fn resolve_block_ptr(
+        &self,
+        blocks: &[u32; 15],
+        block_idx: usize,
+    ) -> Result<u32, BlockError> {
+        if block_idx < NDIR_BLOCKS {
+            return Ok(blocks[block_idx]);
+        }
+
+        let block_size = self.block_size() as usize;
+        let ptrs_per_block = block_size / 4;
+        let indirect_idx = block_idx - NDIR_BLOCKS;
+        if indirect_idx < ptrs_per_block {
+            let indirect_ptr = blocks[NDIR_BLOCKS];
+            if indirect_ptr == 0 {
+                return Ok(0);
+            }
+            let buf = self.volume.as_ref().get_block(self.block_to_sector(indirect_ptr))?;
+            return Ok(buf.read_u32_le(indirect_idx * 4));
+        }
+
+        let double_idx = indirect_idx - ptrs_per_block;
+        if double_idx < ptrs_per_block * ptrs_per_block {
+            let dindirect_ptr = blocks[NDIR_BLOCKS + 1];
+            if dindirect_ptr == 0 {
+                return Ok(0);
+            }
+            let l1_buf = self.volume.as_ref().get_block(self.block_to_sector(dindirect_ptr))?;
+            let l1_ptr = l1_buf.read_u32_le((double_idx / ptrs_per_block) * 4);
+            if l1_ptr == 0 {
+                return Ok(0);
+            }
+            let l2_buf = self.volume.as_ref().get_block(self.block_to_sector(l1_ptr))?;
+            return Ok(l2_buf.read_u32_le((double_idx % ptrs_per_block) * 4));
+        }
+
+        Ok(0) // triple indirect not supported
     }
 
     /// Calculate the disk sector and byte offset for a given inode number.

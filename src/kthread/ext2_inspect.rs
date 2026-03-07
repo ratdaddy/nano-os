@@ -99,6 +99,25 @@ fn inspect_thread() {
         Err(e) => kprintln!("ext2: lookup hello.txt failed: {:?}", e),
     }
 
+    // Single-indirect block test: seek past the 12 direct blocks and read marker text.
+    match root.iops.lookup(&root, "large.txt") {
+        Ok(inode) => {
+            let mut file = inode.fops.open(Arc::clone(&inode)).unwrap();
+            let fops = file.fops;
+            let indirect_offset = 12 * sb.block_size() as usize;
+            match fops.seek(&mut file, SeekFrom::Start(indirect_offset)) {
+                Ok(()) => {}
+                Err(e) => { kprintln!("ext2: large.txt seek failed: {:?}", e); return; }
+            }
+            let mut buf = [0u8; 64];
+            match fops.read(&mut file, &mut buf) {
+                Ok(n) => kprintln!("ext2: large.txt indirect: {:?}", from_utf8(&buf[..n]).unwrap_or("<invalid utf8>")),
+                Err(e) => kprintln!("ext2: large.txt read failed: {:?}", e),
+            }
+        }
+        Err(e) => kprintln!("ext2: lookup large.txt failed: {:?}", e),
+    }
+
     // Inode cache verification:
     // Lookups [1] and [2] held simultaneously: same address (cache hit).
     // Lookup [3] after caller drops: same address — LRU Vec still holds strong Arc.

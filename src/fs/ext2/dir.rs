@@ -10,7 +10,7 @@ use crate::drivers::BlockError;
 use crate::file::Inode;
 
 use super::inode::Ext2InodeData;
-use super::superblock::{Ext2SuperBlock, NDIR_BLOCKS};
+use super::superblock::Ext2SuperBlock;
 
 // Directory entry structure offsets
 const DIR_ENTRY_INODE_OFFSET: usize = 0;
@@ -27,7 +27,7 @@ pub(super) const EXT2_FT_BLKDEV: u8 = 4;
 
 /// An iterator over raw directory entries in an ext2 directory inode.
 ///
-/// Reads direct data blocks one at a time, yielding `(inode_num, name, file_type_byte)`
+/// Reads data blocks one at a time (direct and single-indirect), yielding `(inode_num, name, file_type_byte)`
 /// for each valid entry. Deleted entries (inode_num == 0) are skipped automatically.
 /// Disk I/O errors are surfaced as `Err(BlockError)` rather than panicking.
 ///
@@ -70,13 +70,14 @@ impl Iterator for DirEntryIter {
         loop {
             // Load the next block when the current one is exhausted (or on first call).
             if self.block_offset >= self.block_size {
-                if self.block_idx >= NDIR_BLOCKS || self.bytes_read >= self.dir_size {
+                if self.bytes_read >= self.dir_size {
                     return None;
                 }
-                let block_ptr = self.blocks[self.block_idx];
-                if block_ptr == 0 {
-                    return None;
-                }
+                let block_ptr = match self.sb.resolve_block_ptr(&self.blocks, self.block_idx) {
+                    Ok(0)    => return None,
+                    Ok(ptr)  => ptr,
+                    Err(e)   => return Some(Err(e)),
+                };
                 let sector = self.sb.block_to_sector(block_ptr);
                 match self.sb.volume.as_ref().get_block(sector) {
                     Ok(block) => self.buf = Some(block),
