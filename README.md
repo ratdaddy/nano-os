@@ -34,6 +34,8 @@ make run
 make copy
 ```
 
+> **First time?** See [Preparing an SD card](#preparing-an-sd-card) below.
+
 ## Makefile Targets
 
 ### Build Targets
@@ -157,6 +159,38 @@ nano-os/
 └── sdimg/                  # Docker build for SD card image
 
 ```
+
+## Preparing an SD card
+
+`make copy` assumes the SD card already has the correct partition layout. Run these
+steps once on a new card before using `make copy`.
+
+1. Insert the card and find its device node:
+   ```bash
+   diskutil list
+   ```
+   Look for your card, e.g. `/dev/disk4`.
+
+2. Partition it with the layout the Makefile expects:
+   ```bash
+   diskutil partitionDisk /dev/disk4 MBR \
+     FAT32 KERNEL 64M \
+     FAT32 BOOT R
+   ```
+   This creates partition 1 as FAT32 labelled `KERNEL` (macOS mounts it at
+   `/Volumes/KERNEL`) and partition 2 as a placeholder FAT32. The type of
+   partition 2 doesn't matter — `make copy` will overwrite it with the ext3
+   image via `dd`.
+
+3. Build the Docker images if you haven't already:
+   ```bash
+   make initramfs-docker
+   make ext2img-docker
+   ```
+
+The card is now ready. `make copy` will:
+- Copy `boot.sd` and `fip.bin` to the FAT32 partition
+- `dd` the ext3 filesystem image (`ext2.img`) directly onto partition 2
 
 ## SD Card Image Format
 

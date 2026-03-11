@@ -108,7 +108,7 @@ pub fn send_read_completion(status: Result<(), BlockError>) {
 /// cannot accept closures.
 ///
 /// Returns the thread ID of the newly created dispatcher thread.
-pub fn spawn_dispatcher<D: BlockDriver + 'static>(driver: D) -> Result<usize, &'static str> {
+pub(super) fn spawn_dispatcher<D: BlockDriver + 'static>(driver: D) -> Result<usize, &'static str> {
     let t = thread::Thread::new(dispatcher_entry);
     let tid = t.id;
 

@@ -25,6 +25,13 @@ pub(super) const EXT2_FT_DIR: u8 = 2;
 pub(super) const EXT2_FT_CHRDEV: u8 = 3;
 pub(super) const EXT2_FT_BLKDEV: u8 = 4;
 
+/// A single raw directory entry yielded by `DirEntryIter`.
+pub(super) struct RawDirEntry {
+    pub ino: u32,
+    pub name: String,
+    pub file_type: u8,
+}
+
 /// An iterator over raw directory entries in an ext2 directory inode.
 ///
 /// Reads data blocks one at a time (direct and single-indirect), yielding `(inode_num, name, file_type_byte)`
@@ -64,7 +71,7 @@ impl DirEntryIter {
 }
 
 impl Iterator for DirEntryIter {
-    type Item = Result<(u32, String, u8), BlockError>;
+    type Item = Result<RawDirEntry, BlockError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -129,8 +136,12 @@ impl Iterator for DirEntryIter {
             }
 
             match from_utf8(&buf[name_start..name_end]) {
-                Ok(name) => return Some(Ok((ino, String::from(name), ft_byte))),
-                Err(_)   => continue, // non-UTF-8 name; skip
+                Ok(name) => return Some(Ok(RawDirEntry {
+                    ino,
+                    name: String::from(name),
+                    file_type: ft_byte,
+                })),
+                Err(_) => continue, // non-UTF-8 name; skip
             }
         }
     }

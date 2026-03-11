@@ -44,6 +44,14 @@ fn inspect_thread() {
     for (i, group) in sb.groups.iter().enumerate() {
         kprintln!("  Group {}: inode_table={}", i, group.inode_table);
     }
+    match (sb.journal_inum, sb.journal_blocks) {
+        (Some(inum), Some(blocks)) =>
+            kprintln!("ext2: journal inode #{}, {} blocks ({} KB)",
+                inum, blocks, blocks * sb.block_size() / 1024),
+        (None, _) =>
+            kprintln!("ext2: no journal (pure ext2)"),
+        _ => {}
+    }
 
     let root = sb.root_inode();
     kprintln!("ext2: root inode: ino={}, type={:?}, len={}", root.ino, root.file_type, root.len);

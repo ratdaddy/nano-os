@@ -1,18 +1,18 @@
 FROM ubuntu:latest
 RUN apt-get update && apt-get install -y e2fsprogs && rm -rf /var/lib/apt/lists/*
 
-# Create an ext2 filesystem image for the second partition
+# Create an ext3 filesystem image for the second partition
 # Small size - just enough for test files (will be written to partition 2)
 # Output: ext2.img written to /output
 CMD set -e && \
     IMG=/output/ext2.img && \
-    IMG_SIZE=4M && \
+    IMG_SIZE=64M && \
     \
     # Create empty image file
     truncate -s $IMG_SIZE $IMG && \
     \
-    # Format as ext2 with label "BOOT"
-    mkfs.ext2 -L BOOT $IMG && \
+    # Format as ext3 with label "BOOT"
+    mkfs.ext3 -L BOOT $IMG && \
     \
     # Mount and add test files
     mkdir -p /mnt/ext2 && \
@@ -31,7 +31,7 @@ CMD set -e && \
     umount /mnt/ext2 && \
     \
     echo "Created $IMG ($(stat -c%s $IMG) bytes)" && \
-    echo "  Filesystem: ext2, label BOOT" && \
+    echo "  Filesystem: ext3, label BOOT" && \
     echo "    - /hello.txt" && \
     echo "    - /subdir/test.txt" && \
     echo "    - /console (c 5,1)" && \

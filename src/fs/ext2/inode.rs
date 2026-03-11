@@ -65,12 +65,13 @@ impl Ext2SuperBlock {
     /// On a cache hit, moves the entry to the front of the LRU and returns it
     /// without a disk read. On a miss, reads from disk and inserts into the cache.
     pub(super) fn get_or_read_inode(&'static self, inode_num: u32) -> Result<Arc<Inode>, BlockError> {
-        let cache = unsafe { &mut *self.inode_cache.get() };
+        let mut cache = self.inode_cache.lock();
         if let Some(arc) = cache.get(&inode_num) {
             return Ok(arc);
         }
+        drop(cache);
         let inode = self.read_inode(inode_num)?;
-        cache.insert(inode_num, Arc::clone(&inode));
+        self.inode_cache.lock().insert(inode_num, Arc::clone(&inode));
         Ok(inode)
     }
 
@@ -118,7 +119,7 @@ impl Ext2SuperBlock {
     }
 
     /// Calculate the disk sector and byte offset for a given inode number.
-    fn inode_location(&self, inode_num: u32) -> Result<(u64, usize), BlockError> {
+    pub(super) fn inode_location(&self, inode_num: u32) -> Result<(u64, usize), BlockError> {
         if inode_num == 0 {
             return Err(BlockError::InvalidInput);
         }

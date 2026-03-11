@@ -4,8 +4,9 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::cell::UnsafeCell;
 use core::str::from_utf8;
+
+use spin::Mutex;
 
 use crate::block::volume::{BlockVolume, CACHE_BLOCK_SIZE};
 use crate::bytes::ReadIntLe;
@@ -34,6 +35,12 @@ const MAGIC_OFFSET: usize = 56;
 const SB_INODE_SIZE_OFFSET: usize = 88;
 const VOLUME_LABEL_OFFSET: usize = 120;
 const VOLUME_LABEL_LEN: usize = 16;
+const SB_FEATURE_COMPAT_OFFSET: usize = 92;
+const SB_JOURNAL_INUM_OFFSET: usize = 224;
+const EXT3_FEATURE_COMPAT_HAS_JOURNAL: u32 = 0x0004;
+
+// Inode field offset used when reading the journal inode
+const INODE_SIZE_FIELD_OFFSET: usize = 4;
 
 // Group descriptor constants
 const GROUP_DESC_SIZE: usize = 32;
@@ -47,19 +54,18 @@ pub struct Ext2SuperBlock {
     pub(super) volume: Arc<dyn BlockVolume>,
     pub inodes_count: u32,
     pub blocks_count: u32,
-    pub log_block_size: u32,
-    pub blocks_per_group: u32,
-    pub inodes_per_group: u32,
-    pub inode_size: u16,
+    log_block_size: u32,
+    blocks_per_group: u32,
+    pub(super) inodes_per_group: u32,
+    pub(super) inode_size: u16,
     volume_label: Option<String>,
     pub groups: Vec<Ext2GroupDesc>,
+    pub journal_inum: Option<u32>,
+    pub journal_blocks: Option<u32>,
     root: Option<Arc<Inode>>,
-    pub(super) inode_cache: UnsafeCell<LruCache<u32, Inode>>,
+    pub(super) inode_cache: Mutex<LruCache<u32, Inode>>,
 }
 
-// Safety: ext2 is only accessed from a single thread; UnsafeCell is used in place
-// of a mutex since the kernel has no concurrent ext2 callers at this point.
-unsafe impl Sync for Ext2SuperBlock {}
 
 impl Ext2SuperBlock {
     /// Create and fully initialise an Ext2SuperBlock from a BlockVolume.
@@ -78,12 +84,31 @@ impl Ext2SuperBlock {
             inode_size: 0,
             volume_label: None,
             groups: Vec::new(),
+            journal_inum: None,
+            journal_blocks: None,
             root: None,
-            inode_cache: UnsafeCell::new(LruCache::new(INODE_CACHE_CAPACITY)),
+            inode_cache: Mutex::new(LruCache::new(INODE_CACHE_CAPACITY)),
         });
 
         sb_box.read_superblock_data()?;
         sb_box.read_group_descriptors()?;
+
+        if let Some(journal_inum) = sb_box.journal_inum {
+            if let Ok((sector, offset)) = sb_box.inode_location(journal_inum) {
+                if let Ok(buf) = sb_box.volume.as_ref().get_block(sector) {
+                    let i_size = buf.read_u32_le(offset + INODE_SIZE_FIELD_OFFSET);
+                    sb_box.journal_blocks = Some(i_size / sb_box.block_size());
+                }
+            }
+
+            #[cfg(feature = "trace_volumes")]
+            if let Some(journal_blocks) = sb_box.journal_blocks {
+                kprintln!("ext2: journal inode #{}, {} blocks ({} KB)",
+                    journal_inum,
+                    journal_blocks,
+                    journal_blocks * sb_box.block_size() / 1024);
+            }
+        }
 
         // Safety: The box is about to be leaked, making this &'static valid.
         // We retain mutable access through sb_box until Box::leak consumes it.
@@ -147,6 +172,11 @@ impl Ext2SuperBlock {
         } else {
             None
         };
+
+        let feature_compat = buf.read_u32_le(SB_FEATURE_COMPAT_OFFSET);
+        if feature_compat & EXT3_FEATURE_COMPAT_HAS_JOURNAL != 0 {
+            self.journal_inum = Some(buf.read_u32_le(SB_JOURNAL_INUM_OFFSET));
+        }
 
         Ok(())
     }

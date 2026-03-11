@@ -30,10 +30,10 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
 }
 
 pub struct LinkedListAllocator {
-    pub head: UnsafeCell<*mut BlockHeader>,
-    pub tail: UnsafeCell<*mut BlockHeader>,
-    pub heap_end: UnsafeCell<*mut BlockHeader>,
-    pub free_head: UnsafeCell<*mut BlockHeader>,
+    pub(super) head: UnsafeCell<*mut BlockHeader>,
+    pub(super) tail: UnsafeCell<*mut BlockHeader>,
+    pub(super) heap_end: UnsafeCell<*mut BlockHeader>,
+    pub(super) free_head: UnsafeCell<*mut BlockHeader>,
     pub grow_heap_fn: fn(usize) -> Option<(usize, usize)>,
 }
 
@@ -281,6 +281,11 @@ impl LinkedListAllocator {
     }
 }
 
+// Safety: interrupts are only enabled in the idle thread (which does not allocate)
+// and briefly during thread yields (not mid-allocation). On a single CPU this
+// guarantees the allocator is never re-entered, so &self mutation via UnsafeCell
+// is sound. This assumption breaks if interrupts are enabled during kernel paths
+// that allocate, or when SMP is added.
 unsafe impl Sync for LinkedListAllocator {}
 
 unsafe fn check_aligned_fit(

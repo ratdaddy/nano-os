@@ -81,7 +81,7 @@ $(SDIMG): $(BOOT_SD) sdimg/Dockerfile
 	@docker run --rm --privileged \
 		-v $$(pwd)/$(BUILD_DIR)/sdimg_input:/input \
 		-v $$(pwd)/$(BUILD_DIR):/output \
-		$(SDIMG_IMAGE) > /dev/null 2>&1
+		$(SDIMG_IMAGE)
 	@rm -rf $(BUILD_DIR)/sdimg_input
 	@echo "Done."
 

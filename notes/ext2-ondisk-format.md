@@ -64,6 +64,14 @@ Boot Block (1024 bytes) | Superblock (1024 bytes) | Block Group Descriptor Table
 | 104 | 16 | u8[16] | s_uuid | Volume UUID |
 | 120 | 16 | char[16] | s_volume_name | Volume label (null-terminated) |
 | 136 | 64 | char[64] | s_last_mounted | Last mount path |
+| 200 | 4 | u32 | s_algo_bitmap | Compression algorithm bitmap |
+| 204 | 1 | u8 | s_prealloc_blocks | Blocks to preallocate for files |
+| 205 | 1 | u8 | s_prealloc_dir_blocks | Blocks to preallocate for dirs |
+| 206 | 2 | u16 | s_padding1 | Padding |
+| 208 | 16 | u8[16] | s_journal_uuid | UUID of journal superblock |
+| 224 | 4 | u32 | s_journal_inum | Inode number of journal file |
+| 228 | 4 | u32 | s_journal_dev | Device number of journal file |
+| 232 | 4 | u32 | s_last_orphan | Head of orphan inode list |
 
 **Important**:
 - If `s_rev_level == 0`: inode size is always 128 bytes, first usable inode is 11

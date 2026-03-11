@@ -23,9 +23,9 @@ impl InodeOps for Ext2InodeOps {
         let fs_data = inode.fs_data.downcast_ref::<Ext2InodeData>().unwrap();
 
         for entry in DirEntryIter::new(inode) {
-            let (ino, entry_name, _) = entry.map_err(|_| Error::NotFound)?;
-            if entry_name == name {
-                return fs_data.sb.get_or_read_inode(ino).map_err(|_| Error::NotFound);
+            let entry = entry.map_err(|_| Error::NotFound)?;
+            if entry.name == name {
+                return fs_data.sb.get_or_read_inode(entry.ino).map_err(|_| Error::NotFound);
             }
         }
 
@@ -84,15 +84,15 @@ impl FileOps for Ext2FileOps {
 
         DirEntryIter::new(&file.inode)
             .map(|r| {
-                let (_, name, ft_byte) = r.map_err(|_| Error::InvalidInput)?;
-                let file_type = match ft_byte {
+                let entry = r.map_err(|_| Error::InvalidInput)?;
+                let file_type = match entry.file_type {
                     EXT2_FT_REG_FILE => FileType::RegularFile,
                     EXT2_FT_DIR      => FileType::Directory,
                     EXT2_FT_CHRDEV   => FileType::CharDevice,
                     EXT2_FT_BLKDEV   => FileType::BlockDevice,
                     _                => FileType::RegularFile,
                 };
-                Ok(DirEntry { name, file_type })
+                Ok(DirEntry { name: entry.name, file_type })
             })
             .collect()
     }

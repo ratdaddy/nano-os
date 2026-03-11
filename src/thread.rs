@@ -112,7 +112,7 @@ static mut IDLE_ENTRY: usize = 0;
 
 impl Thread {
     /// Create a new kernel thread with the given entry point
-    /// Returns Box<Thread> so the thread never moves after sp is calculated
+    /// Returns `Box<Thread>` so the thread never moves after sp is calculated
     pub fn new(entry_point: fn()) -> Box<Self> {
         // Allocate stack on heap first (avoids stack overflow during construction)
         let stack = vec![0u8; STACK_SIZE];

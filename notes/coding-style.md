@@ -447,6 +447,37 @@ fn align_up(x: usize, align: usize) -> usize {
 }
 ```
 
+## Tuples vs Structs
+
+**Principle:** Prefer named structs over tuples when a type has more than one field or when fields are discarded at call sites.
+
+Tuples are appropriate for truly ad-hoc, short-lived groupings where the positional meaning is obvious. As soon as callers start writing `_` to discard fields, or need to remember which position holds which value, a named struct is clearer.
+
+```rust
+// Bad - caller must track positions, discards with _
+type Item = Result<(u32, String, u8), Error>;
+
+for entry in iter {
+    let (ino, name, _) = entry?;   // what was the third field again?
+}
+
+// Good - fields are self-documenting
+struct RawDirEntry {
+    pub ino: u32,
+    pub name: String,
+    pub file_type: u8,
+}
+
+for entry in iter {
+    let entry = entry?;
+    if entry.name == target { ... entry.ino ... }
+}
+```
+
+Tuples are fine for:
+- Returning two tightly related values where order is obvious (`(start, end)`, `(major, minor)`)
+- Short-lived internal helpers not exposed beyond a few lines
+
 ## Code Review Checklist
 
 Before committing:
@@ -461,4 +492,5 @@ Before committing:
 - [ ] Smart pointer conversions use `as_ref()` not `&*`
 - [ ] Helper functions are associated functions when appropriate
 - [ ] Struct initialization uses mutable builder pattern instead of large tuple returns
+- [ ] Multi-field return types use named structs, not tuples (especially if any field is discarded with `_` at call sites)
 - [ ] All modified files follow consistent style
