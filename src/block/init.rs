@@ -32,12 +32,9 @@ const SCSI_DISK_MAJOR: u32 = 8;
 /// 4. Create BlockVolume instances for each partition
 /// 5. Register volumes as devices
 ///
-/// Returns the thread ID of the init thread.
-pub fn init() -> Result<usize, &'static str> {
+pub fn init() {
     let t = thread::Thread::new(init_thread);
-    let tid = t.id;
     thread::add(t);
-    Ok(tid)
 }
 
 // Static buffer for disk I/O — must be properly aligned for DMA

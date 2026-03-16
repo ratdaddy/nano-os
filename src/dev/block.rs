@@ -3,6 +3,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
+use spin::Mutex;
 
 use crate::block::volume::BlockVolume;
 use crate::drivers::BlockError;
@@ -12,43 +13,29 @@ struct BlkdevEntry {
     volume: Arc<dyn BlockVolume>,
 }
 
-static mut BLOCKDEVS: Option<BTreeMap<(u32, u32), BlkdevEntry>> = None;
+static BLOCKDEVS: Mutex<BTreeMap<(u32, u32), BlkdevEntry>> = Mutex::new(BTreeMap::new());
 
 /// Register a block device for the given major/minor.
 pub fn blkdev_register(major: u32, minor: u32, name: &str, volume: Arc<dyn BlockVolume>) {
-    unsafe {
-        let devs = core::ptr::addr_of_mut!(BLOCKDEVS);
-        if (*devs).is_none() {
-            *devs = Some(BTreeMap::new());
-        }
-        (*devs).as_mut().unwrap().insert((major, minor), BlkdevEntry {
-            name: String::from(name),
-            volume,
-        });
-    }
+    BLOCKDEVS.lock().insert((major, minor), BlkdevEntry {
+        name: String::from(name),
+        volume,
+    });
 }
 
 /// Call `f` for each registered block device: (major, minor, name).
 pub fn blkdev_for_each(mut f: impl FnMut(u32, u32, &str)) {
-    unsafe {
-        let devs = core::ptr::addr_of!(BLOCKDEVS);
-        if let Some(map) = (*devs).as_ref() {
-            for (&(major, minor), entry) in map {
-                f(major, minor, &entry.name);
-            }
-        }
+    for (&(major, minor), entry) in BLOCKDEVS.lock().iter() {
+        f(major, minor, &entry.name);
     }
 }
 
 /// Look up a registered block device by major/minor and return a clone of its volume.
 pub fn blkdev_get(major: u32, minor: u32) -> Result<Arc<dyn BlockVolume>, BlockError> {
-    unsafe {
-        let devs = core::ptr::addr_of!(BLOCKDEVS);
-        (*devs).as_ref()
-            .and_then(|map| map.get(&(major, minor)))
-            .map(|e| Arc::clone(&e.volume))
-            .ok_or(BlockError::InvalidInput)
-    }
+    BLOCKDEVS.lock()
+        .get(&(major, minor))
+        .map(|e| Arc::clone(&e.volume))
+        .ok_or(BlockError::InvalidInput)
 }
 
 #[cfg(test)]

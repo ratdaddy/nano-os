@@ -1,2 +1,17 @@
 file target/riscv64imac-unknown-none-elf/debug/kernel
+
+python
+import sys
+sys.path.insert(0, "/opt/rust-pretty-printers")
+import gdb_load_rust_pretty_printers
+end
+
+source gdb/blockdevs.py
+
 target remote host.docker.internal:1234
+python
+response = input("Run to kernel_main? [Y/n] ").strip().lower()
+if response in ("", "y", "yes"):
+    gdb.execute("break kernel::kernel_main::kernel_main")
+    gdb.execute("continue")
+end

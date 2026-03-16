@@ -42,7 +42,7 @@ pub fn kernel_main() -> ! {
     kthread::uart_writer::init();
     kprint::init();
     kthread::idle::init();
-    block::init().expect("Failed to spawn block init thread");
+    block::init();
     kthread::fs_init::init();
 
     loop {

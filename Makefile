@@ -123,7 +123,7 @@ gdb:
 	docker run --rm -it -v $$(PWD):/workspace -w /workspace riscv-gdb
 
 gdb-docker:
-	cd gdb && docker build -t riscv-gdb .
+	docker build -t riscv-gdb -f gdb/Dockerfile .
 
 clean:
 	cargo clean
