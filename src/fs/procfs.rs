@@ -74,6 +74,11 @@ enum ProcfsNode {
 /// Content buffer for an open procfs file. Freed when the File is closed.
 struct ProcfsFileData(Box<[u8]>);
 
+impl core::ops::Deref for ProcfsFileData {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { &self.0 }
+}
+
 // =============================================================================
 // Ops tables
 // =============================================================================
@@ -150,7 +155,7 @@ impl FileOps for ProcfsFileOps {
 
     fn read(&self, file: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
         let data = file.inode.fs_data.downcast_ref::<ProcfsFileData>().ok_or(Error::InvalidInput)?;
-        let remaining = &data.0[file.offset..];
+        let remaining = &data[file.offset..];
         let len = remaining.len().min(buf.len());
         buf[..len].copy_from_slice(&remaining[..len]);
         file.offset += len;

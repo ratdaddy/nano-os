@@ -109,6 +109,32 @@ Should I add `serde` derives?"
 
 ---
 
+### `Deref` — Newtype Wrappers Around Collections or Buffers
+
+**Add if:** The type is a newtype wrapper (single-field tuple struct) around a slice, `Vec`,
+`Box<[u8]>`, `String`, or similar, and callers frequently index into or slice the inner value.
+
+```rust
+struct ProcfsFileData(Box<[u8]>);
+
+impl core::ops::Deref for ProcfsFileData {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { &self.0 }
+}
+
+// Now callers can write data[offset..] instead of data.0[offset..]
+```
+
+**Do not add if:** The type is a semantic wrapper where you *want* the type barrier — e.g.,
+a `PageTableEntry(usize)` should not deref to `usize` because accidentally treating a PTE
+as a raw integer is a bug, not a convenience.
+
+**Rule of thumb:** If `.0` appears at call sites just to get at data, add `Deref`. If `.0`
+is only accessed inside the type's own methods, the encapsulation is working correctly —
+leave it alone.
+
+---
+
 ## Traits to Add Only When the Use Case Is Explicit
 
 Do not derive or implement these unless there is a concrete, present use case in the code being
