@@ -282,6 +282,12 @@ const FAT32_VOLUME_LABEL_OFFSET: usize = 71;
 
 ## File Organization
 
+### Section Ordering
+
+In filesystem and driver files, the public driver type and its `static` instance
+go **first** (after imports), before internal implementation details. If the
+developer has established a different ordering in a file, preserve it.
+
 ### Modified Files Policy
 
 When making changes, check git status and ensure consistency across all modified files:
@@ -482,7 +488,7 @@ Tuples are fine for:
 
 Before committing:
 
-- [ ] Trait checklist applied to all types in modified files (see `notes/rust-trait-checklist.md`)
+- [ ] Trait checklist applied to all types in modified files (see `ref/rust-trait-checklist.md`)
 - [ ] All imports follow the external → blank → internal pattern
 - [ ] No `crate::` or `core::` or `alloc::` usage at call sites (only in `use` declarations)
 - [ ] Mutable statics use `&raw mut` pattern

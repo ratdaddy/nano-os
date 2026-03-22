@@ -60,4 +60,4 @@ Notes:
 - `src/kernel_memory_map.rs` - Kernel memory mapping implementation
 - `src/process_memory_map.rs` - User process memory setup
 - `link.ld` - Linker script defining section layout
-- `notes/thead-c906-memory-guide.md` - T-Head C906 memory attributes
+- `ref/thead-c906-memory-guide.md` - T-Head C906 memory attributes

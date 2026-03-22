@@ -226,7 +226,7 @@ On-disk structs keep specification field names (`s_inodes_count`, `i_mode`)
 for easy cross-referencing. In-memory types use clean Rust names
 (`inodes_count`, `mode`).
 
-See `notes/filesystem-naming.md` for detailed naming rationale and the
+See `design/filesystem-naming.md` for detailed naming rationale and the
 complete type hierarchy per filesystem.
 
 ---

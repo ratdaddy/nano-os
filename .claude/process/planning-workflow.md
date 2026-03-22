@@ -37,6 +37,12 @@ Keep plans **short and focused**:
 
 **Anti-pattern**: Don't write the full implementation in the plan - it becomes the codebase.
 
+**Step sequencing**: Order steps so each one delivers an observable, working piece
+of functionality before the next begins. For a feature with multiple subcomponents,
+develop each subcomponent end-to-end — enough to verify it works — before moving
+to the next. This keeps the system in a testable state throughout and surfaces
+integration problems early rather than at the end.
+
 ---
 
 ## Plan Lifecycle
@@ -55,57 +61,35 @@ Draft → Review → Active → Complete → Archive
 
 ---
 
-## Working Together
+## Re-Planning
 
-### Sign-Off Required
+If implementation reveals that a plan needs to change, the development workflow
+will trigger a return to planning. At that point:
 
-Don't start implementation until:
-- Plan is reviewed together
-- Approach is approved
-- First slice is identified
+1. Stop implementation
+2. Assess whether the current plan can be amended or needs to be replaced
+3. Update or replace the plan following the same structure and lifecycle as above
+4. Get approval before resuming implementation
 
-This prevents "wrong direction" refactors.
+Re-plans should be small — fix the specific thing that was wrong, not a broader
+redesign unless that's what the situation requires.
 
-### Implementing Steps
+## Planning Principles
 
-**CRITICAL: Only implement what is explicitly requested.**
-
-When instructed to "implement Step 2.3" or "implement the file_type() function":
-- ✅ Do ONLY that step/substep
-- ❌ Do NOT implement related steps
-- ❌ Do NOT implement "while we're here" improvements
-- ❌ Do NOT jump ahead to the next step
-
-**Wait for explicit instruction** before moving to the next step.
-
-This prevents:
-- Scope creep
-- Implementing things in wrong order
-- Building features that may change after learning from current step
-
-### When Plans Diverge
-
-If implementation reveals issues:
-- Stop and discuss
-- Update or replace the plan
-- Don't push ahead on wrong path
-
-### Small Iterations
-
-Better: Small plan → implement → learn → next small plan
-Worse: Mega-plan covering 6 phases before any implementation
+- Prefer small plans: small plan → implement → learn → next small plan
+- Avoid mega-plans covering many phases before any implementation
+- Sequence steps for observability — each step should leave the system in a
+  state where the new functionality can be seen working
 
 ---
 
 ## Reference Documents
 
-These live in `notes/` and define standards:
-
-**Required**:
-- `notes/filesystem-naming.md` - Naming conventions for all filesystem code
-- `notes/ext2-ondisk-format.md` - ext2 specification reference
-
-**Follow these religiously** - they prevent inconsistency and rework.
+`ref/` contains technical standards and specifications that apply to the
+codebase — naming conventions, format specs, hardware references, coding
+standards. Before starting a plan, check whether any relevant reference
+documents exist and consult them. Following established standards prevents
+inconsistency and rework.
 
 ---
 
@@ -118,9 +102,10 @@ plans/
   active-plan-2.md     ← Currently working on
   completed/           ← Archive completed plans here
 
-notes/
-  filesystem-naming.md ← Standards (required reading)
-  ext2-ondisk-format.md
+ref/
+  *.md                 ← Technical standards and specifications
+
+.claude/process/
   planning-workflow.md ← This file
 ```
 
@@ -130,13 +115,9 @@ notes/
 
 ## Key Principles
 
-1. **Vertical slices** - Build complete features, not layers
+1. **Observable slices** - Each step should deliver a piece of functionality that can be seen working before the next step starts
 2. **One plan per area** - Consolidate overlapping plans
-3. **Sign-off first** - Review before coding
-4. **Update ROADMAP** - When plans change state
-5. **Follow standards** - Check notes/ for conventions
-6. **Keep it short** - Plans describe WHAT, not HOW
+3. **Update ROADMAP** - When plans change state
+4. **Follow standards** - Check ref/ for conventions
+5. **Keep it short** - Plans describe WHAT, not HOW
 
----
-
-Last updated: 2026-02-20

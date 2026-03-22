@@ -22,7 +22,25 @@ OBJCOPY := rust-objcopy
 
 SOURCES := $(shell find src -name '*.rs') Cargo.toml Cargo.lock link.ld
 
-.PHONY: all copy clean gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker sdimg sdimg-docker ext2img ext2img-docker $(INIT_ELF)
+LOG := /tmp/nano-os.log
+LOG_QEMU := /tmp/nano-os-qemu.log
+BLUE := \033[38;5;39m
+RESET := \033[0m
+
+define log-header
+@tmux list-panes -a -F '#{pane_id} #{pane_title}' | awk '$$2=="log"{print $$1}' | xargs -I{} tmux send-keys -t {} q 2>/dev/null || true
+@printf '\n\n$(BLUE)▶ $(1) · %s$(RESET)\n\n' "$$(date '+%Y-%m-%d %H:%M:%S')" | tee -a $(LOG)
+endef
+
+.PHONY: build all copy clean tail-log gdb gdb-docker qemu-debug monitor-cmds run initramfs initramfs-docker sdimg sdimg-docker ext2img ext2img-docker $(INIT_ELF)
+
+build:
+	$(call log-header,make build)
+	cargo -Z build-std=core,alloc build --target $(TARGET) $(FEATURES) --color always 2>&1 | tee -a $(LOG)
+
+tail-log:
+	@tmux select-pane -T log 2>/dev/null || true
+	tail -F $(LOG)
 
 all: $(BOOT_SD)
 
@@ -105,10 +123,11 @@ $(INIT_ELF):
 	make -C prog_example
 
 run: initramfs $(SDIMG)
-	cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
+	script -q $(LOG_QEMU) cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
 test: initramfs
-	cargo -Z build-std=core,alloc test --target $(TARGET) $(FEATURES)
+	$(call log-header,make test)
+	cargo -Z build-std=core,alloc test --target $(TARGET) $(FEATURES) --color always 2>&1 | tee -a $(LOG)
 
 lint:
 	cargo clippy

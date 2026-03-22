@@ -948,4 +948,4 @@ When implementing kernel threads on C906:
 3. **Heap growth**: Use `dcache.ciall` + `sfence.vma` sequence
 4. **Stack growth**: Same cache flush sequence as heap
 
-See `notes/thead-c906-memory-guide.md` for complete documentation.
+See `ref/thead-c906-memory-guide.md` for complete documentation.
