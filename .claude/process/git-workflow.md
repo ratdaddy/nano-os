@@ -10,9 +10,14 @@ are committed separately from code changes.
 
 ## Moving Files
 
-Always use `git mv` rather than `mv` + `git add` when moving tracked files.
-This preserves history and makes the rename visible as a rename in the diff
-rather than a delete + add.
+Before moving any file, check whether it is tracked:
+```
+git ls-files --error-unmatch <file>
+```
+Exit code 0 means tracked; non-zero means untracked.
 
-If a file is untracked, plain `mv` is required — `git mv` will fail. In that
-case use `mv` then `git add` on the destination.
+Use `git mv` for tracked files — preserves history and shows the rename as a
+rename in the diff rather than a delete + add.
+
+Use plain `mv` for untracked files — `git mv` will fail on them. No `git add`
+needed on the destination unless the file should be staged.
