@@ -16,8 +16,10 @@ Each step in a plan follows this cycle:
 6. **Confirm complete** — Claude asks the developer whether the step is complete before marking it so in the plan
 7. **Advance** — update the plan, then wait for explicit instruction to begin the next step
 
-Gate 3 applies when the step touches boot-level behavior, device initialization,
-or anything not reachable by unit tests. Gates 1 and 2 apply to every step.
+Gates 1 and 2 apply to every step. Gate 3 applies when the step touches
+boot-level behavior, device initialization, or anything not reachable by unit
+tests. Gate 3 must always be run before `/pre-commit-check` or marking a step
+complete, when it applies.
 
 If implementation reveals that the plan is wrong or incomplete, exit the loop.
 See `.claude/process/planning-workflow.md` — Re-Planning.
@@ -72,6 +74,8 @@ interactive menu allows manual inspection of subsystem state.
 Gate 3 is run by the developer, not Claude. After completing an implementation
 step, Claude specifies which inspection steps are relevant and what to look for.
 The developer runs them and reports results back before the next step proceeds.
+Gate 3 must pass before Claude suggests `/pre-commit-check` or marks a step
+complete.
 
 ## Log Capture and Visibility
 

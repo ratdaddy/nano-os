@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
-use core::cell::UnsafeCell;
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::file::{DirEntry, Error, File, FileOps, FileType, Inode, InodeOps, SuperBlock};
@@ -20,17 +20,20 @@ enum RamfsNode {
     File { data: &'static [u8] },
     /// Directory with named children.
     ///
-    /// `UnsafeCell` allows inserting children during single-threaded init
-    /// without a raw-pointer cast. After mount the filesystem is read-only.
-    Dir { children: UnsafeCell<BTreeMap<String, Arc<Inode>>> },
+    /// `RefCell` allows inserting children during init and reading them
+    /// afterwards. Aliasing violations panic at runtime rather than causing
+    /// undefined behaviour.
+    Dir { children: RefCell<BTreeMap<String, Arc<Inode>>> },
     /// Character device. Major/minor numbers are stored in `inode.rdev`.
     CharDevice,
     /// Block device. Major/minor numbers are stored in `inode.rdev`.
     BlockDevice,
 }
 
-// Safety: RamfsNode is only mutated during single-threaded initialisation.
-// After the Ramfs is mounted all accesses are read-only.
+// Safety: RamfsNode contains a RefCell (which is !Sync). Single-threaded use
+// is guaranteed by the kernel: ramfs is populated before mount and accessed
+// from one thread at a time thereafter. Aliasing is checked at runtime by
+// RefCell; a violation will panic rather than cause undefined behaviour.
 unsafe impl Send for RamfsNode {}
 unsafe impl Sync for RamfsNode {}
 
@@ -38,7 +41,9 @@ unsafe impl Sync for RamfsNode {}
 // Ops tables
 // =============================================================================
 
+#[derive(Debug)]
 struct RamfsInodeOps;
+#[derive(Debug)]
 struct RamfsFileOps;
 
 static RAMFS_INODE_OPS: RamfsInodeOps = RamfsInodeOps;
@@ -49,8 +54,7 @@ impl InodeOps for RamfsInodeOps {
         let node = inode.fs_data.downcast_ref::<RamfsNode>().unwrap();
         match node {
             RamfsNode::Dir { children } => {
-                let children = unsafe { &*children.get() };
-                children.get(name).cloned().ok_or(Error::NotFound)
+                children.borrow().get(name).cloned().ok_or(Error::NotFound)
             }
             RamfsNode::File { .. } | RamfsNode::CharDevice | RamfsNode::BlockDevice => Err(Error::NotADirectory),
         }
@@ -81,8 +85,7 @@ impl FileOps for RamfsFileOps {
         let node = file.inode.fs_data.downcast_ref::<RamfsNode>().ok_or(Error::InvalidInput)?;
         match node {
             RamfsNode::Dir { children } => {
-                let children = unsafe { &*children.get() };
-                let entries = children
+                let entries = children.borrow()
                     .iter()
                     .map(|(name, inode)| DirEntry { name: name.clone(), file_type: inode.file_type })
                     .collect();
@@ -97,6 +100,7 @@ impl FileOps for RamfsFileOps {
 // Filesystem driver
 // =============================================================================
 
+#[derive(Debug)]
 pub struct RamfsFileSystem;
 
 impl FileSystem for RamfsFileSystem {
@@ -210,8 +214,7 @@ impl Ramfs {
     fn get_or_create_dir(&self, parent: &Arc<Inode>, name: &str) -> Result<Arc<Inode>, Error> {
         let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
         if let RamfsNode::Dir { children } = node {
-            // Safety: single-threaded initialisation; no concurrent readers yet.
-            let children = unsafe { &mut *children.get() };
+            let mut children = children.borrow_mut();
             if let Some(existing) = children.get(name) {
                 return Ok(Arc::clone(existing));
             }
@@ -226,9 +229,7 @@ impl Ramfs {
     fn dir_insert(parent: &Arc<Inode>, name: String, child: Arc<Inode>) {
         let node = parent.fs_data.downcast_ref::<RamfsNode>().unwrap();
         if let RamfsNode::Dir { children } = node {
-            // Safety: single-threaded initialisation; no concurrent readers yet.
-            let children = unsafe { &mut *children.get() };
-            children.insert(name, child);
+            children.borrow_mut().insert(name, child);
         }
     }
 
@@ -241,7 +242,7 @@ impl Ramfs {
             fops: &RAMFS_FILE_OPS,
             sb: None,
             rdev: None,
-            fs_data: Box::new(RamfsNode::Dir { children: UnsafeCell::new(BTreeMap::new()) }),
+            fs_data: Box::new(RamfsNode::Dir { children: RefCell::new(BTreeMap::new()) }),
         })
     }
 
