@@ -105,8 +105,9 @@ impl Adma2Desc {
     }
 }
 
-// Static DMA buffers
-#[repr(C, align(8))]
+// Static DMA buffers — align(256) ensures the 256-byte table never crosses
+// a page boundary, which would make its physical addresses non-contiguous for DMA.
+#[repr(C, align(256))]
 struct DescTable([Adma2Desc; 16]);
 
 static mut DESC_TABLE: DescTable = DescTable([Adma2Desc {

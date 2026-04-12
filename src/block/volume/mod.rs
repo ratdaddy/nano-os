@@ -35,7 +35,7 @@ pub use whole_disk::WholeDiskVolume;
 /// `BlockBuf::drop` frees the underlying buffer.
 pub struct BlockBuf(NonNull<u8>);
 
-// Safety: the buffer is heap-allocated and not aliased outside of shared &[u8]
+// SAFETY: the buffer is heap-allocated and not aliased outside of shared &[u8]
 // references obtained through Deref. Sending/sharing Arc<BlockBuf> across
 // threads is safe for the same reason Arc<[u8]> would be.
 unsafe impl Send for BlockBuf {}
@@ -44,7 +44,7 @@ unsafe impl Sync for BlockBuf {}
 impl Deref for BlockBuf {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        // Safety: ptr is valid for CACHE_BLOCK_SIZE bytes for the lifetime of self.
+        // SAFETY: ptr is valid for CACHE_BLOCK_SIZE bytes for the lifetime of self.
         unsafe { slice::from_raw_parts(self.0.as_ptr(), CACHE_BLOCK_SIZE) }
     }
 }

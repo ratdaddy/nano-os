@@ -2,10 +2,13 @@
 //!
 //! Fully interrupt-driven implementation for the LicheeRV Nano (SG2002).
 
+use alloc::boxed::Box;
+
 use crate::block::disk;
 use crate::drivers::block::validate_read_buffer;
 use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::dtb;
+use crate::kernel_allocator::alloc_within_page;
 use crate::kernel_memory_map::kernel_virt_to_phys;
 
 const SD_BASE: usize = 0x0431_0000;
@@ -15,21 +18,21 @@ const SD_IRQ: u32 = 36;
 const REG_BLOCK_SIZE: usize = 0x04;
 const REG_BLOCK_COUNT: usize = 0x06;
 const REG_ARGUMENT: usize = 0x08;
-const REG_XFER_MODE: usize = 0x0C;
+const REG_XFER_MODE: usize = 0x0c;
 const REG_HOST_CONTROL: usize = 0x28;
-const REG_DATA_TIMEOUT: usize = 0x2E;
+const REG_DATA_TIMEOUT: usize = 0x2e;
 const REG_NORMAL_INT_STATUS: usize = 0x30;
 const REG_ERROR_INT_STATUS: usize = 0x32;
 const REG_NORMAL_INT_STATUS_EN: usize = 0x34;
 const REG_ERROR_INT_STATUS_EN: usize = 0x36;
 const REG_NORMAL_INT_SIGNAL_EN: usize = 0x38;
-const REG_ERROR_INT_SIGNAL_EN: usize = 0x3A;
-const REG_HOST_CONTROL2: usize = 0x3E;
+const REG_ERROR_INT_SIGNAL_EN: usize = 0x3a;
+const REG_HOST_CONTROL2: usize = 0x3e;
 const REG_ADMA_ADDR_LOW: usize = 0x58;
-const REG_ADMA_ADDR_HIGH: usize = 0x5C;
+const REG_ADMA_ADDR_HIGH: usize = 0x5c;
 
 // Data timeout value
-const DATA_TIMEOUT_VALUE: u8 = 0x0E;
+const DATA_TIMEOUT_VALUE: u8 = 0x0e;
 
 // Transfer Mode register bits (organized high to low)
 const XFER_MODE_DMA_ENABLE: u16 = 1 << 0;
@@ -66,7 +69,7 @@ const ADMA2_VALID: u16 = 1 << 0;
 
 /// ADMA2 descriptor (64-bit addressing mode)
 #[repr(C, align(8))]
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct Adma2Desc {
     attr: u16,
     length: u16,
@@ -91,27 +94,22 @@ impl Adma2Desc {
     }
 }
 
-// Static descriptor table
-#[repr(C, align(8))]
-struct DescTable([Adma2Desc; 16]);
-
-static mut DESC_TABLE: DescTable = DescTable([Adma2Desc {
-    attr: 0, length: 0, addr_lo: 0, addr_hi: 0, _reserved: 0,
-}; 16]);
-
 /// SD card driver using ADMA2
+#[derive(Debug)]
 pub struct SdCardAdma {
+    desc_table: Box<Adma2Desc>,
     desc_table_phys: usize,
 }
 
 impl SdCardAdma {
     fn new() -> Result<Self, BlockError> {
-        let desc_table_phys = kernel_virt_to_phys(core::ptr::addr_of!(DESC_TABLE) as usize)
+        let desc_table: Box<Adma2Desc> = alloc_within_page();
+        let desc_table_phys = kernel_virt_to_phys(desc_table.as_ref() as *const Adma2Desc as usize)
             .ok_or(BlockError::IoError)?;
 
         // Enable interrupt status bits
-        write16(REG_NORMAL_INT_STATUS_EN, 0xFFFF);
-        write16(REG_ERROR_INT_STATUS_EN, 0xFFFF);
+        write16(REG_NORMAL_INT_STATUS_EN, 0xffff);
+        write16(REG_ERROR_INT_STATUS_EN, 0xffff);
 
         // Configure HOST_CONTROL2 for 64-bit addressing
         let mut host_ctrl2 = read16(REG_HOST_CONTROL2);
@@ -123,7 +121,7 @@ impl SdCardAdma {
         host_ctrl = (host_ctrl & !HOST_CTRL_DMA_MASK) | HOST_CTRL_ADMA2_64;
         write8(REG_HOST_CONTROL, host_ctrl);
 
-        Ok(SdCardAdma { desc_table_phys })
+        Ok(SdCardAdma { desc_table, desc_table_phys })
     }
 }
 
@@ -136,63 +134,61 @@ impl BlockDriver for SdCardAdma {
         // Validate buffer meets DMA requirements
         let sector_count = validate_read_buffer(buf)?;
 
-        unsafe {
-            // Get physical address of caller's buffer
-            let buf_virt = buf.as_ptr() as usize;
-            let buf_phys = kernel_virt_to_phys(buf_virt)
-                .ok_or(BlockError::IoError)?;
+        // Get physical address of caller's buffer
+        let buf_virt = buf.as_ptr() as usize;
+        let buf_phys = kernel_virt_to_phys(buf_virt)
+            .ok_or(BlockError::IoError)?;
 
-            // Build ADMA2 descriptor for caller's buffer (supports multi-sector)
-            DESC_TABLE.0[0] = Adma2Desc::new(buf_phys as u64, buf.len() as u16, true);
+        // Build ADMA2 descriptor for caller's buffer (supports multi-sector)
+        *self.desc_table = Adma2Desc::new(buf_phys as u64, buf.len() as u16, true);
 
-            // Flush cache so DMA engine can see the descriptor
-            flush_dcache_for_dma();
+        // Flush cache so DMA engine can see the descriptor
+        flush_dcache_for_dma();
 
-            // Point ADMA engine to descriptor table
-            write32(REG_ADMA_ADDR_LOW, self.desc_table_phys as u32);
-            write32(REG_ADMA_ADDR_HIGH, (self.desc_table_phys >> 32) as u32);
+        // Point ADMA engine to descriptor table
+        write32(REG_ADMA_ADDR_LOW, self.desc_table_phys as u32);
+        write32(REG_ADMA_ADDR_HIGH, (self.desc_table_phys >> 32) as u32);
 
-            // Clear pending status
-            write16(REG_NORMAL_INT_STATUS, 0xFFFF);
-            write16(REG_ERROR_INT_STATUS, 0xFFFF);
+        // Clear pending status
+        write16(REG_NORMAL_INT_STATUS, 0xffff);
+        write16(REG_ERROR_INT_STATUS, 0xffff);
 
-            // Set block size and count
-            write16(REG_BLOCK_SIZE, 512);
-            write16(REG_BLOCK_COUNT, sector_count as u16);
-            write8(REG_DATA_TIMEOUT, DATA_TIMEOUT_VALUE);
+        // Set block size and count
+        write16(REG_BLOCK_SIZE, 512);
+        write16(REG_BLOCK_COUNT, sector_count as u16);
+        write8(REG_DATA_TIMEOUT, DATA_TIMEOUT_VALUE);
 
-            // Write sector argument
-            write32(REG_ARGUMENT, sector);
+        // Write sector argument
+        write32(REG_ARGUMENT, sector);
 
-            // Enable interrupt signal for Transfer Complete
-            write16(REG_NORMAL_INT_SIGNAL_EN, INT_TRANSFER_COMPLETE);
-            write16(REG_ERROR_INT_SIGNAL_EN, 0xFFFF);
+        // Enable interrupt signal for Transfer Complete
+        write16(REG_NORMAL_INT_SIGNAL_EN, INT_TRANSFER_COMPLETE);
+        write16(REG_ERROR_INT_SIGNAL_EN, 0xffff);
 
-            // Transfer Mode and Command: Different for single vs multi-block
-            let (xfer_mode, cmd_index) = if sector_count == 1 {
-                // Single block: CMD17, no block count or multi-block flags
-                (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE, SD_CMD17_READ_SINGLE)
-            } else {
-                // Multi-block: CMD18, with block count, multi-block, and auto-CMD12 to stop
-                (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE
-                    | XFER_MODE_BLOCK_COUNT_EN | XFER_MODE_MULTI_BLOCK
-                    | XFER_MODE_AUTO_CMD12_EN,
-                 SD_CMD18_READ_MULTIPLE)
-            };
+        // Transfer Mode and Command: Different for single vs multi-block
+        let (xfer_mode, cmd_index) = if sector_count == 1 {
+            // Single block: CMD17, no block count or multi-block flags
+            (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE, SD_CMD17_READ_SINGLE)
+        } else {
+            // Multi-block: CMD18, with block count, multi-block, and auto-CMD12 to stop
+            (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE
+                | XFER_MODE_BLOCK_COUNT_EN | XFER_MODE_MULTI_BLOCK
+                | XFER_MODE_AUTO_CMD12_EN,
+             SD_CMD18_READ_MULTIPLE)
+        };
 
-            // Command: R1 response, data present, CRC + index check
-            let cmd: u16 = (cmd_index << CMD_INDEX_SHIFT)
-                | CMD_DATA_PRESENT
-                | CMD_CRC_CHECK
-                | CMD_INDEX_CHECK
-                | CMD_RESP_TYPE_R1;
+        // Command: R1 response, data present, CRC + index check
+        let cmd: u16 = (cmd_index << CMD_INDEX_SHIFT)
+            | CMD_DATA_PRESENT
+            | CMD_CRC_CHECK
+            | CMD_INDEX_CHECK
+            | CMD_RESP_TYPE_R1;
 
-            // Issue command - atomic 32-bit write of transfer mode + command
-            write32(REG_XFER_MODE, (xfer_mode as u32) | ((cmd as u32) << 16));
+        // Issue command - atomic 32-bit write of transfer mode + command
+        write32(REG_XFER_MODE, (xfer_mode as u32) | ((cmd as u32) << 16));
 
-            // Return immediately - interrupt will fire when transfer completes
-            Ok(())
-        }
+        // Return immediately - interrupt will fire when transfer completes
+        Ok(())
     }
 }
 
@@ -207,7 +203,7 @@ fn sd_irq_handler(_irq: u32) {
 
     // Check for errors
     if err != 0 {
-        write16(REG_ERROR_INT_STATUS, 0xFFFF);
+        write16(REG_ERROR_INT_STATUS, 0xffff);
         disk::send_read_completion(Err(BlockError::IoError));
         return;
     }

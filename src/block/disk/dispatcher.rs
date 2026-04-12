@@ -14,7 +14,7 @@
 //!
 //! Since `Thread::new()` only accepts `fn()` pointers (not closures), we cannot
 //! directly pass the driver to the new thread. Instead, we use a temporary handoff
-//! via `PENDING_DRIVER`: the spawning code stores the driver there, creates the
+//! via `DRIVER`: the spawning code stores the driver there, creates the
 //! thread, and the new thread immediately takes ownership.
 
 use alloc::boxed::Box;
@@ -39,14 +39,15 @@ fn read_time() -> u64 {
 
 static DISPATCHER_TID: AtomicUsize = AtomicUsize::new(0);
 
-/// Temporary storage for passing driver to dispatcher thread.
+/// Temporary slot for passing the driver to the dispatcher thread on startup.
 ///
 /// The spawning thread stores the driver here, creates the thread, then the new
-/// thread immediately takes ownership. This handoff is protected by a mutex
-/// to ensure only one dispatcher is spawned at a time.
-static PENDING_DRIVER: Mutex<Option<Box<dyn BlockDriver>>> = Mutex::new(None);
+/// thread immediately takes ownership. Protected by a mutex to ensure only one
+/// dispatcher is spawned at a time.
+static DRIVER: Mutex<Option<Box<dyn BlockDriver>>> = Mutex::new(None);
 
 /// Message type for block I/O requests and completions
+#[derive(Debug)]
 pub enum BlockMessage {
     ReadRequest {
         sector: u32,
@@ -61,6 +62,10 @@ pub enum BlockMessage {
     },
 }
 
+// SAFETY: BlockMessage::ReadRequest carries a raw pointer to the caller's buffer.
+// This is safe to send across threads because the requester blocks waiting for a
+// ReadResponse after sending, so the buffer is only accessed by the dispatcher
+// while the requester is suspended — no concurrent access is possible.
 unsafe impl Send for BlockMessage {}
 
 /// Request a block read from the dispatcher
@@ -104,7 +109,7 @@ pub fn send_read_completion(status: Result<(), BlockError>) {
 /// Spawn the block dispatcher thread with the given driver.
 ///
 /// Creates a new thread that owns the driver and handles block I/O requests.
-/// The driver is passed to the thread via PENDING_DRIVER since Thread::new()
+/// The driver is passed to the thread via DRIVER since Thread::new()
 /// cannot accept closures.
 ///
 /// Returns the thread ID of the newly created dispatcher thread.
@@ -112,13 +117,16 @@ pub(super) fn spawn_dispatcher<D: BlockDriver + 'static>(driver: D) -> Result<us
     let t = thread::Thread::new(dispatcher_entry);
     let tid = t.id;
 
-    // Store driver for the new thread to pick up
+    // Store driver for the new thread to pick up. The block ensures the guard
+    // is dropped before thread::add() — if the scheduler immediately runs the
+    // new thread, dispatcher_entry() will call DRIVER.lock() and deadlock if
+    // we still hold it.
     {
-        let mut pending = PENDING_DRIVER.lock();
-        if pending.is_some() {
+        let mut guard = DRIVER.lock();
+        if guard.is_some() {
             return Err("Another dispatcher is already being spawned");
         }
-        *pending = Some(Box::new(driver));
+        *guard = Some(Box::new(driver));
     }
 
     // Register TID before adding the thread so that request_read_block()
@@ -133,25 +141,26 @@ pub(super) fn spawn_dispatcher<D: BlockDriver + 'static>(driver: D) -> Result<us
 /// Entry point for dispatcher thread.
 ///
 /// This function must have signature `fn()` to work with Thread::new().
-/// It retrieves the driver from PENDING_DRIVER and starts the dispatcher
+/// It retrieves the driver from DRIVER and starts the dispatcher
 /// main loop.
 fn dispatcher_entry() {
     let driver = {
-        let mut pending = PENDING_DRIVER.lock();
-        pending.take().expect("No driver found for dispatcher")
+        let mut guard = DRIVER.lock();
+        guard.take().expect("No driver found for dispatcher")
     };
 
     dispatcher_main(driver);
 }
 
-/// Pending request state
-struct PendingRequest {
+/// State for a request issued to hardware, awaiting a completion interrupt.
+#[derive(Debug)]
+struct Request {
     requester_tid: usize,
     #[cfg(feature = "trace_volumes")]
     start_time: u64,
 }
 
-static mut PENDING_REQUEST: Option<PendingRequest> = None;
+static mut REQUEST: Option<Request> = None;
 
 /// Dispatcher thread main loop
 fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
@@ -159,7 +168,6 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
     let name = device.name();
     kprintln!("Block dispatcher [{}] started (tid={})", name, tid);
 
-    // Main dispatcher loop - handles both VirtIO and SD
     loop {
         let msg = thread::receive_message();
         let block_msg = unsafe { *Box::from_raw(msg.data as *mut BlockMessage) };
@@ -177,10 +185,10 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                 let start_time = read_time();
                 match device.start_read(sector, buf) {
                     Ok(_) => {
-                        // Track pending request
+                        // Record the request so ReadComplete can reply to the requester
                         unsafe {
-                            let ptr = &raw mut PENDING_REQUEST;
-                            *ptr = Some(PendingRequest {
+                            let ptr = &raw mut REQUEST;
+                            *ptr = Some(Request {
                                 requester_tid,
                                 #[cfg(feature = "trace_volumes")]
                                 start_time,
@@ -200,13 +208,12 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                 }
             }
             BlockMessage::ReadComplete { status } => {
-                // Get pending request info
-                let pending = unsafe {
-                    let ptr = &raw mut PENDING_REQUEST;
+                let request = unsafe {
+                    let ptr = &raw mut REQUEST;
                     (*ptr).take()
                 };
 
-                if let Some(req) = pending {
+                if let Some(req) = request {
                     #[cfg(feature = "trace_volumes")]
                     if status.is_ok() {
                         let end_time = read_time();

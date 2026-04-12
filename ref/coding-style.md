@@ -123,7 +123,23 @@ unsafe {
 
 ## Unsafe Blocks
 
-**Principle:** Don't nest `unsafe` blocks unnecessarily.
+**Principle:** Don't nest `unsafe` blocks unnecessarily. Precede `unsafe` blocks with
+a `// SAFETY:` comment when the reason the operation is sound is not obvious from
+context. Use uppercase `SAFETY:` — this is the convention used by the Rust standard
+library and enforced by the `undocumented_unsafe_blocks` clippy lint.
+
+A comment is needed when there is a non-obvious invariant being upheld — raw pointer
+validity, aliasing, lifetime extension, transmute correctness. It is not needed for
+structural unsafe that is self-evident from context, such as MMIO register reads/writes
+or inline `asm!` blocks where the hardware access is the entire point.
+
+```rust
+// SAFETY: ptr is non-null and valid for the lifetime of self.
+unsafe { (*ptr).field }
+
+// No comment needed — MMIO access, unsafe is structural
+unsafe { (base + REG_STATUS as *const u32).read_volatile() }
+```
 
 ### Pattern
 
@@ -493,6 +509,7 @@ Before committing:
 - [ ] No `crate::` or `core::` or `alloc::` usage at call sites (only in `use` declarations)
 - [ ] Mutable statics use `&raw mut` pattern
 - [ ] No unnecessary nested `unsafe` blocks
+- [ ] `unsafe` blocks with non-obvious invariants have a preceding `// SAFETY:` comment — check all unsafe blocks in every touched file, not only those introduced in the current diff
 - [ ] Method names clearly indicate async vs sync behavior
 - [ ] Magic numbers replaced with appropriately named constants
 - [ ] Hex literals use lowercase digits (`0xaa55` not `0xAA55`); POSIX mode bits use octal
@@ -501,3 +518,4 @@ Before committing:
 - [ ] Struct initialization uses mutable builder pattern instead of large tuple returns
 - [ ] Multi-field return types use named structs, not tuples (especially if any field is discarded with `_` at call sites)
 - [ ] All modified files follow consistent style
+- [ ] Comments in touched files are still accurate — names, behaviour, and invariants described in comments match the current code, not a prior version

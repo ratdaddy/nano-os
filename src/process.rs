@@ -21,7 +21,7 @@ pub struct Context {
     pub files: Vec<Option<File>>,
 }
 
-// Safety: Context is only accessed by its owning thread. The raw pointers
+// SAFETY: Context is only accessed by its owning thread. The raw pointers
 // inside PageMapper point to page tables that are stable for the process lifetime.
 unsafe impl Send for Context {}
 

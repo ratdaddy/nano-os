@@ -110,7 +110,7 @@ impl Ext2SuperBlock {
             }
         }
 
-        // Safety: The box is about to be leaked, making this &'static valid.
+        // SAFETY: The box is about to be leaked, making this &'static valid.
         // We retain mutable access through sb_box until Box::leak consumes it.
         let sb: &'static Self = unsafe { &*(sb_box.as_ref() as *const Self) };
         sb_box.root = Some(sb.get_or_read_inode(ROOT_INODE)?);

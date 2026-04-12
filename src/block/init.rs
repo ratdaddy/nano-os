@@ -3,6 +3,7 @@
 //! Handles hardware probing, driver initialization, partition discovery,
 //! and volume registration for the block layer.
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -15,6 +16,7 @@ use crate::block::volume::{BlockVolume, PartitionVolume, WholeDiskVolume};
 use crate::dev;
 use crate::drivers::{sd, virtio_blk};
 use crate::dtb;
+use crate::kernel_allocator::alloc_within_page;
 use crate::thread;
 
 // Disk I/O buffer size
@@ -36,12 +38,6 @@ pub fn init() {
     let t = thread::Thread::new(init_thread);
     thread::add(t);
 }
-
-// Static buffer for disk I/O — must be properly aligned for DMA
-#[repr(C, align(512))]
-struct SectorBuffer([u8; SECTOR_SIZE]);
-
-static mut MBR_BUFFER: SectorBuffer = SectorBuffer([0; SECTOR_SIZE]);
 
 /// Block subsystem initialization thread
 fn init_thread() {
@@ -69,7 +65,7 @@ fn disk_base_name(major: u32) -> String {
 fn init_driver() -> BlockDisk {
     match dtb::get_cpu_type() {
         dtb::CpuType::Qemu => {
-            BlockDisk::new(virtio_blk::init().expect("VirtIO init failed"))
+            BlockDisk::new(virtio_blk::VirtioBlk::new().expect("VirtIO init failed"))
         }
         dtb::CpuType::LicheeRVNano => {
             BlockDisk::new(sd::init().expect("SD init failed"))
@@ -82,38 +78,35 @@ fn init_driver() -> BlockDisk {
 /// Read the MBR and return all valid partitions.
 fn read_partition_table(disk: &Arc<BlockDisk>) -> Vec<Partition> {
     let whole_disk = WholeDiskVolume::new(Arc::clone(disk));
-    unsafe {
-        let buf = &raw mut MBR_BUFFER.0;
-        let buf = &mut *buf;
+    let mut buf: Box<[u8; SECTOR_SIZE]> = alloc_within_page();
 
-        #[cfg(feature = "trace_volumes")]
-        kprintln!("block: reading partition table from sector 0");
+    #[cfg(feature = "trace_volumes")]
+    kprintln!("block: reading partition table from sector 0");
 
-        match whole_disk.read_blocks(0, buf) {
-            Ok(()) => {
-                #[cfg(feature = "trace_volumes")]
-                kprintln!("block: partition table read successfully");
-            }
-            Err(e) => {
-                kprintln!("block: failed to read partition table: {:?}", e);
-                thread::exit();
-            }
-        }
-
-        #[cfg(feature = "trace_volumes")]
-        probe::log_mbr_signature(buf);
-
-        let partitions = partition::parse_mbr(buf);
-
-        if partitions.is_empty() {
-            kprintln!("block: no valid partitions found");
-        } else {
+    match whole_disk.read_blocks(0, buf.as_mut()) {
+        Ok(()) => {
             #[cfg(feature = "trace_volumes")]
-            probe::log_partition_table(&partitions);
+            kprintln!("block: partition table read successfully");
         }
-
-        partitions
+        Err(e) => {
+            kprintln!("block: failed to read partition table: {:?}", e);
+            thread::exit();
+        }
     }
+
+    #[cfg(feature = "trace_volumes")]
+    probe::log_mbr_signature(buf.as_ref());
+
+    let partitions = partition::parse_mbr(buf.as_ref());
+
+    if partitions.is_empty() {
+        kprintln!("block: no valid partitions found");
+    } else {
+        #[cfg(feature = "trace_volumes")]
+        probe::log_partition_table(&partitions);
+    }
+
+    partitions
 }
 
 /// Create a CachedVolume for each partition, probe its filesystem (trace only),
@@ -185,56 +178,55 @@ mod probe {
     pub fn probe_filesystem(volume: &PartitionVolume, part_number: u8) {
         kprintln!("block: probing partition {} filesystem", part_number);
 
-        unsafe {
-            let buf = &raw mut MBR_BUFFER.0;
-            let buf = &mut *buf;
+        let mut buf: Box<[u8; SECTOR_SIZE]> = alloc_within_page();
+        let buf: &mut [u8; SECTOR_SIZE] = buf.as_mut();
 
-            match volume.read_blocks(0, buf) {
-                Ok(()) => {
-                    let boot_sig = u16::from_le_bytes(
-                        buf[BOOT_SIGNATURE_OFFSET..BOOT_SIGNATURE_OFFSET + 2].try_into().unwrap()
-                    );
-                    if boot_sig == BOOT_SIGNATURE {
-                        let fat32_type = from_utf8(
-                            &buf[FAT32_FILESYSTEM_TYPE_OFFSET..FAT32_FILESYSTEM_TYPE_OFFSET + FAT32_FILESYSTEM_TYPE_LEN]
-                        ).unwrap_or("");
-                        if fat32_type.starts_with("FAT32") {
-                            let label = from_utf8(
-                                &buf[FAT32_VOLUME_LABEL_OFFSET..FAT32_VOLUME_LABEL_OFFSET + FAT32_VOLUME_LABEL_LEN]
-                            ).unwrap_or("").trim_end();
-                            if !label.is_empty() && label != "NO NAME" {
-                                kprintln!("block: partition {}: FAT32 (\"{}\")", part_number, label);
-                            } else {
-                                kprintln!("block: partition {}: FAT32", part_number);
-                            }
+        match volume.read_blocks(0, buf) {
+            Ok(()) => {
+                let boot_sig = u16::from_le_bytes(
+                    buf[BOOT_SIGNATURE_OFFSET..BOOT_SIGNATURE_OFFSET + 2].try_into().unwrap()
+                );
+                if boot_sig == BOOT_SIGNATURE {
+                    let fat32_type = from_utf8(
+                        &buf[FAT32_FILESYSTEM_TYPE_OFFSET..FAT32_FILESYSTEM_TYPE_OFFSET + FAT32_FILESYSTEM_TYPE_LEN]
+                    ).unwrap_or("");
+                    if fat32_type.starts_with("FAT32") {
+                        let label = from_utf8(
+                            &buf[FAT32_VOLUME_LABEL_OFFSET..FAT32_VOLUME_LABEL_OFFSET + FAT32_VOLUME_LABEL_LEN]
+                        ).unwrap_or("").trim_end();
+                        if !label.is_empty() && label != "NO NAME" {
+                            kprintln!("block: partition {}: FAT32 (\"{}\")", part_number, label);
                         } else {
-                            let oem = from_utf8(
-                                &buf[OEM_NAME_OFFSET..OEM_NAME_OFFSET + OEM_NAME_LEN]
-                            ).unwrap_or("").trim_end();
-                            kprintln!("block: partition {}: unknown (oem=\"{}\")", part_number, oem);
+                            kprintln!("block: partition {}: FAT32", part_number);
                         }
                     } else {
-                        match volume.read_blocks(EXT2_SUPERBLOCK_SECTOR, buf) {
-                            Ok(()) => {
-                                let ext2_magic = u16::from_le_bytes(
-                                    buf[EXT2_MAGIC_OFFSET..EXT2_MAGIC_OFFSET + 2].try_into().unwrap()
-                                );
-                                if ext2_magic == EXT2_MAGIC {
-                                    kprintln!("block: partition {}: ext2", part_number);
-                                } else {
-                                    kprintln!("block: partition {}: unrecognized filesystem", part_number);
-                                }
+                        let oem = from_utf8(
+                            &buf[OEM_NAME_OFFSET..OEM_NAME_OFFSET + OEM_NAME_LEN]
+                        ).unwrap_or("").trim_end();
+                        kprintln!("block: partition {}: unknown (oem=\"{}\")", part_number, oem);
+                    }
+                } else {
+                    match volume.read_blocks(EXT2_SUPERBLOCK_SECTOR, buf) {
+                        Ok(()) => {
+                            let ext2_magic = u16::from_le_bytes(
+                                buf[EXT2_MAGIC_OFFSET..EXT2_MAGIC_OFFSET + 2].try_into().unwrap()
+                            );
+                            if ext2_magic == EXT2_MAGIC {
+                                kprintln!("block: partition {}: ext2", part_number);
+                            } else {
+                                kprintln!("block: partition {}: unrecognized filesystem", part_number);
                             }
-                            Err(e) => {
-                                kprintln!("block: failed to read partition {} superblock: {:?}", part_number, e);
-                            }
+                        }
+                        Err(e) => {
+                            kprintln!("block: failed to read partition {} superblock: {:?}", part_number, e);
                         }
                     }
                 }
-                Err(e) => {
-                    kprintln!("block: failed to read partition {} boot sector: {:?}", part_number, e);
-                }
+            }
+            Err(e) => {
+                kprintln!("block: failed to read partition {} boot sector: {:?}", part_number, e);
             }
         }
     }
 }
+

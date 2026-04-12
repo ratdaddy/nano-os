@@ -1,4 +1,5 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::mem::transmute;
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::dtb;
 
@@ -6,11 +7,11 @@ const QEMU_PLIC_BASE: usize = 0x0c00_0000;
 const NANO_PLIC_BASE: usize = 0x7000_0000;
 
 // PLIC register offsets from base address
-const PLIC_PRIORITY_OFFSET: usize = 0x0000;      // Priority registers base
-const PLIC_ENABLE_OFFSET: usize = 0x2000;        // Enable registers base
+const PRIORITY_OFFSET: usize = 0x0000;      // Priority registers base
+const ENABLE_OFFSET: usize = 0x2000;        // Enable registers base
 const PLIC_CONTEXT_BASE: usize = 0x200000;       // Context registers base
 const PLIC_CONTEXT_STRIDE: usize = 0x1000;       // Bytes between contexts
-const PLIC_CLAIM_COMPLETE_OFFSET: usize = 0x4;   // Claim/complete register offset from context
+const CLAIM_COMPLETE_OFFSET: usize = 0x4;   // Claim/complete register offset from context
 
 // S-mode context for hart 0
 // Context ID: 0 = M-mode hart 0, 1 = S-mode hart 0, 2 = M-mode hart 1, etc.
@@ -25,9 +26,11 @@ const MAX_IRQ: usize = 64;
 
 static PLIC_BASE: AtomicUsize = AtomicUsize::new(0);
 
-// IRQ handler lookup table, indexed by IRQ number
-// All handlers have signature fn(u32) where the parameter is the IRQ number
-static IRQ_HANDLERS: [AtomicUsize; MAX_IRQ] = [const { AtomicUsize::new(0) }; MAX_IRQ];
+// IRQ handler lookup table, indexed by IRQ number.
+// All handlers have signature fn(u32) where the parameter is the IRQ number.
+// Stored as *mut () because Rust has no atomic function pointer type. On RISC-V,
+// fn(u32) and *mut () are both 64-bit, so the transmute in dispatch_irq is valid.
+static IRQ_HANDLERS: [AtomicPtr<()>; MAX_IRQ] = [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_IRQ];
 
 pub unsafe fn init() {
     // Dynamically select PLIC base based on CPU type
@@ -58,7 +61,7 @@ fn claim() -> u32 {
     if base == 0 {
         return 0;
     }
-    let claim_reg = (base + PLIC_S_CONTEXT + PLIC_CLAIM_COMPLETE_OFFSET) as *const u32;
+    let claim_reg = (base + PLIC_S_CONTEXT + CLAIM_COMPLETE_OFFSET) as *const u32;
     unsafe { claim_reg.read_volatile() }
 }
 
@@ -68,7 +71,7 @@ fn complete(irq: u32) {
     if base == 0 {
         return;
     }
-    let complete_reg = (base + PLIC_S_CONTEXT + PLIC_CLAIM_COMPLETE_OFFSET) as *mut u32;
+    let complete_reg = (base + PLIC_S_CONTEXT + CLAIM_COMPLETE_OFFSET) as *mut u32;
     unsafe { complete_reg.write_volatile(irq) }
 }
 
@@ -87,8 +90,10 @@ pub fn dispatch_irq() {
     }
 
     let handler_ptr = IRQ_HANDLERS[irq as usize].load(Ordering::Relaxed);
-    if handler_ptr != 0 {
-        let handler: fn(u32) = unsafe { core::mem::transmute(handler_ptr) };
+    if !handler_ptr.is_null() {
+        // SAFETY: handler_ptr was written by register_irq via `handler as usize as *mut ()`.
+        // The value is a valid fn(u32) pointer; transmute recovers it from *mut ().
+        let handler: fn(u32) = unsafe { transmute(handler_ptr) };
         handler(irq);
     } else {
         println!("PLIC: IRQ {} but no handler registered", irq);
@@ -109,7 +114,7 @@ pub fn register_irq(irq_id: u32, handler: fn(u32)) {
     }
 
     // Store handler in lookup table
-    IRQ_HANDLERS[irq].store(handler as usize, Ordering::Relaxed);
+    IRQ_HANDLERS[irq].store(handler as usize as *mut (), Ordering::Relaxed);
 
     // Enable the IRQ in PLIC hardware
     unsafe {
@@ -120,11 +125,11 @@ pub fn register_irq(irq_id: u32, handler: fn(u32)) {
         }
 
         // Set interrupt priority to 1 (priority 0 means disabled)
-        let priority_reg = (base + PLIC_PRIORITY_OFFSET + (irq_id as usize) * 4) as *mut u32;
+        let priority_reg = (base + PRIORITY_OFFSET + (irq_id as usize) * 4) as *mut u32;
         priority_reg.write_volatile(1);
 
         // Enable interrupt for S-mode hart 0
-        let enable_base = base + PLIC_ENABLE_OFFSET + PLIC_ENABLE_CONTEXT_STRIDE * PLIC_S_MODE_CONTEXT_ID;
+        let enable_base = base + ENABLE_OFFSET + PLIC_ENABLE_CONTEXT_STRIDE * PLIC_S_MODE_CONTEXT_ID;
         let word_index = (irq_id / 32) as usize;
         let irq_bit = 1 << (irq_id % 32);
         let enable_word = (enable_base + word_index * 4) as *mut u32;

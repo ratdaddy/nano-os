@@ -30,7 +30,7 @@ enum RamfsNode {
     BlockDevice,
 }
 
-// Safety: RamfsNode contains a RefCell (which is !Sync). Single-threaded use
+// SAFETY: RamfsNode contains a RefCell (which is !Sync). Single-threaded use
 // is guaranteed by the kernel: ramfs is populated before mount and accessed
 // from one thread at a time thereafter. Aliasing is checked at runtime by
 // RefCell; a violation will panic rather than cause undefined behaviour.

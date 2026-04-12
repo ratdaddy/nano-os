@@ -281,7 +281,7 @@ impl LinkedListAllocator {
     }
 }
 
-// Safety: interrupts are only enabled in the idle thread (which does not allocate)
+// SAFETY: interrupts are only enabled in the idle thread (which does not allocate)
 // and briefly during thread yields (not mid-allocation). On a single CPU this
 // guarantees the allocator is never re-entered, so &self mutation via UnsafeCell
 // is sound. This assumption breaks if interrupts are enabled during kernel paths

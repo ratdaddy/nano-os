@@ -16,7 +16,7 @@ pub struct SpscRing<const N: usize> {
     tail: AtomicUsize, // Next read position (consumer)
 }
 
-// Safety: SPSC access pattern - producer only writes head, consumer only writes tail.
+// SAFETY: SPSC access pattern - producer only writes head, consumer only writes tail.
 // The buffer contents are protected by the head/tail synchronization.
 unsafe impl<const N: usize> Sync for SpscRing<N> {}
 
