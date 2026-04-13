@@ -3,8 +3,9 @@
 //! Fully interrupt-driven implementation for the LicheeRV Nano (SG2002).
 
 use alloc::boxed::Box;
+use core::mem::transmute;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::block::disk;
 use crate::drivers::block::validate_read_buffer;
 use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::dtb;
@@ -67,6 +68,8 @@ const ADMA2_ACT_TRAN: u16 = 2 << 4;
 const ADMA2_END: u16 = 1 << 1;
 const ADMA2_VALID: u16 = 1 << 0;
 
+static COMPLETION_HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
 /// ADMA2 descriptor (64-bit addressing mode)
 #[repr(C, align(8))]
 #[derive(Debug, Copy, Clone)]
@@ -128,6 +131,10 @@ impl SdCardAdma {
 impl BlockDriver for SdCardAdma {
     fn name(&self) -> &'static str {
         "sd0"
+    }
+
+    fn set_completion_handler(&self, handler: fn(Result<(), BlockError>)) {
+        COMPLETION_HANDLER.store(handler as *mut (), Ordering::Relaxed);
     }
 
     fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError> {
@@ -204,7 +211,7 @@ fn sd_irq_handler(_irq: u32) {
     // Check for errors
     if err != 0 {
         write16(REG_ERROR_INT_STATUS, 0xffff);
-        disk::send_read_completion(Err(BlockError::IoError));
+        call_completion_handler(Err(BlockError::IoError));
         return;
     }
 
@@ -215,12 +222,23 @@ fn sd_irq_handler(_irq: u32) {
         // Invalidate cache so CPU sees DMA-written data
         flush_dcache_for_dma();
 
-        disk::send_read_completion(Ok(()));
+        call_completion_handler(Ok(()));
     }
 
     // Clear any other status bits
     if status & !INT_TRANSFER_COMPLETE != 0 {
         write16(REG_NORMAL_INT_STATUS, status & !INT_TRANSFER_COMPLETE);
+    }
+}
+
+/// Call the registered completion handler, if any.
+fn call_completion_handler(result: Result<(), BlockError>) {
+    let handler_ptr = COMPLETION_HANDLER.load(Ordering::Relaxed);
+    if !handler_ptr.is_null() {
+        // SAFETY: handler_ptr was stored by set_completion_handler via `handler as *mut ()`.
+        // The value is a valid fn(Result<(), BlockError>) pointer; transmute recovers it.
+        let handler: fn(Result<(), BlockError>) = unsafe { transmute(handler_ptr) };
+        handler(result);
     }
 }
 

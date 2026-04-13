@@ -34,6 +34,7 @@ fn console() -> &'static mut File {
 ///
 /// Collects formatted output into a buffer, then sends it to the UART writer
 /// thread when dropped. This batches the write into a single message.
+#[derive(Debug)]
 pub struct KPrintWriter {
     buf: String,
 }
@@ -53,8 +54,16 @@ impl core::fmt::Write for KPrintWriter {
 
 impl Drop for KPrintWriter {
     fn drop(&mut self) {
-        if !self.buf.is_empty() {
+        if self.buf.is_empty() {
+            return;
+        }
+        // SAFETY: CONSOLE is written once during init() before threads start and only read
+        // after that. Reading via addr_of! avoids a mutable reference; is_some() does not mutate.
+        if unsafe { (*core::ptr::addr_of!(CONSOLE)).is_some() } && crate::thread::Thread::has_current() {
             let _ = vfs::vfs_write(console(), self.buf.as_bytes());
+        } else {
+            use core::fmt::Write;
+            let _ = write!(crate::console::PutcharWriter, "{}", self.buf);
         }
     }
 }

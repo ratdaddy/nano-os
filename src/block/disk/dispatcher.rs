@@ -117,6 +117,8 @@ pub(super) fn spawn_dispatcher<D: BlockDriver + 'static>(driver: D) -> Result<us
     let t = thread::Thread::new(dispatcher_entry);
     let tid = t.id;
 
+    driver.set_completion_handler(send_read_completion);
+
     // Store driver for the new thread to pick up. The block ensures the guard
     // is dropped before thread::add() — if the scheduler immediately runs the
     // new thread, dispatcher_entry() will call DRIVER.lock() and deadlock if

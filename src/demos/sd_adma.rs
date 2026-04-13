@@ -3,14 +3,18 @@
 //! This driver uses SDHCI ADMA2 for DMA transfers instead of PIO.
 //! Includes both polling and interrupt-driven read modes.
 
+use alloc::boxed::Box;
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use super::block_device::{BlockDevice, BlockError};
 use super::disk_inspect;
-use crate::drivers::plic;
+use crate::drivers::{self, sd, BlockDriver};
 use crate::dtb;
+use crate::kernel_allocator::alloc_within_page;
 use crate::kernel_memory_map::kernel_virt_to_phys;
+use crate::kernel_trap;
 
 const SD_BASE: usize = 0x0431_0000;
-const SD_IRQ: u32 = 36;  // From DTB: interrupts = 0x24
 const TIMEBASE_FREQUENCY: u64 = 25_000_000;  // From DTB: timebase-frequency = 0x017d7840
 
 // SDHCI register offsets
@@ -24,8 +28,6 @@ const REG_NORMAL_INT_STATUS: usize = 0x30;
 const REG_ERROR_INT_STATUS: usize = 0x32;
 const REG_NORMAL_INT_STATUS_EN: usize = 0x34;
 const REG_ERROR_INT_STATUS_EN: usize = 0x36;
-const REG_NORMAL_INT_SIGNAL_EN: usize = 0x38;
-const REG_ERROR_INT_SIGNAL_EN: usize = 0x3A;
 const REG_HOST_CONTROL2: usize = 0x3E;
 const REG_ADMA_ADDR_LOW: usize = 0x58;
 const REG_ADMA_ADDR_HIGH: usize = 0x5C;
@@ -78,9 +80,14 @@ fn read_time() -> u64 {
     time
 }
 
+#[inline]
+unsafe fn wfi() {
+    core::arch::asm!("wfi");
+}
+
 /// ADMA2 descriptor (64-bit addressing mode, 128-bit / 16 bytes)
 #[repr(C, align(8))]
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct Adma2Desc {
     attr: u16,
     length: u16,
@@ -108,6 +115,7 @@ impl Adma2Desc {
 // Static DMA buffers — align(256) ensures the 256-byte table never crosses
 // a page boundary, which would make its physical addresses non-contiguous for DMA.
 #[repr(C, align(256))]
+#[derive(Debug)]
 struct DescTable([Adma2Desc; 16]);
 
 static mut DESC_TABLE: DescTable = DescTable([Adma2Desc {
@@ -115,24 +123,13 @@ static mut DESC_TABLE: DescTable = DescTable([Adma2Desc {
 }; 16]);
 
 #[repr(C, align(512))]
+#[derive(Debug)]
 struct DataBuffer([u8; 512]);
 
 static mut DATA_BUF: DataBuffer = DataBuffer([0; 512]);
 
-// Interrupt state machine
-#[derive(Copy, Clone, PartialEq, Debug)]
-enum IrqState {
-    Idle,
-    WaitingTransferComplete,
-    Complete,
-    Error,
-}
-
-static mut IRQ_STATE: IrqState = IrqState::Idle;
-static mut START_TIME: u64 = 0;
-static mut END_TIME: u64 = 0;
-
 /// SD card driver using ADMA2
+#[derive(Debug)]
 pub struct SdCardAdma {
     desc_table_phys: usize,
     data_buf_phys: usize,
@@ -252,164 +249,6 @@ impl BlockDevice for SdCardAdma {
     }
 }
 
-/// SDHCI interrupt handler called by PLIC dispatcher
-fn sd_irq_handler(_irq: u32) {
-    let status = read16(REG_NORMAL_INT_STATUS);
-    let err = read16(REG_ERROR_INT_STATUS);
-
-    unsafe {
-        // Check for errors
-        if err != 0 {
-            write16(REG_ERROR_INT_STATUS, 0xFFFF);
-            IRQ_STATE = IrqState::Error;
-            return;
-        }
-
-        // We only expect Transfer Complete interrupt
-        if status & INT_TRANSFER_COMPLETE != 0 {
-            write16(REG_NORMAL_INT_STATUS, INT_TRANSFER_COMPLETE);
-            IRQ_STATE = IrqState::Complete;
-        }
-
-        // Clear any other status bits
-        if status & !INT_TRANSFER_COMPLETE != 0 {
-            write16(REG_NORMAL_INT_STATUS, status & !INT_TRANSFER_COMPLETE);
-        }
-    }
-}
-
-/// Perform an interrupt-driven ADMA2 read of 1 block (512 bytes).
-/// Issues command (polling Command Complete), then waits for Transfer Complete via interrupt.
-/// Returns (cycles, microseconds).
-fn read_blocks_irq(device: &mut SdCardAdma, start_sector: u32, buf: &mut [u8; 512]) -> Result<(u64, u64), BlockError> {
-    unsafe {
-        IRQ_STATE = IrqState::WaitingTransferComplete;
-        START_TIME = read_time();
-
-        // Build ADMA2 descriptor for 512-byte transfer (single block)
-        DESC_TABLE.0[0] = Adma2Desc::new(device.data_buf_phys as u64, 512, true);
-
-        flush_dcache_for_dma();
-
-        // Point ADMA engine to descriptor table
-        write32(REG_ADMA_ADDR_LOW, device.desc_table_phys as u32);
-        write32(REG_ADMA_ADDR_HIGH, (device.desc_table_phys >> 32) as u32);
-
-        // Wait for CMD and DAT inhibit to clear
-        /*
-        let mut timeout = 100_000u32;
-        while read32(REG_PRESENT_STATE) & (PRESENT_CMD_INHIBIT | PRESENT_DAT_INHIBIT) != 0 {
-            timeout -= 1;
-            if timeout == 0 { return Err(BlockError::Timeout); }
-        }
-        */
-
-        // Clear pending status
-        write16(REG_NORMAL_INT_STATUS, 0xFFFF);
-        write16(REG_ERROR_INT_STATUS, 0xFFFF);
-
-        // Set block size (512) and count (1 block = 512 bytes)
-        write16(REG_BLOCK_SIZE, 512);
-        write16(REG_BLOCK_COUNT, 1);
-        write8(0x2E, 0x0E);
-
-        // Write starting sector argument
-        write32(REG_ARGUMENT, start_sector);
-
-        // Issue CMD17 (READ_SINGLE_BLOCK)
-        // Transfer Mode: DMA enable (bit 0), Read direction (bit 4)
-        let xfer_mode: u16 = (1 << 4) | (1 << 0);
-        // Command: CMD17, R1 response, data present, CRC + index check
-        let cmd: u16 = (17 << 8) | (1 << 5) | (1 << 4) | (1 << 3) | (1 << 1);
-        write32(REG_XFER_MODE, (xfer_mode as u32) | ((cmd as u32) << 16));
-
-        // Wait for Command Complete
-        /*
-        timeout = 250_000;
-        loop {
-            let status = read16(REG_NORMAL_INT_STATUS);
-            if status & INT_COMMAND_COMPLETE != 0 {
-                write16(REG_NORMAL_INT_STATUS, INT_COMMAND_COMPLETE);
-                break;
-            }
-            let err = read16(REG_ERROR_INT_STATUS);
-            if err != 0 {
-                write16(REG_ERROR_INT_STATUS, 0xFFFF);
-                if err & ERR_CMD_TIMEOUT != 0 { return Err(BlockError::Timeout); }
-                return Err(BlockError::IoError);
-            }
-            timeout -= 1;
-            if timeout == 0 { return Err(BlockError::Timeout); }
-        }
-        */
-
-        // Command complete - ADMA transfer is now in progress.
-        // Set up interrupt path for Transfer Complete.
-
-        // Set up sscratch for kernel trap handler
-        let trap_stack = crate::kernel_trap::trap_stack_top();
-        core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
-
-        // Enable SDHCI interrupt signal generation for Transfer Complete only
-        write16(REG_NORMAL_INT_SIGNAL_EN, INT_TRANSFER_COMPLETE);
-        write16(REG_ERROR_INT_SIGNAL_EN, 0xFFFF);
-
-        // Enable CPU interrupts
-        enable_interrupts();
-
-        // Check if transfer already completed before we enabled interrupts
-        let status = read16(REG_NORMAL_INT_STATUS);
-        if status & INT_TRANSFER_COMPLETE != 0 {
-            write16(REG_NORMAL_INT_STATUS, INT_TRANSFER_COMPLETE);
-            IRQ_STATE = IrqState::Complete;
-        }
-
-        // Wait for completion
-        let timeout_cycles = TIMEBASE_FREQUENCY;  // 1 second timeout
-        loop {
-            let state = core::ptr::addr_of!(IRQ_STATE).read_volatile();
-
-            match state {
-                IrqState::Complete => {
-                    END_TIME = read_time();
-                    break;
-                }
-                IrqState::Error => {
-                    disable_interrupts();
-                    write16(REG_NORMAL_INT_SIGNAL_EN, 0);
-                    write16(REG_ERROR_INT_SIGNAL_EN, 0);
-                    return Err(BlockError::IoError);
-                }
-                _ => {
-                    let elapsed = read_time() - START_TIME;
-                    if elapsed >= timeout_cycles {
-                        disable_interrupts();
-                        write16(REG_NORMAL_INT_SIGNAL_EN, 0);
-                        write16(REG_ERROR_INT_SIGNAL_EN, 0);
-                        return Err(BlockError::Timeout);
-                    }
-                    //wfi();
-                }
-            }
-        }
-
-        disable_interrupts();
-
-        // Disable signal generation (back to polling mode)
-        write16(REG_NORMAL_INT_SIGNAL_EN, 0);
-        write16(REG_ERROR_INT_SIGNAL_EN, 0);
-
-        // Calculate elapsed time in microseconds
-        let cycles = END_TIME - START_TIME;
-        let microseconds = (cycles * 1_000_000) / TIMEBASE_FREQUENCY;
-
-        // Invalidate cache so we see DMA-written data
-        flush_dcache_for_dma();
-        buf.copy_from_slice(&*core::ptr::addr_of!(DATA_BUF.0));
-
-        Ok((cycles, microseconds))
-    }
-}
 
 /// Flush data cache for DMA coherency.
 /// On T-Head C906 (Lichee RV Nano), uses custom cache instructions.
@@ -483,39 +322,68 @@ pub fn sd_adma_demo() {
     disk_inspect::inspect_disk(&mut card);
     println!();
 
-    // Interrupt-driven I/O proof of concept
+    // Interrupt-driven I/O using production driver
     println!("=== Interrupt-Driven ADMA2 Read ===");
     println!();
 
-    // Register SD IRQ handler with PLIC (combines registration + enabling)
-    plic::register_irq(SD_IRQ, sd_irq_handler);
+    // Create production driver — reinitializes hardware and registers IRQ with PLIC.
+    // Safe since the polling section has already completed.
+    let mut driver = match sd::init() {
+        Ok(d) => d,
+        Err(e) => {
+            println!("Failed to initialize SD driver: {}", e);
+            return;
+        }
+    };
 
-    // Clear any stale SDHCI interrupt status
-    write16(REG_NORMAL_INT_STATUS, 0xFFFF);
-    write16(REG_ERROR_INT_STATUS, 0xFFFF);
+    static DONE: AtomicBool = AtomicBool::new(false);
+    fn on_complete(_: Result<(), drivers::BlockError>) {
+        DONE.store(true, Ordering::Relaxed);
+    }
+    driver.set_completion_handler(on_complete);
 
-    // Run 10 tests across different areas of the 64GB card
-    // Spread tests across 6.4GB intervals
+    // DMA buffer: 512-byte aligned, guaranteed within a single page
+    #[repr(C, align(512))]
+    struct AlignedBuf([u8; 512]);
+    let mut buf: Box<AlignedBuf> = alloc_within_page();
+
+    // Set up kernel trap stack before enabling interrupts. The demo runs in
+    // kernel_main before any threads start, so the scheduler hasn't set sscratch.
+    // kernel_trap_entry requires sscratch to hold the trap stack on entry.
+    unsafe {
+        let trap_stack = kernel_trap::trap_stack_top();
+        core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
+    }
+
     const SECTOR_STEP: u32 = 13421773;  // ~6.4GB in sectors
     println!("Running 10 interrupt-driven reads (512 bytes each) across 64GB card...");
 
-    let mut buf = [0u8; 512];
     let mut results: [(u32, u64, u64); 10] = [(0, 0, 0); 10];
 
-    for i in 0..10 {
+    for i in 0..10u32 {
         let sector = i * SECTOR_STEP;
-        match read_blocks_irq(&mut card, sector, &mut buf) {
-            Ok((cycles, microseconds)) => {
-                results[i as usize] = (sector, cycles, microseconds);
-            }
-            Err(e) => {
-                println!("✗ Read {} failed at sector {}: {}", i, sector, e);
-                return;
-            }
+        DONE.store(false, Ordering::Relaxed);
+        let start = read_time();
+
+        match driver.start_read(sector, &mut buf.0) {
+            Err(e) => { println!("Read {} failed to start: {}", i, e); return; }
+            Ok(()) => {}
         }
+
+        unsafe {
+            enable_interrupts();
+            loop {
+                if DONE.load(Ordering::Relaxed) { break; }
+                wfi();
+            }
+            disable_interrupts();
+        }
+
+        let cycles = read_time() - start;
+        let microseconds = (cycles * 1_000_000) / TIMEBASE_FREQUENCY;
+        results[i as usize] = (sector, cycles, microseconds);
     }
 
-    // Print all results
     println!();
     println!("Results:");
     println!("  Run | Sector      | Offset (GB) | Cycles    | Time (us)");

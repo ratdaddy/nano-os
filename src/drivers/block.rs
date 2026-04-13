@@ -26,6 +26,9 @@ pub trait BlockDriver: Send {
     /// Get the device name (e.g., "virtio0", "sd0")
     fn name(&self) -> &'static str;
 
+    /// Register a function to be called when a read operation completes.
+    fn set_completion_handler(&self, handler: fn(Result<(), BlockError>));
+
     /// Start a read operation (asynchronous, returns immediately)
     ///
     /// Programs the hardware to read one or more sectors from the device.

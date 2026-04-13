@@ -4,11 +4,17 @@ in the qemu log, only triggering on content written after this script starts."""
 import os, time, sys
 
 log = sys.argv[1] if len(sys.argv) > 1 else '/tmp/nano-os-qemu.log'
-t = time.time()
+
+# Remove the log file so any content we see is guaranteed to be from a new session.
+try:
+    os.remove(log)
+except FileNotFoundError:
+    pass
+
 while True:
     try:
-        if os.path.getmtime(log) > t and 'QEMU: Terminated' in open(log).read():
+        if 'QEMU: Terminated' in open(log).read():
             break
-    except:
+    except FileNotFoundError:
         pass
     time.sleep(2)

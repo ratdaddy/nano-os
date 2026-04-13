@@ -1,15 +1,13 @@
 //! VirtIO block device driver
 
 use alloc::boxed::Box;
-use core::mem::size_of;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::mem::{size_of, transmute};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
-use crate::block::disk;
 use crate::drivers::block::validate_read_buffer;
 use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::kernel_allocator::alloc_within_page;
 use crate::kernel_memory_map::kernel_virt_to_phys;
-use crate::kernel_trap;
 
 const VIRTIO_BASE: usize = 0x10001000;
 const VIRTIO_STRIDE: usize = 0x1000;
@@ -97,6 +95,8 @@ type UsedRing  = [u32; VIRTIO_QUEUE_SIZE * 2 + 1]; // flags/idx + ring entries
 // Device base for interrupt handler — must be a static since the handler has no other
 // way to find the device.
 static DEVICE_BASE: AtomicUsize = AtomicUsize::new(0);
+
+static COMPLETION_HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// VirtIO block device
 #[derive(Debug)]
@@ -262,54 +262,52 @@ impl BlockDriver for VirtioBlk {
         }
     }
 
+    fn set_completion_handler(&self, handler: fn(Result<(), BlockError>)) {
+        COMPLETION_HANDLER.store(handler as *mut (), Ordering::Relaxed);
+    }
+
     fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError> {
         // Validate buffer meets DMA requirements
         let _sector_count = validate_read_buffer(buf)?;
 
-        unsafe {
-            // Get physical address of caller's buffer
-            let buf_virt = buf.as_ptr() as usize;
-            let buf_phys = kernel_virt_to_phys(buf_virt)
-                .ok_or(BlockError::IoError)?;
+        // Get physical address of caller's buffer
+        let buf_virt = buf.as_ptr() as usize;
+        let buf_phys = kernel_virt_to_phys(buf_virt)
+            .ok_or(BlockError::IoError)?;
 
-            // Build request
-            self.req.req_type = BLK_T_IN;
-            self.req._reserved = 0;
-            self.req.sector = sector as u64;
-            *self.status = 0xff;
+        // Build request
+        self.req.req_type = BLK_T_IN;
+        self.req._reserved = 0;
+        self.req.sector = sector as u64;
+        *self.status = 0xff;
 
-            // Build descriptor chain (3 descriptors: request header, data buffer, status byte)
-            self.desc[0].addr = self.req_phys as u64;
-            self.desc[0].len = BLK_REQ_HEADER_SIZE;
-            self.desc[0].flags = DESC_F_NEXT;
-            self.desc[0].next = 1;
+        // Build descriptor chain (3 descriptors: request header, data buffer, status byte)
+        self.desc[0].addr = self.req_phys as u64;
+        self.desc[0].len = BLK_REQ_HEADER_SIZE;
+        self.desc[0].flags = DESC_F_NEXT;
+        self.desc[0].next = 1;
 
-            // Use caller's buffer for DMA (supports multi-sector reads)
-            self.desc[1].addr = buf_phys as u64;
-            self.desc[1].len = buf.len() as u32;
-            self.desc[1].flags = DESC_F_WRITE | DESC_F_NEXT;
-            self.desc[1].next = 2;
+        // Use caller's buffer for DMA (supports multi-sector reads)
+        self.desc[1].addr = buf_phys as u64;
+        self.desc[1].len = buf.len() as u32;
+        self.desc[1].flags = DESC_F_WRITE | DESC_F_NEXT;
+        self.desc[1].next = 2;
 
-            self.desc[2].addr = self.status_phys as u64;
-            self.desc[2].len = BLK_STATUS_SIZE;
-            self.desc[2].flags = DESC_F_WRITE;
-            self.desc[2].next = 0;
+        self.desc[2].addr = self.status_phys as u64;
+        self.desc[2].len = BLK_STATUS_SIZE;
+        self.desc[2].flags = DESC_F_WRITE;
+        self.desc[2].next = 0;
 
-            // Add to available ring
-            let avail_idx = self.avail[1];
-            self.avail[AVAIL_RING_OFFSET + (avail_idx as usize % VIRTIO_QUEUE_SIZE)] = 0;
-            self.avail[1] = avail_idx.wrapping_add(1);
+        // Add to available ring
+        let avail_idx = self.avail[1];
+        self.avail[AVAIL_RING_OFFSET + (avail_idx as usize % VIRTIO_QUEUE_SIZE)] = 0;
+        self.avail[1] = avail_idx.wrapping_add(1);
 
-            // Set up trap stack for interrupt handling
-            let trap_stack = kernel_trap::trap_stack_top();
-            core::arch::asm!("csrw sscratch, {}", in(reg) trap_stack);
+        // Notify device - interrupt will fire when idle thread enables interrupts
+        write32(self.base, REG_QUEUE_NOTIFY, 0);
 
-            // Notify device - interrupt will fire when idle thread enables interrupts
-            write32(self.base, REG_QUEUE_NOTIFY, 0);
-
-            // Return immediately - dispatcher will yield and idle thread will enable interrupts
-            Ok(())
-        }
+        // Return immediately - dispatcher will yield and idle thread will enable interrupts
+        Ok(())
     }
 }
 
@@ -328,8 +326,13 @@ fn virtio_irq_handler(_irq: u32) {
         // Used buffer notification - request completed
         write32(base, REG_INTERRUPT_ACK, int_status);
 
-        // Send completion message to dispatcher
-        disk::send_read_completion(Ok(()));
+        let handler_ptr = COMPLETION_HANDLER.load(Ordering::Relaxed);
+        if !handler_ptr.is_null() {
+            // SAFETY: handler_ptr was stored by set_completion_handler via `handler as *mut ()`.
+            // The value is a valid fn(Result<(), BlockError>) pointer; transmute recovers it.
+            let handler: fn(Result<(), BlockError>) = unsafe { transmute(handler_ptr) };
+            handler(Ok(()));
+        }
     }
 }
 

@@ -145,6 +145,13 @@ impl Thread {
         }
     }
 
+    /// Returns true if there is a current thread (i.e., the scheduler has started).
+    pub fn has_current() -> bool {
+        // SAFETY: CURRENT_THREAD is a raw pointer set to null at startup and updated only by
+        // the scheduler. We only test for null — we do not dereference it — so this is safe.
+        unsafe { !CURRENT_THREAD.is_null() }
+    }
+
     /// Set the current thread (used by scheduler during context switch)
     #[inline]
     pub fn set_current(thread: *mut Thread) {

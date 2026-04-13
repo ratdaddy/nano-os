@@ -8,7 +8,7 @@ use crate::drivers::{BlockDriver, BlockError, BLOCK_SIZE};
 use crate::thread;
 
 mod dispatcher;
-pub use dispatcher::{BlockMessage, request_read_block, send_read_completion};
+pub use dispatcher::{BlockMessage, request_read_block};
 
 /// A physical block device with request serialization.
 ///
