@@ -69,6 +69,7 @@ const DESC_F_WRITE: u16 = 2;
 
 // Block request types
 const BLK_T_IN: u32 = 0;
+const BLK_T_OUT: u32 = 1;
 
 
 #[repr(C, align(16))]
@@ -216,6 +217,52 @@ impl VirtioBlk {
         Ok(VirtioBlk { base, desc, avail, _used, req, status, req_phys, status_phys })
     }
 
+    /// Build and submit a VirtIO block request (read or write)
+    ///
+    /// Shared path for `start_read` and `start_write`. The only differences between
+    /// the two operations are the request type and whether the data descriptor is
+    /// device-writable (`DESC_F_WRITE`) or device-readable (no flag).
+    fn start_io(&mut self, req_type: u32, sector: u32, buf: &[u8], data_flags: u16) -> Result<(), BlockError> {
+        // Validate buffer meets DMA requirements
+        validate_read_buffer(buf)?;
+
+        // Get physical address of caller's buffer
+        let buf_phys = kernel_virt_to_phys(buf.as_ptr() as usize)
+            .ok_or(BlockError::IoError)?;
+
+        // Build request header
+        self.req.req_type = req_type;
+        self.req._reserved = 0;
+        self.req.sector = sector as u64;
+        *self.status = 0xff;
+
+        // Build descriptor chain (3 descriptors: request header, data buffer, status byte)
+        self.desc[0].addr = self.req_phys as u64;
+        self.desc[0].len = BLK_REQ_HEADER_SIZE;
+        self.desc[0].flags = DESC_F_NEXT;
+        self.desc[0].next = 1;
+
+        self.desc[1].addr = buf_phys as u64;
+        self.desc[1].len = buf.len() as u32;
+        self.desc[1].flags = data_flags;
+        self.desc[1].next = 2;
+
+        self.desc[2].addr = self.status_phys as u64;
+        self.desc[2].len = BLK_STATUS_SIZE;
+        self.desc[2].flags = DESC_F_WRITE;
+        self.desc[2].next = 0;
+
+        // Add to available ring
+        let avail_idx = self.avail[1];
+        self.avail[AVAIL_RING_OFFSET + (avail_idx as usize % VIRTIO_QUEUE_SIZE)] = 0;
+        self.avail[1] = avail_idx.wrapping_add(1);
+
+        // Notify device - interrupt will fire when idle thread enables interrupts
+        write32(self.base, REG_QUEUE_NOTIFY, 0);
+
+        Ok(())
+    }
+
     /// Probe for a VirtIO block device
     fn probe() -> Option<usize> {
 
@@ -267,47 +314,13 @@ impl BlockDriver for VirtioBlk {
     }
 
     fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError> {
-        // Validate buffer meets DMA requirements
-        let _sector_count = validate_read_buffer(buf)?;
+        // Device writes into buf — DESC_F_WRITE marks the descriptor as device-writable
+        self.start_io(BLK_T_IN, sector, buf, DESC_F_WRITE | DESC_F_NEXT)
+    }
 
-        // Get physical address of caller's buffer
-        let buf_virt = buf.as_ptr() as usize;
-        let buf_phys = kernel_virt_to_phys(buf_virt)
-            .ok_or(BlockError::IoError)?;
-
-        // Build request
-        self.req.req_type = BLK_T_IN;
-        self.req._reserved = 0;
-        self.req.sector = sector as u64;
-        *self.status = 0xff;
-
-        // Build descriptor chain (3 descriptors: request header, data buffer, status byte)
-        self.desc[0].addr = self.req_phys as u64;
-        self.desc[0].len = BLK_REQ_HEADER_SIZE;
-        self.desc[0].flags = DESC_F_NEXT;
-        self.desc[0].next = 1;
-
-        // Use caller's buffer for DMA (supports multi-sector reads)
-        self.desc[1].addr = buf_phys as u64;
-        self.desc[1].len = buf.len() as u32;
-        self.desc[1].flags = DESC_F_WRITE | DESC_F_NEXT;
-        self.desc[1].next = 2;
-
-        self.desc[2].addr = self.status_phys as u64;
-        self.desc[2].len = BLK_STATUS_SIZE;
-        self.desc[2].flags = DESC_F_WRITE;
-        self.desc[2].next = 0;
-
-        // Add to available ring
-        let avail_idx = self.avail[1];
-        self.avail[AVAIL_RING_OFFSET + (avail_idx as usize % VIRTIO_QUEUE_SIZE)] = 0;
-        self.avail[1] = avail_idx.wrapping_add(1);
-
-        // Notify device - interrupt will fire when idle thread enables interrupts
-        write32(self.base, REG_QUEUE_NOTIFY, 0);
-
-        // Return immediately - dispatcher will yield and idle thread will enable interrupts
-        Ok(())
+    fn start_write(&mut self, sector: u32, buf: &[u8]) -> Result<(), BlockError> {
+        // Device reads from buf — no DESC_F_WRITE flag
+        self.start_io(BLK_T_OUT, sector, buf, DESC_F_NEXT)
     }
 }
 

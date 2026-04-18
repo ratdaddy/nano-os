@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use core::mem::transmute;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::drivers::block::validate_read_buffer;
+use crate::drivers::block::{validate_read_buffer, BLOCK_SIZE};
 use crate::drivers::{plic, BlockDriver, BlockError};
 use crate::dtb;
 use crate::kernel_allocator::alloc_within_page;
@@ -52,6 +52,8 @@ const CMD_RESP_TYPE_R1: u16 = 1 << 1;
 // SD commands
 const SD_CMD17_READ_SINGLE: u16 = 17;
 const SD_CMD18_READ_MULTIPLE: u16 = 18;
+const SD_CMD24_WRITE_SINGLE: u16 = 24;
+const SD_CMD25_WRITE_MULTIPLE: u16 = 25;
 
 // Normal Interrupt Status bits
 const INT_TRANSFER_COMPLETE: u16 = 1 << 1;
@@ -67,8 +69,6 @@ const HOST_CTRL2_64BIT_ADDR: u16 = 1 << 13;
 const ADMA2_ACT_TRAN: u16 = 2 << 4;
 const ADMA2_END: u16 = 1 << 1;
 const ADMA2_VALID: u16 = 1 << 0;
-
-static COMPLETION_HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// ADMA2 descriptor (64-bit addressing mode)
 #[repr(C, align(8))]
@@ -97,6 +97,8 @@ impl Adma2Desc {
     }
 }
 
+static COMPLETION_HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
 /// SD card driver using ADMA2
 #[derive(Debug)]
 pub struct SdCardAdma {
@@ -105,7 +107,7 @@ pub struct SdCardAdma {
 }
 
 impl SdCardAdma {
-    fn new() -> Result<Self, BlockError> {
+    pub fn new() -> Result<Self, BlockError> {
         let desc_table: Box<Adma2Desc> = alloc_within_page();
         let desc_table_phys = kernel_virt_to_phys(desc_table.as_ref() as *const Adma2Desc as usize)
             .ok_or(BlockError::IoError)?;
@@ -124,7 +126,59 @@ impl SdCardAdma {
         host_ctrl = (host_ctrl & !HOST_CTRL_DMA_MASK) | HOST_CTRL_ADMA2_64;
         write8(REG_HOST_CONTROL, host_ctrl);
 
+        kprintln!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
+        plic::register_irq(SD_IRQ, sd_irq_handler);
+
         Ok(SdCardAdma { desc_table, desc_table_phys })
+    }
+
+    /// Shared path for start_read and start_write.
+    ///
+    /// `xfer_dir` is `XFER_MODE_DATA_DIR_READ` for reads, `0` for writes.
+    /// `cmd_single` and `cmd_multi` are the SD command indices for single- and
+    /// multi-block transfers respectively.
+    fn start_io(&mut self, sector: u32, buf: &[u8], xfer_dir: u16, cmd_single: u16, cmd_multi: u16) -> Result<(), BlockError> {
+        let sector_count = validate_read_buffer(buf)?;
+
+        let buf_phys = kernel_virt_to_phys(buf.as_ptr() as usize)
+            .ok_or(BlockError::IoError)?;
+
+        *self.desc_table = Adma2Desc::new(buf_phys as u64, buf.len() as u16, true);
+
+        flush_dcache_for_dma();
+
+        write32(REG_ADMA_ADDR_LOW, self.desc_table_phys as u32);
+        write32(REG_ADMA_ADDR_HIGH, (self.desc_table_phys >> 32) as u32);
+
+        write16(REG_NORMAL_INT_STATUS, 0xffff);
+        write16(REG_ERROR_INT_STATUS, 0xffff);
+
+        write16(REG_BLOCK_SIZE, BLOCK_SIZE as u16);
+        write16(REG_BLOCK_COUNT, sector_count as u16);
+        write8(REG_DATA_TIMEOUT, DATA_TIMEOUT_VALUE);
+
+        write32(REG_ARGUMENT, sector);
+
+        write16(REG_NORMAL_INT_SIGNAL_EN, INT_TRANSFER_COMPLETE);
+        write16(REG_ERROR_INT_SIGNAL_EN, 0xffff);
+
+        let (xfer_mode, cmd_index) = if sector_count == 1 {
+            (xfer_dir | XFER_MODE_DMA_ENABLE, cmd_single)
+        } else {
+            (xfer_dir | XFER_MODE_DMA_ENABLE | XFER_MODE_BLOCK_COUNT_EN
+                | XFER_MODE_MULTI_BLOCK | XFER_MODE_AUTO_CMD12_EN,
+             cmd_multi)
+        };
+
+        let cmd: u16 = (cmd_index << CMD_INDEX_SHIFT)
+            | CMD_DATA_PRESENT
+            | CMD_CRC_CHECK
+            | CMD_INDEX_CHECK
+            | CMD_RESP_TYPE_R1;
+
+        write32(REG_XFER_MODE, (xfer_mode as u32) | ((cmd as u32) << 16));
+
+        Ok(())
     }
 }
 
@@ -138,64 +192,11 @@ impl BlockDriver for SdCardAdma {
     }
 
     fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError> {
-        // Validate buffer meets DMA requirements
-        let sector_count = validate_read_buffer(buf)?;
+        self.start_io(sector, buf, XFER_MODE_DATA_DIR_READ, SD_CMD17_READ_SINGLE, SD_CMD18_READ_MULTIPLE)
+    }
 
-        // Get physical address of caller's buffer
-        let buf_virt = buf.as_ptr() as usize;
-        let buf_phys = kernel_virt_to_phys(buf_virt)
-            .ok_or(BlockError::IoError)?;
-
-        // Build ADMA2 descriptor for caller's buffer (supports multi-sector)
-        *self.desc_table = Adma2Desc::new(buf_phys as u64, buf.len() as u16, true);
-
-        // Flush cache so DMA engine can see the descriptor
-        flush_dcache_for_dma();
-
-        // Point ADMA engine to descriptor table
-        write32(REG_ADMA_ADDR_LOW, self.desc_table_phys as u32);
-        write32(REG_ADMA_ADDR_HIGH, (self.desc_table_phys >> 32) as u32);
-
-        // Clear pending status
-        write16(REG_NORMAL_INT_STATUS, 0xffff);
-        write16(REG_ERROR_INT_STATUS, 0xffff);
-
-        // Set block size and count
-        write16(REG_BLOCK_SIZE, 512);
-        write16(REG_BLOCK_COUNT, sector_count as u16);
-        write8(REG_DATA_TIMEOUT, DATA_TIMEOUT_VALUE);
-
-        // Write sector argument
-        write32(REG_ARGUMENT, sector);
-
-        // Enable interrupt signal for Transfer Complete
-        write16(REG_NORMAL_INT_SIGNAL_EN, INT_TRANSFER_COMPLETE);
-        write16(REG_ERROR_INT_SIGNAL_EN, 0xffff);
-
-        // Transfer Mode and Command: Different for single vs multi-block
-        let (xfer_mode, cmd_index) = if sector_count == 1 {
-            // Single block: CMD17, no block count or multi-block flags
-            (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE, SD_CMD17_READ_SINGLE)
-        } else {
-            // Multi-block: CMD18, with block count, multi-block, and auto-CMD12 to stop
-            (XFER_MODE_DATA_DIR_READ | XFER_MODE_DMA_ENABLE
-                | XFER_MODE_BLOCK_COUNT_EN | XFER_MODE_MULTI_BLOCK
-                | XFER_MODE_AUTO_CMD12_EN,
-             SD_CMD18_READ_MULTIPLE)
-        };
-
-        // Command: R1 response, data present, CRC + index check
-        let cmd: u16 = (cmd_index << CMD_INDEX_SHIFT)
-            | CMD_DATA_PRESENT
-            | CMD_CRC_CHECK
-            | CMD_INDEX_CHECK
-            | CMD_RESP_TYPE_R1;
-
-        // Issue command - atomic 32-bit write of transfer mode + command
-        write32(REG_XFER_MODE, (xfer_mode as u32) | ((cmd as u32) << 16));
-
-        // Return immediately - interrupt will fire when transfer completes
-        Ok(())
+    fn start_write(&mut self, sector: u32, buf: &[u8]) -> Result<(), BlockError> {
+        self.start_io(sector, buf, 0, SD_CMD24_WRITE_SINGLE, SD_CMD25_WRITE_MULTIPLE)
     }
 }
 
@@ -254,19 +255,6 @@ fn flush_dcache_for_dma() {
         }
         core::arch::asm!("fence", options(nostack, preserves_flags));
     }
-}
-
-/// Initialize SD ADMA device and register interrupt handler
-pub fn init() -> Result<SdCardAdma, BlockError> {
-
-    let device = SdCardAdma::new()?;
-
-    kprintln!("SD ADMA: Registering IRQ {} for device at {:#x}", SD_IRQ, SD_BASE);
-
-    // Register interrupt handler with PLIC
-    plic::register_irq(SD_IRQ, sd_irq_handler);
-
-    Ok(device)
 }
 
 // Register access functions

@@ -32,10 +32,13 @@ Keep plans **short and focused**:
 - **Why**: Problem being solved
 - **Prerequisites**: What must exist first
 - **Deliverables**: Concrete outcomes
-- **Implementation**: High-level approach (not full code)
-- **Next Steps**: Ordered action items
+- **Implementation**: Ordered steps; each step includes what to verify when done
 
 **Anti-pattern**: Don't write the full implementation in the plan - it becomes the codebase.
+
+**No "Next Steps" section**: Steps belong in Implementation. A "Next Steps" section that recaps the implementation steps is redundant and should not be added.
+
+**Verification in steps, not gate names**: Each step's verification note should state what to actually check or observe (e.g., "cross-compile clean, unit tests pass" or "boot to shell, confirm X appears in output"). Do not refer to verification by gate number (Gate 1, Gate 2, Gate 3) — those labels are internal workflow machinery, not meaningful to a plan reader.
 
 **Step sequencing**: Order steps so each one delivers an observable, working piece
 of functionality before the next begins. For a feature with multiple subcomponents,

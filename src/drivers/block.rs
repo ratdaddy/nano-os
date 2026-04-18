@@ -51,6 +51,26 @@ pub trait BlockDriver: Send {
     /// Use `validate_read_buffer()` to check buffer requirements before calling.
     fn start_read(&mut self, sector: u32, buf: &mut [u8]) -> Result<(), BlockError>;
 
+    /// Start a write operation (asynchronous, returns immediately)
+    ///
+    /// Programs the hardware to write one or more sectors to the device.
+    /// The operation completes asynchronously - an interrupt will fire
+    /// when the DMA transfer is complete.
+    ///
+    /// # Arguments
+    /// * `sector` - The starting logical block address to write to
+    /// * `buf` - Data to write (must be DMA-accessible and properly aligned)
+    ///
+    /// # Buffer Requirements
+    /// Same DMA constraints as `start_read`: length must be a multiple of BLOCK_SIZE,
+    /// must be 512-byte aligned, and must not cross a page boundary.
+    /// Use `validate_read_buffer()` to check these constraints before calling.
+    ///
+    /// # Returns
+    /// * `Ok(())` - Hardware was successfully programmed, write is in progress
+    /// * `Err(BlockError)` - Failed to start the write operation
+    fn start_write(&mut self, sector: u32, buf: &[u8]) -> Result<(), BlockError>;
+
     /// Get the block size
     #[allow(dead_code)]
     fn block_size(&self) -> usize {
@@ -118,3 +138,5 @@ impl core::fmt::Display for BlockError {
         }
     }
 }
+
+impl core::error::Error for BlockError {}

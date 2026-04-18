@@ -500,6 +500,22 @@ Tuples are fine for:
 - Returning two tightly related values where order is obvious (`(start, end)`, `(major, minor)`)
 - Short-lived internal helpers not exposed beyond a few lines
 
+## Console Output
+
+**Principle:** Use only 7-bit ASCII characters in `println!`, `kprintln!`, and any other output sent to the serial console.
+
+The UART driver outputs raw bytes. Multi-byte UTF-8 sequences and other non-ASCII characters do not render correctly and produce garbage on the terminal. This includes em-dashes (`—`), Unicode arrows, box-drawing characters, and any other codepoint above U+007F.
+
+```rust
+// Bad — em-dash is multi-byte UTF-8, prints as garbage
+println!("Write completed — sector 2000");
+
+// Good — plain ASCII hyphen
+println!("Write completed - sector 2000");
+```
+
+This applies to string literals embedded in source code. Binary data printed as hex (e.g., `{:#x}`) is unaffected.
+
 ## Code Review Checklist
 
 Before committing:
@@ -517,5 +533,6 @@ Before committing:
 - [ ] Helper functions are associated functions when appropriate
 - [ ] Struct initialization uses mutable builder pattern instead of large tuple returns
 - [ ] Multi-field return types use named structs, not tuples (especially if any field is discarded with `_` at call sites)
+- [ ] Console output (`println!`, `kprintln!`) uses only 7-bit ASCII — no Unicode, em-dashes, box-drawing, or other non-ASCII characters
 - [ ] All modified files follow consistent style
 - [ ] Comments in touched files are still accurate — names, behaviour, and invariants described in comments match the current code, not a prior version

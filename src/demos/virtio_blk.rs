@@ -373,4 +373,37 @@ pub fn virtio_blk_demo() {
     println!("  MBR signature: {:#06x} {}", signature, if signature_ok { "(valid)" } else { "(INVALID)" });
     println!("  First 32 bytes: {:02x?}", &buf.0[..32]);
     println!();
+
+    // Interrupt-driven write to sector 2000 (pre-partition gap, safe to overwrite)
+    println!("=== Interrupt-Driven Write ===");
+    println!();
+
+    let mut wbuf: Box<AlignedBuf> = alloc_within_page();
+    let pattern = b"NANO-OS WRITE TEST ";
+    for (i, byte) in wbuf.0.iter_mut().enumerate() {
+        *byte = pattern[i % pattern.len()];
+    }
+
+    println!("Starting interrupt-driven write to sector 2000...");
+    DONE.store(false, Ordering::Relaxed);
+
+    match driver.start_write(2000, &wbuf.0) {
+        Err(e) => { println!("Failed to start write: {}", e); return; }
+        Ok(()) => {}
+    }
+
+    unsafe {
+        // sscratch already set from the read section above
+        enable_interrupts();
+        loop {
+            if DONE.load(Ordering::Relaxed) { break; }
+            wfi();
+        }
+        disable_interrupts();
+    }
+
+    println!("Interrupt-driven write completed");
+    println!("Verify on host:");
+    println!("  hexdump -C -s $((2000 * 512)) -n 512 target/riscv64imac-unknown-none-elf/debug/sd.img");
+    println!();
 }

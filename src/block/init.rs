@@ -68,7 +68,7 @@ fn init_driver() -> BlockDisk {
             BlockDisk::new(virtio_blk::VirtioBlk::new().expect("VirtIO init failed"))
         }
         dtb::CpuType::LicheeRVNano => {
-            BlockDisk::new(sd::init().expect("SD init failed"))
+            BlockDisk::new(sd::SdCardAdma::new().expect("SD init failed"))
         }
         _ => panic!("Unknown CPU type"),
     }

@@ -62,8 +62,10 @@ copy: all $(EXT2IMG)
 	sync
 	@# Get the raw disk device (e.g., /dev/disk4 from /dev/disk4s1)
 	@DISK_DEV=$$(diskutil info $(SD_MOUNT) | awk -F: '/Device Node/ {gsub(/^[ \t]+/, "", $$2); print $$2}' | sed 's/s[0-9]*$$//') && \
-	echo "  - Unmounting partition 2 (if mounted)..." && \
-	diskutil unmount $${DISK_DEV}s2 2>/dev/null || true && \
+	echo "  - Unmounting all partitions..." && \
+	diskutil unmountDisk $${DISK_DEV} 2>/dev/null || true && \
+	echo "  - Zeroing sector 2000 (write demo verification)..." && \
+	sudo dd if=/dev/zero of=$${DISK_DEV} bs=512 count=1 seek=2000 conv=notrunc 2>/dev/null && \
 	echo "  - Writing ext2 filesystem to $${DISK_DEV}s2 (partition 2)..." && \
 	sudo dd if=$(EXT2IMG) of=$${DISK_DEV}s2 bs=1048576 && \
 	sync && \
@@ -123,6 +125,7 @@ $(INIT_ELF):
 	make -C prog_example
 
 run: initramfs $(SDIMG)
+	dd if=/dev/zero of=$(SDIMG) bs=512 count=1 seek=2000 conv=notrunc 2>/dev/null
 	script -q $(LOG_QEMU) cargo -Z build-std=core,alloc run --target $(TARGET) $(FEATURES)
 
 test: initramfs

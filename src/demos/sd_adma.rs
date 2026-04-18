@@ -328,7 +328,7 @@ pub fn sd_adma_demo() {
 
     // Create production driver — reinitializes hardware and registers IRQ with PLIC.
     // Safe since the polling section has already completed.
-    let mut driver = match sd::init() {
+    let mut driver = match sd::SdCardAdma::new() {
         Ok(d) => d,
         Err(e) => {
             println!("Failed to initialize SD driver: {}", e);
@@ -393,5 +393,45 @@ pub fn sd_adma_demo() {
         let gb_offset = (sector as u64 * 512) / (1024 * 1024 * 1024);
         println!("  {:3} | {:11} | {:11} | {:9} | {}", i, sector, gb_offset, cycles, microseconds);
     }
+    println!();
+
+    // Interrupt-driven write: sector 2000 (pre-partition gap, safe to overwrite)
+    println!("=== Interrupt-Driven ADMA2 Write ===");
+    println!();
+
+    #[repr(C, align(512))]
+    struct AlignedWriteBuf([u8; 512]);
+    let mut wbuf: Box<AlignedWriteBuf> = alloc_within_page();
+
+    let pattern = b"NANO-OS WRITE TEST ";
+    for (i, b) in wbuf.0.iter_mut().enumerate() {
+        *b = pattern[i % pattern.len()];
+    }
+
+    DONE.store(false, Ordering::Relaxed);
+    let write_start = read_time();
+    match driver.start_write(2000, &wbuf.0) {
+        Err(e) => { println!("Write failed to start: {}", e); return; }
+        Ok(()) => {}
+    }
+
+    unsafe {
+        enable_interrupts();
+        loop {
+            if DONE.load(Ordering::Relaxed) { break; }
+            wfi();
+        }
+        disable_interrupts();
+    }
+
+    let write_cycles = read_time() - write_start;
+    let write_us = (write_cycles * 1_000_000) / TIMEBASE_FREQUENCY;
+    println!("Write completed - sector 2000, {} cycles ({} us).", write_cycles, write_us);
+    println!();
+    println!("To verify on host (offset = 2000 * 512 = 0xfa000):");
+    println!("  # macOS (replace diskX with raw disk device):");
+    println!("  hexdump -C -s $((2000 * 512)) -n 512 /dev/rdiskX");
+    println!("  # Linux:");
+    println!("  hexdump -C -s $((2000 * 512)) -n 512 /dev/sdX");
     println!();
 }

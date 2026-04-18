@@ -9,7 +9,7 @@
 Each step in a plan follows this cycle:
 
 1. **Identify the step** — take the next step from the active plan
-2. **Propose and get approval** — Claude describes the intended approach before writing any code; the developer approves before implementation begins
+2. **Propose and get approval** — Claude describes the intended approach before writing any code; the developer approves before implementation begins. When the developer's prompt explicitly says to implement (e.g., "implement step 1"), that prompt is the approval — do not re-ask before writing code.
 3. **Implement** — Claude writes the code, within the scope rules below
 4. **Verify** — run the gates; all applicable gates must pass before the step is considered done
 5. **Repeat** — a plan step may require several iterations of steps 2–4 as the implementation is decomposed into smaller pieces
@@ -37,6 +37,9 @@ as a suggestion at a natural pause point. The developer decides whether to fold
 it in, add it to the backlog, or skip it.
 
 ## The Three Gates
+
+Gate names (Gate 1, Gate 2, Gate 3) are internal shorthand for this document. **Do not use gate names in plan files** — state what needs to be verified in plain terms (e.g., "cross-compile clean, unit tests pass", "boot to shell and confirm X is visible").
+
 
 ### Gate 1: Build
 ```
