@@ -1,6 +1,7 @@
 //! Initramfs support - unpacks CPIO archives into ramfs.
 
 use alloc::boxed::Box;
+use core::slice;
 use core::sync::atomic::Ordering;
 
 use crate::dtb;
@@ -27,7 +28,8 @@ const CPIO_NAMESIZE_OFFSET: usize = 94;
 pub fn new() -> &'static dyn SuperBlock {
     let initrd_start = dtb::INITRD_START.load(Ordering::Relaxed);
     let initrd_len = dtb::INITRD_END.load(Ordering::Relaxed) - initrd_start;
-    let cpio = unsafe { core::slice::from_raw_parts(initrd_start as *const u8, initrd_len) };
+    // SAFETY: DTB-provided addresses are valid for the initramfs lifetime; len is derived from start/end.
+    let cpio = unsafe { slice::from_raw_parts(initrd_start as *const u8, initrd_len) };
 
     // Create ramfs and populate from CPIO
     let ramfs = Box::leak(Box::new(Ramfs::new()));
@@ -96,11 +98,13 @@ mod tests {
     use alloc::boxed::Box;
     use alloc::format;
     use alloc::vec::Vec;
+    use core::slice;
     use super::*;
 
     const CPIO_TRAILER: &[u8] = b"TRAILER!!!\0";
     use crate::file::{FileType, SuperBlock};
-    use crate::fs::ramfs::Ramfs;
+    use crate::fs::ramfs::{Ramfs, RamfsSuperBlock};
+    use crate::test;
     use crate::vfs;
 
     /// Build a CPIO "newc" archive from a list of (name, data, mode, rdevmajor, rdevminor) entries.
@@ -151,14 +155,19 @@ mod tests {
             buf.push(0);
         }
 
-        Box::leak(buf.into_boxed_slice())
+        let boxed = buf.into_boxed_slice();
+        let len = boxed.len();
+        let ptr = Box::into_raw(boxed) as *mut u8;
+        test::register_leak(ptr, len);
+        // SAFETY: ptr was produced by Box::into_raw with matching len.
+        unsafe { slice::from_raw_parts(ptr, len) }
     }
 
     /// Helper to set up a test ramfs from CPIO and register with VFS.
     fn setup_test_ramfs(cpio: &'static [u8]) -> &'static Ramfs {
-        let ramfs = Box::leak(Box::new(Ramfs::new()));
+        let ramfs = test::register_typed_leak(Box::new(Ramfs::new()));
         unpack_cpio(ramfs, cpio);
-        let sb: &'static dyn SuperBlock = ramfs.superblock();
+        let sb: &'static dyn SuperBlock = test::register_typed_leak::<RamfsSuperBlock>(ramfs.superblock_for_test());
         vfs::init(sb);
         ramfs
     }

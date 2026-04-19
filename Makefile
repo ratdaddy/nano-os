@@ -80,7 +80,7 @@ $(INITRAMFS): $(shell find $(INITRAMFS_DIR)) $(INIT_ELF)
 	rm -rf $(BUILD_DIR)/initramfs
 	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)/initramfs
 	cp $(INIT_ELF) $(BUILD_DIR)/initramfs
-	mkdir -p $(BUILD_DIR)/initramfs/dev
+	# mkdir -p $(BUILD_DIR)/initramfs/dev
 	docker run --rm --privileged \
 		-v $$(pwd)/$(BUILD_DIR)/initramfs:/input \
 		-v $$(pwd)/$(BUILD_DIR):/output \
@@ -130,6 +130,7 @@ run: initramfs $(SDIMG)
 
 test: initramfs
 	$(call log-header,make test)
+	@test -f $(SDIMG) || { mkdir -p $(BUILD_DIR) && touch -t 197001010000 $(SDIMG); }
 	cargo -Z build-std=core,alloc test --target $(TARGET) $(FEATURES) --color always 2>&1 | tee -a $(LOG)
 
 lint:

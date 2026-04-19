@@ -13,6 +13,9 @@ use crate::memory::PAGE_SIZE;
 #[cfg(not(test))]
 use allocator::LinkedListAllocator;
 
+#[cfg(test)]
+pub use allocator::LinkedListAllocator;
+
 #[cfg(not(test))]
 #[global_allocator]
 pub static ALLOCATOR: LinkedListAllocator = LinkedListAllocator::new();
@@ -43,6 +46,8 @@ pub fn alloc_within_page<T>() -> Box<T> {
     assert!(size <= PAGE_SIZE, "alloc_within_page: size {} exceeds page size", size);
     let align = size.next_power_of_two().min(PAGE_SIZE);
     let layout = Layout::from_size_align(size, align).unwrap();
+    // SAFETY: alloc_zeroed returns a valid non-null pointer for any non-zero layout on this
+    // allocator; Box::from_raw is sound because the kernel allocator ignores Layout on dealloc.
     unsafe {
         let ptr = alloc_zeroed(layout) as *mut T;
         Box::from_raw(ptr)

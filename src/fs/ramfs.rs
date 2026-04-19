@@ -167,6 +167,12 @@ impl Ramfs {
         Box::leak(Box::new(RamfsSuperBlock { root: Arc::clone(&self.root) }))
     }
 
+    /// Create a SuperBlock as an owned Box for use in tests (no leak).
+    #[cfg(test)]
+    pub fn superblock_for_test(&self) -> Box<RamfsSuperBlock> {
+        Box::new(RamfsSuperBlock { root: Arc::clone(&self.root) })
+    }
+
     /// Insert an empty directory, creating parent directories as needed.
     pub fn insert_dir(&self, path: &str) -> Result<(), Error> {
         let parts: alloc::vec::Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -280,18 +286,12 @@ impl Ramfs {
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
     use alloc::sync::Arc;
     use super::*;
     use crate::file::SeekFrom;
 
-    /// Create static test data from a byte slice.
-    fn leak_data(data: &[u8]) -> &'static [u8] {
-        Box::leak(data.to_vec().into_boxed_slice())
-    }
-
-    fn setup_test_ramfs() -> &'static Ramfs {
-        Box::leak(Box::new(Ramfs::new()))
+    fn setup_test_ramfs() -> Ramfs {
+        Ramfs::new()
     }
 
     /// Look up an inode by path from the root.
@@ -335,7 +335,7 @@ mod tests {
         println!("Testing ramfs seek and read...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("test.txt", leak_data(b"hello world")).unwrap();
+        ramfs.insert_file("test.txt", b"hello world").unwrap();
 
         let mut file = open(ramfs.root(), "test.txt").unwrap();
 
@@ -353,7 +353,7 @@ mod tests {
         println!("Testing ramfs seek beyond end...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("tiny.txt", leak_data(b"short")).unwrap();
+        ramfs.insert_file("tiny.txt", b"short").unwrap();
 
         let mut file = open(ramfs.root(), "tiny.txt").unwrap();
         seek(&mut file, SeekFrom::Start(1000)).unwrap();
@@ -365,7 +365,7 @@ mod tests {
         println!("Testing ramfs seek negative...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("back.txt", leak_data(b"12345678")).unwrap();
+        ramfs.insert_file("back.txt", b"12345678").unwrap();
 
         let mut file = open(ramfs.root(), "back.txt").unwrap();
         seek(&mut file, SeekFrom::Current(-10)).unwrap();
@@ -377,8 +377,8 @@ mod tests {
         println!("Testing ramfs nested directories...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("etc/motd", leak_data(b"Welcome!")).unwrap();
-        ramfs.insert_file("etc/hosts", leak_data(b"127.0.0.1 localhost")).unwrap();
+        ramfs.insert_file("etc/motd", b"Welcome!").unwrap();
+        ramfs.insert_file("etc/hosts", b"127.0.0.1 localhost").unwrap();
 
         let mut file = open(ramfs.root(), "etc/motd").unwrap();
         let mut buf = [0u8; 8];
@@ -394,8 +394,8 @@ mod tests {
         println!("Testing ramfs readdir root...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("file1.txt", leak_data(b"one")).unwrap();
-        ramfs.insert_file("subdir/file2.txt", leak_data(b"two")).unwrap();
+        ramfs.insert_file("file1.txt", b"one").unwrap();
+        ramfs.insert_file("subdir/file2.txt", b"two").unwrap();
 
         let entries = readdir(ramfs.root(), "/").unwrap();
         assert_eq!(entries.len(), 2);
@@ -441,7 +441,7 @@ mod tests {
         println!("Testing ramfs insert_dir on existing directory...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("etc/motd", leak_data(b"Welcome!")).unwrap();
+        ramfs.insert_file("etc/motd", b"Welcome!").unwrap();
         ramfs.insert_dir("etc").unwrap();
 
         let entries = readdir(ramfs.root(), "etc").unwrap();
@@ -472,7 +472,7 @@ mod tests {
         println!("Testing ramfs lookup non-existent child...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+        ramfs.insert_file("a.txt", b"data").unwrap();
 
         let root = ramfs.root();
         let result = root.iops.lookup(&root, "nonexistent");
@@ -484,7 +484,7 @@ mod tests {
         println!("Testing ramfs lookup on a file inode...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+        ramfs.insert_file("a.txt", b"data").unwrap();
 
         let file_inode = lookup(ramfs.root(), "a.txt").unwrap();
         let result = file_inode.iops.lookup(&file_inode, "child");
@@ -518,7 +518,7 @@ mod tests {
         println!("Testing ramfs assigns sequential inode numbers...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("file.txt", leak_data(b"data")).unwrap();
+        ramfs.insert_file("file.txt", b"data").unwrap();
         ramfs.insert_dir("mydir").unwrap();
         ramfs.insert_chardev("dev", 5, 1).unwrap();
 
@@ -538,7 +538,7 @@ mod tests {
         println!("Testing ramfs rdev on a file inode...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+        ramfs.insert_file("a.txt", b"data").unwrap();
 
         let file_inode = lookup(ramfs.root(), "a.txt").unwrap();
         assert_eq!(file_inode.rdev, None);
@@ -587,7 +587,7 @@ mod tests {
         println!("Testing ramfs readdir on a file...");
 
         let ramfs = setup_test_ramfs();
-        ramfs.insert_file("a.txt", leak_data(b"data")).unwrap();
+        ramfs.insert_file("a.txt", b"data").unwrap();
 
         let result = readdir(ramfs.root(), "a.txt");
         assert!(matches!(result, Err(Error::NotADirectory)));
@@ -610,7 +610,7 @@ mod tests {
 
         let ramfs = setup_test_ramfs();
         ramfs.insert_chardev("console", 5, 1).unwrap();
-        ramfs.insert_file("hello.txt", leak_data(b"hi")).unwrap();
+        ramfs.insert_file("hello.txt", b"hi").unwrap();
         ramfs.insert_dir("subdir").unwrap();
 
         let entries = readdir(ramfs.root(), "/").unwrap();

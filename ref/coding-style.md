@@ -79,13 +79,15 @@ pub fn my_fn() { ... }
 
 ## Static Mutable References
 
-**Principle:** Use `&raw mut` pattern to avoid undefined behavior warnings.
+**Principle:** Use `addr_of!`/`addr_of_mut!` from `core::ptr` to avoid creating references to mutable statics.
 
-Rust 2024 edition discourages creating mutable references to mutable statics. Use raw pointers instead.
+Rust discourages creating references to mutable statics because it can cause undefined behavior. Use raw pointers instead. `&raw const`/`&raw mut` are the stabilized Rust 1.82 syntax for the same thing, but this codebase standardizes on `addr_of!`/`addr_of_mut!` for consistency. The planned Mutex migration (`backlog/static_mut_to_mutex.md`) will eliminate these sites entirely; the `&raw` migration will be done as part of that work rather than as a separate step.
 
 ### Pattern
 
 ```rust
+use core::ptr::{addr_of, addr_of_mut};
+
 static mut MY_STATIC: Option<Data> = None;
 
 // Bad - creates mutable reference
@@ -94,9 +96,9 @@ unsafe {
     MY_STATIC = Some(value);
 }
 
-// Good - use raw pointer
+// Good - use raw pointer via addr_of_mut!
 unsafe {
-    let ptr = &raw mut MY_STATIC;
+    let ptr = addr_of_mut!(MY_STATIC);
     (*ptr).take();
     *ptr = Some(value);
 }
@@ -105,6 +107,8 @@ unsafe {
 ### Buffer Access
 
 ```rust
+use core::ptr::addr_of_mut;
+
 static mut BUFFER: [u8; 512] = [0; 512];
 
 // Bad
@@ -115,7 +119,7 @@ unsafe {
 
 // Good
 unsafe {
-    let buf = &raw mut BUFFER;
+    let buf = addr_of_mut!(BUFFER);
     let buf = &mut *buf;
     process(buf);
 }
@@ -146,7 +150,7 @@ unsafe { (base + REG_STATUS as *const u32).read_volatile() }
 ```rust
 // Bad - nested unsafe blocks
 unsafe {
-    let data = &raw mut STATIC_DATA;
+    let data = addr_of_mut!(STATIC_DATA);
     let result = unsafe {  // Unnecessary nested unsafe
         some_unsafe_operation()
     };
@@ -154,7 +158,7 @@ unsafe {
 
 // Good - single unsafe block
 unsafe {
-    let data = &raw mut STATIC_DATA;
+    let data = addr_of_mut!(STATIC_DATA);
     let result = some_unsafe_operation();
 }
 ```
@@ -523,7 +527,7 @@ Before committing:
 - [ ] Trait checklist applied to all types in modified files (see `ref/rust-trait-checklist.md`)
 - [ ] All imports follow the external → blank → internal pattern
 - [ ] No `crate::` or `core::` or `alloc::` usage at call sites (only in `use` declarations)
-- [ ] Mutable statics use `&raw mut` pattern
+- [ ] Mutable statics use `addr_of!`/`addr_of_mut!` pattern
 - [ ] No unnecessary nested `unsafe` blocks
 - [ ] `unsafe` blocks with non-obvious invariants have a preceding `// SAFETY:` comment — check all unsafe blocks in every touched file, not only those introduced in the current diff
 - [ ] Method names clearly indicate async vs sync behavior

@@ -2,6 +2,8 @@
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+use core::fmt;
+use core::ptr::{addr_of, addr_of_mut};
 
 use crate::file::{Error, File, FileOps, Inode};
 
@@ -10,12 +12,19 @@ struct CharDevEntry {
     fops: &'static dyn FileOps,
 }
 
+impl fmt::Debug for CharDevEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CharDevEntry").field("name", &self.name).finish_non_exhaustive()
+    }
+}
+
 static mut CHARDEVS: Option<BTreeMap<(u32, u32), CharDevEntry>> = None;
 
 /// Register a character device driver for the given major/minor.
 pub fn chrdev_register(major: u32, minor: u32, name: &'static str, fops: &'static dyn FileOps) {
+    // SAFETY: called during boot before any threads are spawned; no concurrent access to CHARDEVS.
     unsafe {
-        let chardevs = core::ptr::addr_of_mut!(CHARDEVS);
+        let chardevs = addr_of_mut!(CHARDEVS);
         if (*chardevs).is_none() {
             *chardevs = Some(BTreeMap::new());
         }
@@ -25,8 +34,10 @@ pub fn chrdev_register(major: u32, minor: u32, name: &'static str, fops: &'stati
 
 /// Call `f` for each registered character device: (major, minor, name).
 pub fn chrdev_for_each(mut f: impl FnMut(u32, u32, &'static str)) {
+    // SAFETY: single-HART kernel; CHARDEVS is not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
-        let chardevs = core::ptr::addr_of!(CHARDEVS);
+        let chardevs = addr_of!(CHARDEVS);
         if let Some(devs) = (*chardevs).as_ref() {
             for (&(major, minor), entry) in devs {
                 f(major, minor, entry.name);
@@ -38,14 +49,22 @@ pub fn chrdev_for_each(mut f: impl FnMut(u32, u32, &'static str)) {
 /// Open a character device by looking up its registered driver.
 pub fn chrdev_open(inode: Arc<Inode>) -> Result<File, Error> {
     let (major, minor) = inode.rdev.ok_or(Error::InvalidInput)?;
+    // SAFETY: single-HART kernel; CHARDEVS is not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     let fops = unsafe {
-        let chardevs = core::ptr::addr_of!(CHARDEVS);
+        let chardevs = addr_of!(CHARDEVS);
         (*chardevs).as_ref()
             .and_then(|devs| devs.get(&(major, minor)))
             .map(|e| e.fops)
             .ok_or(Error::NotFound)?
     };
     Ok(File::new(fops, inode))
+}
+
+#[cfg(test)]
+pub fn chrdev_clear() {
+    // SAFETY: tests are single-threaded; no concurrent access to CHARDEVS.
+    unsafe { *addr_of_mut!(CHARDEVS) = None; }
 }
 
 #[cfg(test)]

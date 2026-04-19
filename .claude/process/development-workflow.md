@@ -113,7 +113,7 @@ log pane visible, or to start `make tail-log` in a pane first. Claude does not s
 the pane itself.
 
 **Gate 1 (build):** Claude invokes `make build`. Output is captured to the log
-automatically. Claude reads `/tmp/nano-os.log` and reports:
+automatically by the Makefile — do not add `tee` or pipe redirection to the command. Claude reads `/tmp/nano-os.log` and reports:
 ```
 Build: [PASS / FAIL]
 Errors: <count> — <list>
@@ -123,7 +123,7 @@ Log: /tmp/nano-os.log
 Claude does not proceed to the next implementation step if the build fails.
 
 **Gate 2 (tests):** Claude invokes `make test`. Output is captured to the log
-automatically. Claude reads `/tmp/nano-os.log` and reports:
+automatically by the Makefile — do not add `tee` or pipe redirection to the command. Claude reads `/tmp/nano-os.log` and reports:
 ```
 Tests: [PASS / FAIL]
 Passed: <n> / Failed: <n>

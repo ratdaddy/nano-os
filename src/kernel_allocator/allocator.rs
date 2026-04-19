@@ -11,6 +11,8 @@ use crate::memory;
 pub const MIN_ALLOC_SIZE: usize = 16;
 pub const MIN_BLOCK_SIZE: usize = BLOCK_HEADER_SIZE + MIN_ALLOC_SIZE;
 
+// SAFETY: alloc returns properly aligned memory satisfying the layout, or null on failure.
+// dealloc is only called with pointers previously returned by alloc on this allocator.
 unsafe impl GlobalAlloc for LinkedListAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if let Some((block, aligned_block)) = self.find_fit(layout) {
@@ -29,6 +31,7 @@ unsafe impl GlobalAlloc for LinkedListAllocator {
     }
 }
 
+#[derive(Debug)]
 pub struct LinkedListAllocator {
     pub(super) head: UnsafeCell<*mut BlockHeader>,
     pub(super) tail: UnsafeCell<*mut BlockHeader>,
@@ -46,6 +49,20 @@ impl LinkedListAllocator {
             heap_end: UnsafeCell::new(null_mut()),
             free_head: UnsafeCell::new(null_mut()),
             grow_heap_fn: kernel_memory_map::grow_kernel_heap,
+        }
+    }
+
+    #[cfg(test)]
+    pub const fn new_fixed() -> Self {
+        fn no_grow(_: usize) -> Option<(usize, usize)> {
+            None
+        }
+        LinkedListAllocator {
+            head: UnsafeCell::new(null_mut()),
+            tail: UnsafeCell::new(null_mut()),
+            heap_end: UnsafeCell::new(null_mut()),
+            free_head: UnsafeCell::new(null_mut()),
+            grow_heap_fn: no_grow,
         }
     }
 
@@ -241,6 +258,29 @@ impl LinkedListAllocator {
             (*prev).add_size(BLOCK_HEADER_SIZE + (*block_ptr).size());
         } else {
             self.insert_free_block(block_ptr);
+        }
+    }
+
+    /// Returns true if any block on the heap is still in use (not freed).
+    #[cfg(test)]
+    pub fn has_allocated_blocks(&self) -> bool {
+        // SAFETY: tests are single-threaded; head and heap_end are valid pointers set during init.
+        unsafe {
+            let mut current = *self.head.get();
+            if current.is_null() {
+                return false;
+            }
+            loop {
+                if (*current).is_used() {
+                    return true;
+                }
+                let next = (*current).next();
+                if next >= *self.heap_end.get() {
+                    break;
+                }
+                current = next;
+            }
+            false
         }
     }
 

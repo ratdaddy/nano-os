@@ -3,6 +3,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
+use core::fmt;
 use spin::Mutex;
 
 use crate::block::volume::BlockVolume;
@@ -11,6 +12,12 @@ use crate::drivers::BlockError;
 struct BlkdevEntry {
     name: String,
     volume: Arc<dyn BlockVolume>,
+}
+
+impl fmt::Debug for BlkdevEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlkdevEntry").field("name", &self.name).finish_non_exhaustive()
+    }
 }
 
 static BLOCKDEVS: Mutex<BTreeMap<(u32, u32), BlkdevEntry>> = Mutex::new(BTreeMap::new());
@@ -36,6 +43,11 @@ pub fn blkdev_get(major: u32, minor: u32) -> Result<Arc<dyn BlockVolume>, BlockE
         .get(&(major, minor))
         .map(|e| Arc::clone(&e.volume))
         .ok_or(BlockError::InvalidInput)
+}
+
+#[cfg(test)]
+pub fn blkdev_clear() {
+    BLOCKDEVS.lock().clear();
 }
 
 #[cfg(test)]

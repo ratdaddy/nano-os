@@ -40,6 +40,10 @@ And replace all `addr_of!`/`addr_of_mut!` + `unsafe` access blocks with direct
 `FOO.lock()` calls. Drop the `Option` entirely when the type has a sensible default
 (empty collection, etc.).
 
+When converting each site, remove the `addr_of!`/`addr_of_mut!` calls directly in favor of the Mutex — do not migrate to `&raw mut`/`&raw const` as an intermediate step. The Mutex conversion makes the raw pointer pattern moot entirely.
+
+After all Mutex conversions are complete, do a codebase-wide sweep for any remaining `addr_of!`/`addr_of_mut!` uses (sites not suited to Mutex) and convert those to `&raw const`/`&raw mut`. Then remove the `addr_of`/`addr_of_mut` imports and update `ref/coding-style.md` to reflect `&raw` as the standard.
+
 ## Notes on CONSOLE
 
 `kprint.rs:CONSOLE` is called on every `kprintln!` so it is accessed more frequently

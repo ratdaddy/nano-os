@@ -24,6 +24,7 @@ struct Mount {
 }
 
 /// Flattened view of a mount for consumers (boot menu, /proc/mounts).
+#[derive(Debug)]
 pub struct MountInfo {
     pub id: usize,
     pub fs_type: &'static str,
@@ -32,8 +33,16 @@ pub struct MountInfo {
 
 static mut MOUNTS: Option<Vec<Mount>> = None;
 
+/// Reset the VFS mount table, dropping all mount entries and their inode references.
+#[cfg(test)]
+pub fn vfs_clear() {
+    // SAFETY: tests are single-threaded; no concurrent access to MOUNTS.
+    unsafe { *addr_of_mut!(MOUNTS) = None; }
+}
+
 /// Initialize the VFS with a root filesystem SuperBlock (mount 0).
 pub fn init(sb: &'static dyn SuperBlock) {
+    // SAFETY: called during boot before any threads are spawned; no concurrent access to MOUNTS.
     unsafe {
         let mounts = addr_of_mut!(MOUNTS);
         *mounts = Some(Vec::new());
@@ -43,6 +52,8 @@ pub fn init(sb: &'static dyn SuperBlock) {
 
 /// Return mount info for all mounted filesystems.
 pub fn mounts() -> Vec<MountInfo> {
+    // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
         let mounts = addr_of!(MOUNTS);
         (*mounts).as_ref().map_or_else(Vec::new, |mounts| {
@@ -63,6 +74,8 @@ pub fn vfs_mount_at(source: Option<&str>, path: &'static str, fs_name: &str) -> 
     let inode = vfs_lookup(path)?;
     let fs = find_filesystem(fs_name).ok_or(Error::NotFound)?;
     let sb = fs.mount(source)?;
+    // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
         let mounts = addr_of_mut!(MOUNTS);
         (*mounts).as_mut().expect("VFS not initialized").push(Mount {
@@ -95,6 +108,7 @@ static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
 
 /// Register a filesystem driver.
 pub fn register_filesystem(fs: &'static dyn FileSystem) {
+    // SAFETY: called during boot before any threads are spawned; no concurrent access to FILESYSTEMS.
     unsafe {
         let fss = addr_of_mut!(FILESYSTEMS);
         if (*fss).is_none() {
@@ -106,6 +120,8 @@ pub fn register_filesystem(fs: &'static dyn FileSystem) {
 
 /// Look up a registered filesystem by name.
 pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
+    // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
         let fss = addr_of!(FILESYSTEMS);
         (*fss).as_ref()
@@ -116,6 +132,8 @@ pub fn find_filesystem(name: &str) -> Option<&'static dyn FileSystem> {
 
 /// Return all registered filesystem drivers.
 pub fn filesystems() -> Vec<&'static dyn FileSystem> {
+    // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
         let fss = addr_of!(FILESYSTEMS);
         (*fss).as_ref().map_or_else(Vec::new, |fss| fss.clone())
@@ -128,6 +146,8 @@ pub fn filesystems() -> Vec<&'static dyn FileSystem> {
 
 /// Return the root inode from mount 0.
 fn root_inode() -> Result<Arc<Inode>, Error> {
+    // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
         let mounts = addr_of!(MOUNTS);
         Ok((*mounts).as_ref().ok_or(Error::InvalidInput)?[0].sb.root_inode())
@@ -136,6 +156,8 @@ fn root_inode() -> Result<Arc<Inode>, Error> {
 
 /// Check if an inode is a mountpoint; if so, return the mounted root inode.
 fn cross_mount(inode: Arc<Inode>) -> Arc<Inode> {
+    // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
+    // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
         let mounts = addr_of!(MOUNTS);
         if let Some(mounts) = (*mounts).as_ref() {
@@ -234,6 +256,7 @@ mod tests {
     use alloc::sync::Arc;
 
     use crate::file::{Error, File, FileOps, FileType, Inode, InodeOps};
+    use crate::test;
     use super::*;
 
     // ---- Mock filesystem ----
@@ -323,13 +346,14 @@ mod tests {
     }
 
     fn setup(root: Arc<Inode>) {
-        let sb: &'static dyn SuperBlock = Box::leak(Box::new(MockSuperBlock { root }));
+        let sb: &'static dyn SuperBlock = test::register_typed_leak::<MockSuperBlock>(Box::new(MockSuperBlock { root }));
         init(sb);
     }
 
     /// Add a mount over the given inode, pointing to a second mock filesystem.
     fn mount_over(mountpoint: Arc<Inode>, root: Arc<Inode>) {
-        let sb: &'static dyn SuperBlock = Box::leak(Box::new(MockSuperBlock { root }));
+        let sb: &'static dyn SuperBlock = test::register_typed_leak::<MockSuperBlock>(Box::new(MockSuperBlock { root }));
+        // SAFETY: tests are single-threaded; no concurrent access to MOUNTS.
         unsafe {
             let mounts = addr_of_mut!(MOUNTS);
             (*mounts).as_mut().unwrap().push(Mount {
