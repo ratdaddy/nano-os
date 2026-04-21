@@ -107,8 +107,7 @@ impl FileSystem for RamfsFileSystem {
     fn name(&self) -> &'static str { "ramfs" }
     fn nodev(&self) -> bool { true }
     fn mount(&self, _source: Option<&str>) -> Result<&'static dyn SuperBlock, Error> {
-        let ramfs = Box::leak(Box::new(Ramfs::new()));
-        Ok(ramfs.superblock())
+        Ok(Box::leak(Ramfs::new().superblock()))
     }
 }
 
@@ -163,13 +162,7 @@ impl Ramfs {
     }
 
     /// Create a SuperBlock for this ramfs instance.
-    pub fn superblock(&self) -> &'static RamfsSuperBlock {
-        Box::leak(Box::new(RamfsSuperBlock { root: Arc::clone(&self.root) }))
-    }
-
-    /// Create a SuperBlock as an owned Box for use in tests (no leak).
-    #[cfg(test)]
-    pub fn superblock_for_test(&self) -> Box<RamfsSuperBlock> {
+    pub fn superblock(&self) -> Box<RamfsSuperBlock> {
         Box::new(RamfsSuperBlock { root: Arc::clone(&self.root) })
     }
 

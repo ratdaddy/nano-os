@@ -10,4 +10,7 @@ CMD cp -r /input/* /work && \
     mknod dev/sda1 b 8 1  && \
     mknod dev/sda2 b 8 2  && \
     mkdir -p newroot && \
+    mkdir -p test/dev test/emptydir && \
+    mknod test/dev/tconsole c 5 1 && \
+    mknod test/dev/tsda b 8 0 && \
     find * | cpio -o --format=newc > /output/initramfs.cpio

@@ -3,6 +3,7 @@
 //! Provides the kernel's file operation API. The VFS caches a root inode
 //! and uses inode operations for path traversal.
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -20,7 +21,7 @@ use crate::file::{DirEntry, Error, File, FileType, Inode, SeekFrom, SuperBlock, 
 struct Mount {
     mountpoint_inode: Option<Arc<Inode>>,
     mountpoint: &'static str,
-    sb: &'static dyn SuperBlock,
+    sb: Box<dyn SuperBlock>,
 }
 
 /// Flattened view of a mount for consumers (boot menu, /proc/mounts).
@@ -41,7 +42,7 @@ pub fn vfs_clear() {
 }
 
 /// Initialize the VFS with a root filesystem SuperBlock (mount 0).
-pub fn init(sb: &'static dyn SuperBlock) {
+pub fn init(sb: Box<dyn SuperBlock>) {
     // SAFETY: called during boot before any threads are spawned; no concurrent access to MOUNTS.
     unsafe {
         let mounts = addr_of_mut!(MOUNTS);
@@ -73,7 +74,7 @@ pub fn mounts() -> Vec<MountInfo> {
 pub fn vfs_mount_at(source: Option<&str>, path: &'static str, fs_name: &str) -> Result<(), Error> {
     let inode = vfs_lookup(path)?;
     let fs = find_filesystem(fs_name).ok_or(Error::NotFound)?;
-    let sb = fs.mount(source)?;
+    let sb = Box::new(StaticSb(fs.mount(source)?));
     // SAFETY: single-HART kernel; VFS globals are not accessed from interrupt handlers.
     // See backlog/static_mut_to_mutex.md for the planned Mutex migration.
     unsafe {
@@ -102,6 +103,14 @@ pub trait FileSystem: Send + Sync {
     /// `source` is the device path for block-based filesystems (e.g. "/dev/sda2").
     /// Virtual filesystems (procfs, ramfs) ignore it and accept `None`.
     fn mount(&self, source: Option<&str>) -> Result<&'static dyn SuperBlock, Error>;
+}
+
+/// Wraps a `&'static dyn SuperBlock` so it can be stored as `Box<dyn SuperBlock>` in the mount
+/// table. The referenced superblock is already leaked; dropping this wrapper does not free it.
+struct StaticSb(&'static dyn SuperBlock);
+impl SuperBlock for StaticSb {
+    fn root_inode(&self) -> Arc<Inode> { self.0.root_inode() }
+    fn fs_type(&self) -> &'static str { self.0.fs_type() }
 }
 
 static mut FILESYSTEMS: Option<Vec<&'static dyn FileSystem>> = None;
@@ -256,7 +265,6 @@ mod tests {
     use alloc::sync::Arc;
 
     use crate::file::{Error, File, FileOps, FileType, Inode, InodeOps};
-    use crate::test;
     use super::*;
 
     // ---- Mock filesystem ----
@@ -346,20 +354,18 @@ mod tests {
     }
 
     fn setup(root: Arc<Inode>) {
-        let sb: &'static dyn SuperBlock = test::register_typed_leak::<MockSuperBlock>(Box::new(MockSuperBlock { root }));
-        init(sb);
+        init(Box::new(MockSuperBlock { root }));
     }
 
     /// Add a mount over the given inode, pointing to a second mock filesystem.
     fn mount_over(mountpoint: Arc<Inode>, root: Arc<Inode>) {
-        let sb: &'static dyn SuperBlock = test::register_typed_leak::<MockSuperBlock>(Box::new(MockSuperBlock { root }));
         // SAFETY: tests are single-threaded; no concurrent access to MOUNTS.
         unsafe {
             let mounts = addr_of_mut!(MOUNTS);
             (*mounts).as_mut().unwrap().push(Mount {
                 mountpoint_inode: Some(mountpoint),
                 mountpoint: "",
-                sb,
+                sb: Box::new(MockSuperBlock { root }),
             });
         }
     }

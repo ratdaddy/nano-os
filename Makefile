@@ -80,7 +80,6 @@ $(INITRAMFS): $(shell find $(INITRAMFS_DIR)) $(INIT_ELF)
 	rm -rf $(BUILD_DIR)/initramfs
 	cp -r $(INITRAMFS_DIR) $(BUILD_DIR)/initramfs
 	cp $(INIT_ELF) $(BUILD_DIR)/initramfs
-	# mkdir -p $(BUILD_DIR)/initramfs/dev
 	docker run --rm --privileged \
 		-v $$(pwd)/$(BUILD_DIR)/initramfs:/input \
 		-v $$(pwd)/$(BUILD_DIR):/output \
