@@ -213,7 +213,8 @@ impl LinkedListAllocator {
             //split into three blocks
             let this_size = (*this).size();
             let preceding_size = aligned_block as usize - (*this).alloc_area_start() as usize;
-            let aligned_block_size = layout.size().max(MIN_BLOCK_SIZE as usize - BLOCK_HEADER_SIZE);
+            // Round up to 8 so the trailing free block header lands on an 8-byte boundary.
+            let aligned_block_size = align_up(layout.size(), 8).max(MIN_BLOCK_SIZE as usize - BLOCK_HEADER_SIZE);
             let excess = this_size
                 - (preceding_size + BLOCK_HEADER_SIZE)
                 - (aligned_block_size + BLOCK_HEADER_SIZE);

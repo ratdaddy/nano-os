@@ -478,6 +478,31 @@ fn test_alignment_with_heap_growth_create_new_block() {
     }
 }
 
+/// Regression test: aligned allocation with a size not a multiple of 8 must
+/// leave the trailing free block on an 8-byte boundary.
+///
+/// Before the fix, split_block used layout.size() directly as aligned_block_size,
+/// so the trailing block header landed at `aligned + size` which was 4-byte but
+/// not 8-byte aligned. Subsequent align-8 allocations from that block returned
+/// misaligned pointers, causing misaligned pointer dereference panics at runtime.
+#[test_case]
+fn test_aligned_alloc_non_multiple_of_8_trailing_block() {
+    unsafe {
+        println!("Testing alignment with small preceding fragment...");
+        setup_allocator();
+
+        // Align=16, size=17: goes through the else branch; 17 is not a multiple of 8.
+        // The trailing free block must still be 8-byte aligned.
+        let layout = Layout::from_size_align(17, 16).unwrap();
+        let ptr = TEST_ALLOCATOR.alloc(layout);
+
+        assert!(!ptr.is_null(), "Allocation failed");
+        assert_eq!(ptr as usize % 16, 0, "Pointer not 16-byte aligned");
+
+        assert_heap_invariants();
+    }
+}
+
 /// Regression test for split_block overflow when an aligned allocation fits
 /// the check_aligned_fit condition exactly but leaves no room for the trailing
 /// block header.

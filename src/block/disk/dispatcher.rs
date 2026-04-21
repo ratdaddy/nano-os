@@ -18,6 +18,7 @@
 //! thread, and the new thread immediately takes ownership.
 
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 
@@ -67,6 +68,13 @@ pub enum BlockMessage {
 // ReadResponse after sending, so the buffer is only accessed by the dispatcher
 // while the requester is suspended — no concurrent access is possible.
 unsafe impl Send for BlockMessage {}
+
+/// A read request waiting to be issued once the current in-flight read completes.
+struct PendingRequest {
+    sector: u32,
+    buffer: *mut [u8],
+    requester_tid: usize,
+}
 
 /// Request a block read from the dispatcher
 ///
@@ -164,11 +172,54 @@ struct Request {
 
 static mut REQUEST: Option<Request> = None;
 
+/// Issue a read to the device and record it as the in-flight request.
+/// On device error, sends a ReadResponse directly to the requester instead.
+fn issue_read(
+    device: &mut dyn BlockDriver,
+    name: &str,
+    dispatcher_tid: usize,
+    sector: u32,
+    buffer: *mut [u8],
+    requester_tid: usize,
+) {
+    let buf = unsafe { &mut *buffer };
+
+    #[cfg(feature = "trace_volumes")]
+    kprintln!("dispatcher [{}]: issuing read sector={}", name, sector);
+
+    #[cfg(feature = "trace_volumes")]
+    let start_time = read_time();
+
+    match device.start_read(sector, buf) {
+        Ok(_) => {
+            unsafe {
+                let ptr = &raw mut REQUEST;
+                *ptr = Some(Request {
+                    requester_tid,
+                    #[cfg(feature = "trace_volumes")]
+                    start_time,
+                });
+            }
+        }
+        Err(e) => {
+            kprintln!("dispatcher [{}]: failed to issue read: {:?}", name, e);
+            let response = BlockMessage::ReadResponse { status: Err(e) };
+            let ptr = Box::into_raw(Box::new(response));
+            thread::send_message(requester_tid, thread::Message {
+                sender: dispatcher_tid,
+                data: ptr as usize,
+            });
+        }
+    }
+}
+
 /// Dispatcher thread main loop
 fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
     let tid = thread::Thread::current().id;
     let name = device.name();
     kprintln!("Block dispatcher [{}] started (tid={})", name, tid);
+
+    let mut pending: VecDeque<PendingRequest> = VecDeque::new();
 
     loop {
         let msg = thread::receive_message();
@@ -176,37 +227,13 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
 
         match block_msg {
             BlockMessage::ReadRequest { sector, buffer, requester_tid } => {
-                // Get caller's buffer
-                let buf = unsafe { &mut *buffer };
-
-                #[cfg(feature = "trace_volumes")]
-                kprintln!("dispatcher [{}]: read sector={} tid={}", name, sector, requester_tid);
-
-                // Issue read to device
-                #[cfg(feature = "trace_volumes")]
-                let start_time = read_time();
-                match device.start_read(sector, buf) {
-                    Ok(_) => {
-                        // Record the request so ReadComplete can reply to the requester
-                        unsafe {
-                            let ptr = &raw mut REQUEST;
-                            *ptr = Some(Request {
-                                requester_tid,
-                                #[cfg(feature = "trace_volumes")]
-                                start_time,
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        kprintln!("dispatcher [{}]: failed to issue read: {:?}", name, e);
-                        // Send error response to requester
-                        let response = BlockMessage::ReadResponse { status: Err(e) };
-                        let ptr = Box::into_raw(Box::new(response));
-                        thread::send_message(requester_tid, thread::Message {
-                            sender: tid,
-                            data: ptr as usize,
-                        });
-                    }
+                let in_flight = unsafe { (*(&raw const REQUEST)).is_some() };
+                if in_flight {
+                    #[cfg(feature = "trace_volumes")]
+                    kprintln!("dispatcher [{}]: queuing read sector={} (read in flight)", name, sector);
+                    pending.push_back(PendingRequest { sector, buffer, requester_tid });
+                } else {
+                    issue_read(device.as_mut(), name, tid, sector, buffer, requester_tid);
                 }
             }
             BlockMessage::ReadComplete { status } => {
@@ -239,6 +266,13 @@ fn dispatcher_main(mut device: Box<dyn BlockDriver>) {
                         sender: tid,
                         data: ptr as usize,
                     });
+
+                    // Issue next queued read if any
+                    if let Some(next) = pending.pop_front() {
+                        #[cfg(feature = "trace_volumes")]
+                        kprintln!("dispatcher [{}]: dequeuing next read sector={}", name, next.sector);
+                        issue_read(device.as_mut(), name, tid, next.sector, next.buffer, next.requester_tid);
+                    }
                 } else {
                     kprintln!("dispatcher [{}]: ReadComplete but no pending request!", name);
                 }
