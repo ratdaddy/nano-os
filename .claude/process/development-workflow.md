@@ -1,10 +1,14 @@
 # Development Workflow
 
 ## Reference Documents
-- Testing philosophy and coverage decisions: `ref/testing-strategy.md`
+- Testing philosophy and coverage decisions: `docs/ref/testing-strategy.md`
 - Build system: `Makefile` — all verification commands run through `make`
 
 ## The Development Loop
+
+This document defines the **Tier 3 cycle execution model** for nano-os. Where the global
+planning workflow defines what a cycle is, this document defines what running one looks
+like in this repo: a propose/implement/gate loop driven by cross-compiled hardware targets.
 
 Each step in a plan follows this cycle:
 
@@ -18,11 +22,11 @@ Each step in a plan follows this cycle:
 
 Gates 1 and 2 apply to every step. Gate 3 applies when the step touches
 boot-level behavior, device initialization, or anything not reachable by unit
-tests. Gate 3 must always be run before `/pre-commit-check` or marking a step
+tests. Gate 3 must always be run before `/pre-commit-check` (global skill) or marking a step
 complete, when it applies.
 
 If implementation reveals that the plan is wrong or incomplete, exit the loop.
-See `.claude/process/planning-workflow.md` — Re-Planning.
+See `~/.claude/process/planning-workflow.md` — Re-Planning.
 
 ## Scope Rules
 
@@ -59,7 +63,7 @@ any test logic runs, so a `make test` failure can mean either a boot regression
 or a test logic failure. The two failure modes look different in the output —
 a boot failure stops before any test output appears.
 
-See `ref/testing-strategy.md` for what is and isn't covered and why.
+See `docs/ref/testing-strategy.md` for what is and isn't covered and why.
 
 The unit test boundary is drawn at hardware interfaces and OS primitives where
 correct behavior requires either full emulation or actual execution. Code on
@@ -77,7 +81,7 @@ interactive menu allows manual inspection of subsystem state.
 Gate 3 is run by the developer, not Claude. After completing an implementation
 step, Claude specifies which inspection steps are relevant and what to look for.
 The developer runs them and reports results back before the next step proceeds.
-Gate 3 must pass before Claude suggests `/pre-commit-check` or marks a step
+Gate 3 must pass before Claude suggests `/pre-commit-check` (global skill) or marks a step
 complete.
 
 ## Log Capture and Visibility
@@ -153,7 +157,7 @@ log and reports the result. Claude does not proceed until the result is confirme
 ## New Code and Test Coverage
 
 When implementing a function that falls within the testable boundary defined in
-`ref/testing-strategy.md` — branching logic, error paths, parsing, data
+`docs/ref/testing-strategy.md` — branching logic, error paths, parsing, data
 accumulation — Claude proposes the corresponding test before writing
 implementation. The test is written first, confirmed failing, then implementation
 follows.
@@ -170,7 +174,7 @@ block at the definition site explaining what correct behavior looks like and how
 it would be observed, or in the relevant design document. Undocumented gaps are
 not acceptable.
 
-See `ref/testing-strategy.md` for the framework that determines
+See `docs/ref/testing-strategy.md` for the framework that determines
 whether code falls inside or outside the testable boundary.
 
 ## Design-Level Verification
@@ -178,7 +182,7 @@ whether code falls inside or outside the testable boundary.
 Invariants that cannot be tested at runtime — allocator safety boundaries,
 interrupt safety contracts, ownership rules across unsafe blocks — are verified
 through design discussion before implementation. The outcome is documented in a
-comment block at the definition site. The reasoning is captured in the relevant `design/` document.
+comment block at the definition site. The reasoning is captured in the relevant `docs/design/` document.
 
 This is a legitimate verification activity. A well-reasoned comment block on an
 unsafe boundary is not a placeholder for a missing test — it is the appropriate
